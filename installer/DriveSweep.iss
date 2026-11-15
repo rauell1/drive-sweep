@@ -1,6 +1,6 @@
 ; Inno Setup script for DriveSweep Windows Installer
 #define MyAppName "DriveSweep"
-#define MyAppVersion "0.2.5"
+#define MyAppVersion "0.2.6"
 #define MyAppPublisher "DriveSweep"
 #define MyAppExeName "DriveSweep.exe"
 
@@ -12,6 +12,7 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
+LicenseFile=..\LICENSE
 PrivilegesRequired=admin
 OutputDir=..\dist
 OutputBaseFilename=DriveSweep-Setup-{#MyAppVersion}
@@ -30,6 +31,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "..\dist\DriveSweep-win64\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -37,6 +39,7 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Flags: nowait postinstall; Check: IsAutoStartRequested
 
 [Code]
 function ClearSetupEnvVar(lpName: string; lpValue: LongWord): BOOL;
@@ -50,4 +53,9 @@ begin
   ClearSetupEnvVar('_PYI_SPLASH_IPC', 0);
   ClearSetupEnvVar('_MEIPASS2', 0);
   Result := True;
+end;
+
+function IsAutoStartRequested(): Boolean;
+begin
+  Result := ExpandConstant('{param:autostart|0}') = '1';
 end;

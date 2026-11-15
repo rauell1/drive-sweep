@@ -49,6 +49,9 @@ try {
         if (Test-Path $targetExe) { Remove-Item $targetExe -Force }
         Rename-Item -Path $innerExe -NewName "DriveSweep.exe"
     }
+    if (Test-Path (Join-Path $Root "LICENSE")) {
+        Copy-Item -Path (Join-Path $Root "LICENSE") -Destination (Join-Path $Root "dist\DriveSweep-win64\LICENSE") -Force
+    }
 
     # 4. Create distributable .zip of the --onedir folder
     $zipPath = Join-Path $Root "dist\DriveSweep-win64.zip"

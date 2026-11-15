@@ -8,9 +8,10 @@ import shutil
 import stat
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from send2trash import send2trash
 
@@ -493,24 +494,38 @@ class DeleteResult:
     deleted_count: int
     deleted: list[dict]
     failed: list[dict]
+    cancelled: bool = False
 
 
-def delete_targets(targets: Iterable[dict], mode: str = "recycle") -> DeleteResult:
+def delete_targets(
+    targets: Iterable[dict],
+    mode: str = "recycle",
+    progress_cb: Callable[[int, int, str, int], None] | None = None,
+    cancel_event: threading.Event | None = None,
+) -> DeleteResult:
     """Delete selected files/directories via Recycle Bin or Permanent Delete."""
     if mode not in ("recycle", "permanent"):
         raise ValueError(f"Invalid delete mode: {mode}")
 
     deduped = deduplicate_targets(targets)
+    total_items = len(deduped)
     delete_fn = _recycle_entry if mode == "recycle" else _permanent_delete_entry
     deleted: list[dict] = []
     failed: list[dict] = []
     freed_bytes = 0
+    cancelled = False
 
-    for item in deduped:
+    for idx, item in enumerate(deduped):
+        if cancel_event is not None and cancel_event.is_set():
+            cancelled = True
+            break
+
         raw_path = item["path"]
         contents_only = item["contents_only"]
         target = _normalize(raw_path)
         os_target = to_os_path(target)
+        if progress_cb is not None:
+            progress_cb(idx, total_items, str(target), freed_bytes)
 
         if is_os_protected_path(target, allow_temp_contents=contents_only):
             failed.append({
@@ -534,6 +549,9 @@ def delete_targets(targets: Iterable[dict], mode: str = "recycle") -> DeleteResu
                 with os.scandir(os_target) as it:
                     children = [Path(strip_long_prefix(e.path)) for e in it]
                 for child in children:
+                    if cancel_event is not None and cancel_event.is_set():
+                        cancelled = True
+                        break
                     if is_os_protected_path(child, allow_temp_contents=False):
                         child_errors.append(f"Protected child skipped: {child.name}")
                         continue
@@ -549,13 +567,15 @@ def delete_targets(targets: Iterable[dict], mode: str = "recycle") -> DeleteResu
                     deleted.append({
                         "path": str(target),
                         "freed_bytes": reclaimed,
-                        "partial": bool(child_errors),
+                        "partial": bool(child_errors) or cancelled,
                     })
                 if child_errors:
                     failed.append({
                         "path": str(target),
                         "error": "; ".join(child_errors[:3]),
                     })
+                if cancelled:
+                    break
             else:
                 delete_fn(target)
                 after_size = get_entry_size(target) if os.path.lexists(os_target) else 0
@@ -572,12 +592,16 @@ def delete_targets(targets: Iterable[dict], mode: str = "recycle") -> DeleteResu
                 "error": str(exc),
             })
 
+        if progress_cb is not None:
+            progress_cb(idx + 1, total_items, str(target), freed_bytes)
+
     return DeleteResult(
         mode=mode,
         freed_bytes=freed_bytes,
         deleted_count=len(deleted),
         deleted=deleted,
         failed=failed,
+        cancelled=cancelled,
     )
 
 

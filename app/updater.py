@@ -228,7 +228,7 @@ def launch_downloaded_update(file_path: str, install_kind: str | None = None) ->
 
         if "setup" in name_lower and name_lower.endswith(".exe"):
             subprocess.Popen(
-                [str(target), "/SILENT", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS"],
+                [str(target), "/SILENT", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS", "/AUTOSTART=1"],
                 env=clean_env,
                 creationflags=creation_flags,
                 close_fds=True,

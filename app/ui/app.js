@@ -30,6 +30,7 @@ const state = {
   selectedMap: new Map(),
   activeDriveRoot: null,
   scanTimer: null,
+  isCleaning: false,
   browseState: { path: null, sort: "size", query: "", offset: 0, limit: 250 },
   allFilesState: { query: "", ext: "", minMb: 0, minAgeDays: 0, sort: "size", offset: 0, limit: 200 },
   devBloatMinAgeDays: 0,
@@ -1385,14 +1386,91 @@ function openConfirmCleanModal() {
 }
 
 async function runCleanup(items, mode) {
-  showModal("Cleaning Selected Items...", `<p class="muted">Removing selected items, please wait...</p>`, []);
+  const totalCount = Math.max(1, items.length);
+  state.isCleaning = true;
+
+  const renderProgressBody = (done, total, currentPath, freedHuman) => {
+    const pct = Math.min(100, Math.max(4, Math.round((done / Math.max(1, total)) * 100)));
+    return `
+      <div class="summary-strip" style="margin-bottom:12px;">
+        <div>Progress: <strong id="cleanup-prog-count">${done} / ${total}</strong></div>
+        <div>Reclaimed so far: <strong id="cleanup-prog-freed" class="accent-good">${escapeHtml(freedHuman || "0 B")}</strong></div>
+      </div>
+      <div class="progress-track" style="margin-bottom:10px;">
+        <div id="cleanup-prog-fill" class="progress-fill" style="width:${pct}%;transition:width 0.15s ease;"></div>
+      </div>
+      <div id="cleanup-prog-path" class="preset-path" title="${escapeHtml(currentPath || "")}">
+        ${escapeHtml(currentPath || "Preparing cleanup...")}
+      </div>
+    `;
+  };
+
+  showModal(
+    "Cleaning Selected Items...",
+    renderProgressBody(0, totalCount, items[0]?.path || "", "0 B"),
+    [
+      {
+        id: "btn-cancel-cleanup",
+        text: "Cancel Remaining",
+        cls: "btn-soft",
+        onClick: async () => {
+          const cancelBtn = document.getElementById("btn-cancel-cleanup");
+          if (cancelBtn) {
+            cancelBtn.disabled = true;
+            cancelBtn.textContent = "Stopping...";
+          }
+          await api().cancel_cleanup();
+        },
+      },
+    ]
+  );
 
   const includeDocker = items.some((it) => it.is_docker_prune);
   const targets = items
     .filter((it) => !it.is_docker_prune)
     .map((it) => ({ path: it.path, contents_only: !!it.contents_only }));
 
-  const res = await api().execute_cleanup(targets, mode, includeDocker);
+  let res = null;
+  try {
+    await api().start_cleanup(targets, mode, includeDocker);
+    while (true) {
+      await new Promise((resolve) => setTimeout(resolve, 130));
+      const st = await api().get_cleanup_status();
+      if (st.status === "running") {
+        const countEl = document.getElementById("cleanup-prog-count");
+        const freedEl = document.getElementById("cleanup-prog-freed");
+        const fillEl = document.getElementById("cleanup-prog-fill");
+        const pathEl = document.getElementById("cleanup-prog-path");
+        const pct = Math.min(100, Math.max(4, Math.round((st.done / Math.max(1, st.total)) * 100)));
+        if (countEl) countEl.textContent = `${st.done} / ${st.total}`;
+        if (freedEl) freedEl.textContent = st.freed_human || "0 B";
+        if (fillEl) fillEl.style.width = `${pct}%`;
+        if (pathEl) pathEl.textContent = st.current_path || "Cleaning...";
+        continue;
+      }
+      if (st.status === "error") {
+        throw new Error(st.error || "Cleanup failed.");
+      }
+      res = st.result;
+      break;
+    }
+  } catch (err) {
+    state.isCleaning = false;
+    showModal(
+      "Cleanup Failed",
+      `<div class="warning-box">${escapeHtml(String(err))}</div>`,
+      [{ text: "Close", cls: "btn-primary", onClick: closeModal }]
+    );
+    return;
+  } finally {
+    state.isCleaning = false;
+  }
+
+  if (!res) {
+    closeModal();
+    return;
+  }
+
   renderDrives(res.drives_after);
 
   const hist = await api().get_history(50);
@@ -1412,8 +1490,9 @@ async function runCleanup(items, mode) {
     ? `<p class="small-text"><strong>Docker Prune:</strong> ${escapeHtml(res.docker_result.message)}</p>`
     : "";
 
+  const title = res.cancelled ? "Cleanup Stopped (Partial)" : "Cleanup Complete";
   showModal(
-    "Cleanup Complete",
+    title,
     `
       <div class="summary-strip">
         <div>Reclaimed: <strong class="accent-good">${escapeHtml(res.freed_human)}</strong></div>
@@ -1629,7 +1708,31 @@ function bindEvents() {
   document.getElementById("btn-clean-now").addEventListener("click", openConfirmCleanModal);
   document.getElementById("btn-updates-privacy").addEventListener("click", () => openUpdatesPrivacyModal(false));
   document.getElementById("app-version").addEventListener("click", () => openUpdatesPrivacyModal(false));
-  document.getElementById("modal-close").addEventListener("click", closeModal);
+  document.getElementById("modal-close").addEventListener("click", () => {
+    if (!state.isCleaning) closeModal();
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      const backdrop = document.getElementById("modal-backdrop");
+      if (backdrop && !backdrop.classList.contains("hidden") && !state.isCleaning) {
+        closeModal();
+      }
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+      e.preventDefault();
+      const explorerActive = document.getElementById("tab-explorer")?.classList.contains("active");
+      const allFilesActive = document.getElementById("subview-allfiles")?.classList.contains("active");
+      const target = explorerActive
+        ? document.getElementById(allFilesActive ? "allfiles-query" : "browse-query")
+        : document.getElementById("smart-filter");
+      if (target) {
+        target.focus();
+        target.select();
+      }
+    }
+  });
 }
 
 async function initApp() {
@@ -1638,7 +1741,7 @@ async function initApp() {
   applyTheme(info.theme || "dark");
   state.isAdmin = !!info.is_admin;
   state.osName = info.os || "Windows";
-  state.version = info.version || "0.2.0";
+  state.version = info.version || "0.2.6";
   state.dataDir = info.data_dir || "";
   state.installKind = info.install_kind || "source";
   state.autoCheckUpdates = info.auto_check_updates !== false;

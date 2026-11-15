@@ -469,3 +469,57 @@ def test_sanitized_subprocess_env_strips_pyi_markers(tmp_path: Path, monkeypatch
     assert res["mode"] == "portable_swap"
     assert "_PYI_PARENT_PROCESS_LEVEL" not in captured["env"]
     assert "_MEIPASS2" not in captured["env"]
+
+    setup_exe = tmp_path / "DriveSweep-Setup-0.2.6.exe"
+    setup_exe.write_bytes(b"MZ")
+    setup_res = updater.launch_downloaded_update(str(setup_exe), install_kind="setup")
+    assert setup_res["ok"] is True
+    assert setup_res["mode"] == "setup"
+    assert "/AUTOSTART=1" in captured["cmd"]
+    assert "_PYI_PARENT_PROCESS_LEVEL" not in captured["env"]
+
+
+def test_async_cleanup_progress_and_cancel(tmp_path: Path, monkeypatch):
+    import threading
+    import time
+    from app.api import DriveSweepAPI
+
+    monkeypatch.setenv("DRIVESWEEP_DATA_DIR", str(tmp_path / "appdata"))
+    api = DriveSweepAPI()
+
+    f1 = tmp_path / "one.tmp"
+    f2 = tmp_path / "two.tmp"
+    f1.write_bytes(b"x" * 2048)
+    f2.write_bytes(b"y" * 2048)
+
+    api.start_cleanup(
+        [
+            {"path": str(f1), "contents_only": False},
+            {"path": str(f2), "contents_only": False},
+        ],
+        mode="permanent",
+    )
+    deadline = time.time() + 5.0
+    st = api.get_cleanup_status()
+    while st["status"] == "running" and time.time() < deadline:
+        time.sleep(0.03)
+        st = api.get_cleanup_status()
+
+    assert st["status"] == "completed"
+    assert st["result"]["deleted_count"] == 2
+    assert not f1.exists()
+    assert not f2.exists()
+
+    # Pre-cancelled event stops delete_targets before deleting queued paths
+    f3 = tmp_path / "three.tmp"
+    f3.write_bytes(b"z" * 1024)
+    ev = threading.Event()
+    ev.set()
+    cancel_res = safety.delete_targets(
+        [{"path": str(f3), "contents_only": False}],
+        mode="permanent",
+        cancel_event=ev,
+    )
+    assert cancel_res.cancelled is True
+    assert cancel_res.deleted_count == 0
+    assert f3.exists()

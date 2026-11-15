@@ -48,6 +48,19 @@ class DriveSweepAPI:
     def __init__(self) -> None:
         self.scanner = DriveScanner()
         self._window: webview.Window | None = None
+        self._cleanup_lock = threading.Lock()
+        self._cleanup_cancel = threading.Event()
+        self._cleanup_thread: threading.Thread | None = None
+        self._cleanup_state: dict = {
+            "status": "idle",
+            "done": 0,
+            "total": 0,
+            "current_path": "",
+            "freed_bytes": 0,
+            "freed_human": "0 B",
+            "result": None,
+            "error": None,
+        }
 
     def set_window(self, window: webview.Window) -> None:
         self._window = window
@@ -182,17 +195,13 @@ class DriveSweepAPI:
     def get_drive_analytics(self, folder_path: str | None = None) -> dict:
         return self.scanner.get_analytics(folder_path=folder_path)
 
-    def execute_cleanup(
+    def _finalize_cleanup(
         self,
         targets: list[dict],
-        mode: str = "recycle",
-        include_docker_prune: bool = False,
+        result,
+        docker_result: dict | None,
+        drives_before: dict[str, int],
     ) -> dict:
-        drives_before = {d["path"]: d["free_bytes"] for d in list_drives()}
-
-        result = delete_targets(targets, mode=mode)
-        docker_result = run_docker_builder_prune() if include_docker_prune else None
-
         contents_only_paths = {
             os.path.normcase(os.path.normpath(t["path"]))
             for t in targets
@@ -217,6 +226,7 @@ class DriveSweepAPI:
             "freed_human": format_bytes(result.freed_bytes),
             "deleted_count": result.deleted_count,
             "failed_count": len(result.failed),
+            "cancelled": bool(result.cancelled),
             "items": [d["path"] for d in result.deleted],
             "failed": result.failed,
         })
@@ -229,10 +239,92 @@ class DriveSweepAPI:
             "deleted_count": result.deleted_count,
             "deleted": result.deleted,
             "failed": result.failed,
+            "cancelled": bool(result.cancelled),
             "docker_result": docker_result,
             "drives_after": drives_after,
             "drives_before": drives_before,
         }
+
+    def execute_cleanup(
+        self,
+        targets: list[dict],
+        mode: str = "recycle",
+        include_docker_prune: bool = False,
+    ) -> dict:
+        drives_before = {d["path"]: d["free_bytes"] for d in list_drives()}
+        result = delete_targets(targets, mode=mode)
+        docker_result = run_docker_builder_prune() if include_docker_prune else None
+        return self._finalize_cleanup(targets, result, docker_result, drives_before)
+
+    def start_cleanup(
+        self,
+        targets: list[dict],
+        mode: str = "recycle",
+        include_docker_prune: bool = False,
+    ) -> dict:
+        with self._cleanup_lock:
+            if self._cleanup_state["status"] == "running":
+                return dict(self._cleanup_state)
+            self._cleanup_cancel.clear()
+            total = len(targets) + (1 if include_docker_prune else 0)
+            self._cleanup_state = {
+                "status": "running",
+                "done": 0,
+                "total": max(1, total),
+                "current_path": targets[0].get("path", "") if targets else "Docker build cache",
+                "freed_bytes": 0,
+                "freed_human": "0 B",
+                "result": None,
+                "error": None,
+            }
+
+        def _worker() -> None:
+            drives_before = {d["path"]: d["free_bytes"] for d in list_drives()}
+
+            def on_progress(done: int, total_items: int, current_path: str, freed_bytes: int) -> None:
+                with self._cleanup_lock:
+                    self._cleanup_state["done"] = done
+                    self._cleanup_state["total"] = max(1, total_items + (1 if include_docker_prune else 0))
+                    self._cleanup_state["current_path"] = current_path
+                    self._cleanup_state["freed_bytes"] = freed_bytes
+                    self._cleanup_state["freed_human"] = format_bytes(freed_bytes)
+
+            try:
+                result = delete_targets(
+                    targets,
+                    mode=mode,
+                    progress_cb=on_progress,
+                    cancel_event=self._cleanup_cancel,
+                )
+                docker_result = None
+                if include_docker_prune and not self._cleanup_cancel.is_set():
+                    with self._cleanup_lock:
+                        self._cleanup_state["current_path"] = "Docker builder cache"
+                    docker_result = run_docker_builder_prune()
+
+                payload = self._finalize_cleanup(targets, result, docker_result, drives_before)
+                with self._cleanup_lock:
+                    self._cleanup_state["status"] = "cancelled" if result.cancelled else "completed"
+                    self._cleanup_state["done"] = self._cleanup_state["total"]
+                    self._cleanup_state["freed_bytes"] = payload["freed_bytes"]
+                    self._cleanup_state["freed_human"] = payload["freed_human"]
+                    self._cleanup_state["result"] = payload
+            except Exception as exc:
+                with self._cleanup_lock:
+                    self._cleanup_state["status"] = "error"
+                    self._cleanup_state["error"] = str(exc)
+
+        self._cleanup_thread = threading.Thread(target=_worker, daemon=True)
+        self._cleanup_thread.start()
+        return self.get_cleanup_status()
+
+    def get_cleanup_status(self) -> dict:
+        with self._cleanup_lock:
+            return dict(self._cleanup_state)
+
+    def cancel_cleanup(self) -> dict:
+        self._cleanup_cancel.set()
+        return self.get_cleanup_status()
 
     def open_in_explorer(self, raw_path: str) -> dict:
         p = Path(raw_path)
