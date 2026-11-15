@@ -1,6 +1,6 @@
 ; Inno Setup script for DriveSweep Windows Installer
 #define MyAppName "DriveSweep"
-#define MyAppVersion "0.3.3"
+#define MyAppVersion "0.3.4"
 #define MyAppPublisher "DriveSweep"
 #define MyAppExeName "DriveSweep.exe"
 
@@ -39,7 +39,7 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent runascurrentuser
-Filename: "{app}\{#MyAppExeName}"; Flags: nowait skipifnotsilent runascurrentuser; Check: IsAutoStartRequested
+Filename: "{app}\{#MyAppExeName}"; Flags: nowait skipifnotsilent; Check: IsAutoStartRequested
 
 [Code]
 function ClearSetupEnvVar(lpName: string; lpValue: LongWord): BOOL;

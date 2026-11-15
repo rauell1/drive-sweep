@@ -1,6 +1,6 @@
 # Created for DriveSweep Windows installer distribution
 PackageIdentifier: rauell1.DriveSweep
-PackageVersion: 0.3.3
+PackageVersion: 0.3.4
 DefaultLocale: en-US
 ManifestType: version
 ManifestVersion: 1.6.0
