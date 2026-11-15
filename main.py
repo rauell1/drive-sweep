@@ -10,6 +10,7 @@ import webview
 
 from app.api import DriveSweepAPI
 from app.safety import is_admin, relaunch_as_admin
+from app.updater import cleanup_stale_updates
 
 
 def ensure_admin_or_relaunch(argv: list[str] | None = None) -> bool:
@@ -55,6 +56,7 @@ def get_icon_path() -> str | None:
 def main() -> None:
     if not ensure_admin_or_relaunch():
         return
+    cleanup_stale_updates()
     api = DriveSweepAPI()
     window = webview.create_window(
         title="DriveSweep - PC Storage & Drive Cleaner",

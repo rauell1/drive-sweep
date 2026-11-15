@@ -15,7 +15,7 @@ const ICON_MOON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" s
 
 const state = {
   theme: "dark",
-  version: "0.2.5",
+  version: "0.2.7",
   dataDir: "",
   installKind: "source",
   autoCheckUpdates: true,
@@ -31,6 +31,7 @@ const state = {
   activeDriveRoot: null,
   scanTimer: null,
   isCleaning: false,
+  isUpdating: false,
   browseState: { path: null, sort: "size", query: "", offset: 0, limit: 250 },
   allFilesState: { query: "", ext: "", minMb: 0, minAgeDays: 0, sort: "size", offset: 0, limit: 200 },
   devBloatMinAgeDays: 0,
@@ -473,6 +474,7 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
     if (!u.update_available) {
       return `<div><strong>Up to date (v${escapeHtml(state.version)})</strong><div class="muted small-text">Latest release on GitHub is v${escapeHtml(u.latest_version)}.</div></div>`;
     }
+    const pkgSize = u.asset_size > 0 ? ` (${formatBytes(u.asset_size)})` : "";
     return `
       <div style="width:100%;">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
@@ -480,17 +482,86 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
             <strong>Update Available: v${escapeHtml(u.latest_version)}</strong>
             <span class="badge badge-info">Installed: v${escapeHtml(state.version)}</span>
           </div>
-          <span class="muted small-text">${escapeHtml(u.asset_name || "GitHub Release")}</span>
+          <span class="muted small-text">${escapeHtml(u.asset_name || "GitHub Release")}${escapeHtml(pkgSize)}</span>
         </div>
         <div class="muted small-text" style="margin-top:6px;">
-          Downloads directly from GitHub Releases and verifies SHA-256 against SHA256SUMS.txt before asking Windows to install.
+          Downloads the verified installer package from GitHub, checks its SHA-256 signature, updates via Setup, and relaunches DriveSweep automatically.
         </div>
       </div>`;
+  };
+
+  const setUpdateModalBusy = (busy) => {
+    state.isUpdating = busy;
+    for (const id of ["btn-update-check", "btn-update-install", "btn-update-close"]) {
+      const el = document.getElementById(id);
+      if (el) el.disabled = busy;
+    }
+  };
+
+  const renderUpdateProgress = (panel, msg, bytesText, pct) => {
+    if (!panel) return;
+    const width = Math.min(100, Math.max(4, pct || 4));
+    let msgEl = document.getElementById("upd-stage-msg");
+    if (!msgEl) {
+      panel.innerHTML = `
+        <div style="width:100%;">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;font-size:12.5px;">
+            <strong id="upd-stage-msg"></strong>
+            <span id="upd-bytes-label" class="muted"></span>
+          </div>
+          <div class="progress-track">
+            <div id="upd-prog-fill" class="progress-fill" style="width:${width}%;transition:width 0.15s ease;"></div>
+          </div>
+        </div>`;
+      msgEl = document.getElementById("upd-stage-msg");
+    }
+    const bytesEl = document.getElementById("upd-bytes-label");
+    const fillEl = document.getElementById("upd-prog-fill");
+    if (msgEl) msgEl.textContent = msg;
+    if (bytesEl) bytesEl.textContent = bytesText;
+    if (fillEl) fillEl.style.width = `${width}%`;
+  };
+
+  const runGuidedUpdate = async (u) => {
+    const panel = document.getElementById("update-status-panel");
+    setUpdateModalBusy(true);
+    renderUpdateProgress(panel, `Starting download of ${u.asset_name}...`, "0%", 4);
+    try {
+      await api().start_update_install(u.asset_url, u.asset_name, u.sha256_url, Number(u.asset_size || 0));
+      while (true) {
+        await new Promise((resolve) => setTimeout(resolve, 140));
+        const st = await api().get_update_status();
+        if (st.status === "error") {
+          setUpdateModalBusy(false);
+          if (panel) panel.innerHTML = `<div class="warning-box" style="margin:0;width:100%;">${escapeHtml(st.error || "Update failed.")}</div>`;
+          return;
+        }
+        const total = Number(st.total_bytes || 0);
+        const dlBytes = Number(st.downloaded_bytes || 0);
+        const pct = Number(st.percent || 0);
+        const bytesLabel =
+          st.status === "launching"
+            ? "100%"
+            : total > 0
+              ? `${formatBytes(dlBytes)} / ${formatBytes(total)} (${pct}%)`
+              : dlBytes > 0
+                ? formatBytes(dlBytes)
+                : "...";
+        renderUpdateProgress(panel, st.message || "Updating DriveSweep...", bytesLabel, pct);
+        if (st.status === "launching") {
+          break;
+        }
+      }
+    } catch (err) {
+      setUpdateModalBusy(false);
+      if (panel) panel.innerHTML = `<div class="warning-box" style="margin:0;width:100%;">${escapeHtml(String(err))}</div>`;
+    }
   };
 
   const buildFooterButtons = () => {
     const btns = [
       {
+        id: "btn-update-check",
         text: "Check for Updates",
         cls: "btn-soft",
         onClick: async () => {
@@ -506,21 +577,13 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
     const u = state.latestUpdateInfo;
     if (u && u.ok && u.update_available && u.asset_url && u.sha256_url) {
       btns.push({
-        text: `Verify SHA-256 & Install v${u.latest_version}`,
+        id: "btn-update-install",
+        text: `Download & Update v${u.latest_version}`,
         cls: "btn-cta",
-        onClick: async () => {
-          const panel = document.getElementById("update-status-panel");
-          if (panel) panel.innerHTML = `<div class="muted">Downloading and verifying SHA-256 checksum...</div>`;
-          const res = await api().download_and_apply_update(u.asset_url, u.asset_name, u.sha256_url);
-          if (!res.ok) {
-            if (panel) panel.innerHTML = `<div class="warning-box" style="margin:0;width:100%;">${escapeHtml(res.error || "Update failed.")}</div>`;
-            return;
-          }
-          if (panel) panel.innerHTML = `<div class="muted">Verified SHA-256 (${escapeHtml(res.sha256.slice(0, 12))}...). Launching installer...</div>`;
-        },
+        onClick: () => runGuidedUpdate(u),
       });
     }
-    btns.push({ text: "Close", cls: "btn-primary", onClick: closeModal });
+    btns.push({ id: "btn-update-close", text: "Close", cls: "btn-primary", onClick: closeModal });
     return btns;
   };
 
@@ -1709,13 +1772,13 @@ function bindEvents() {
   document.getElementById("btn-updates-privacy").addEventListener("click", () => openUpdatesPrivacyModal(false));
   document.getElementById("app-version").addEventListener("click", () => openUpdatesPrivacyModal(false));
   document.getElementById("modal-close").addEventListener("click", () => {
-    if (!state.isCleaning) closeModal();
+    if (!state.isCleaning && !state.isUpdating) closeModal();
   });
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       const backdrop = document.getElementById("modal-backdrop");
-      if (backdrop && !backdrop.classList.contains("hidden") && !state.isCleaning) {
+      if (backdrop && !backdrop.classList.contains("hidden") && !state.isCleaning && !state.isUpdating) {
         closeModal();
       }
       return;
@@ -1741,7 +1804,7 @@ async function initApp() {
   applyTheme(info.theme || "dark");
   state.isAdmin = !!info.is_admin;
   state.osName = info.os || "Windows";
-  state.version = info.version || "0.2.6";
+  state.version = info.version || "0.2.7";
   state.dataDir = info.data_dir || "";
   state.installKind = info.install_kind || "source";
   state.autoCheckUpdates = info.auto_check_updates !== false;

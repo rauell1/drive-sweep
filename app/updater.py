@@ -13,6 +13,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from typing import Callable
 
 from app import __version__
 from app.safety import sanitized_subprocess_env
@@ -86,8 +87,16 @@ def parse_sha256sums(text: str) -> dict[str, str]:
     return hashes
 
 
-def pick_release_asset(assets: list[dict], install_kind: str) -> dict | None:
-    """Choose the best downloadable Windows asset for the current installation type."""
+def pick_release_asset(
+    assets: list[dict],
+    install_kind: str,
+    prefer_setup: bool = True,
+) -> dict | None:
+    """Choose the best downloadable Windows asset for updating DriveSweep.
+
+    Setup installers (DriveSweep-Setup-*.exe) are preferred by default across all
+    Windows install kinds so updates install cleanly via Setup and relaunch.
+    """
     valid = [a for a in assets if isinstance(a, dict) and a.get("name") and a.get("browser_download_url")]
     setup_assets = [
         a for a in valid
@@ -97,6 +106,8 @@ def pick_release_asset(assets: list[dict], install_kind: str) -> dict | None:
         a for a in valid
         if a["name"].lower() == "drivesweep.exe"
     ]
+    if prefer_setup and setup_assets:
+        return setup_assets[0]
     if install_kind == "onefile_exe" and portable_assets:
         return portable_assets[0]
     if setup_assets:
@@ -104,6 +115,19 @@ def pick_release_asset(assets: list[dict], install_kind: str) -> dict | None:
     if portable_assets:
         return portable_assets[0]
     return None
+
+
+def cleanup_stale_updates() -> None:
+    """Remove leftover temporary installer files from completed or aborted updates."""
+    update_dir = Path(tempfile.gettempdir()) / "DriveSweep-Updates"
+    if not update_dir.exists():
+        return
+    try:
+        for entry in update_dir.iterdir():
+            if entry.is_file() and entry.suffix.lower() in {".exe", ".part", ".tmp"}:
+                entry.unlink(missing_ok=True)
+    except Exception:
+        pass
 
 
 def check_for_updates(current_version: str = __version__, timeout: float = 8.0) -> dict:
@@ -164,13 +188,18 @@ def download_and_verify_update(
     asset_name: str,
     sha256_url: str,
     timeout: float = 90.0,
+    progress_cb: Callable[[str, int, int, str], None] | None = None,
+    expected_size: int = 0,
 ) -> dict:
-    """Download an official release binary and verify its SHA-256 against SHA256SUMS.txt."""
+    """Download an official release package and verify its SHA-256 against SHA256SUMS.txt."""
     safe_name = os.path.basename(str(asset_name or "")).strip()
     if not safe_name or not safe_name.lower().endswith(".exe"):
         return {"ok": False, "error": "Unsupported update file type."}
     if not verify_https_github_url(asset_url) or not verify_https_github_url(sha256_url):
         return {"ok": False, "error": "Update URL must use HTTPS on GitHub."}
+
+    if progress_cb is not None:
+        progress_cb("checksum", 0, max(0, int(expected_size or 0)), "Checking release checksums...")
 
     try:
         sha_req = urllib.request.Request(sha256_url, headers={"User-Agent": f"DriveSweep/{__version__}"})
@@ -186,32 +215,61 @@ def download_and_verify_update(
     update_dir = Path(tempfile.gettempdir()) / "DriveSweep-Updates"
     update_dir.mkdir(parents=True, exist_ok=True)
     dest_path = update_dir / safe_name
+    part_path = update_dir / f"{safe_name}.part"
+    part_path.unlink(missing_ok=True)
 
     hasher = hashlib.sha256()
+    downloaded = 0
+    total_bytes = max(0, int(expected_size or 0))
+    last_reported = -1
     try:
         dl_req = urllib.request.Request(asset_url, headers={"User-Agent": f"DriveSweep/{__version__}"})
-        with urllib.request.urlopen(dl_req, timeout=timeout) as resp, open(dest_path, "wb") as fh:
+        with urllib.request.urlopen(dl_req, timeout=timeout) as resp, open(part_path, "wb") as fh:
+            headers = getattr(resp, "headers", None)
+            if headers is not None:
+                try:
+                    header_len = int(headers.get("Content-Length") or 0)
+                    if header_len > 0:
+                        total_bytes = header_len
+                except (TypeError, ValueError):
+                    pass
+            if progress_cb is not None:
+                progress_cb("downloading", 0, total_bytes, f"Downloading {safe_name}...")
             while True:
                 chunk = resp.read(65536)
                 if not chunk:
                     break
                 hasher.update(chunk)
                 fh.write(chunk)
+                downloaded += len(chunk)
+                if progress_cb is not None and (downloaded - last_reported >= 131072):
+                    last_reported = downloaded
+                    progress_cb("downloading", downloaded, total_bytes, f"Downloading {safe_name}...")
     except Exception as exc:
-        if dest_path.exists():
-            dest_path.unlink(missing_ok=True)
+        part_path.unlink(missing_ok=True)
+        dest_path.unlink(missing_ok=True)
         return {"ok": False, "error": f"Download failed: {exc}"}
+
+    if progress_cb is not None:
+        progress_cb("verifying", downloaded, max(downloaded, total_bytes), "Verifying SHA-256 checksum...")
 
     actual_hash = hasher.hexdigest().lower()
     if actual_hash != expected_hash:
+        part_path.unlink(missing_ok=True)
         dest_path.unlink(missing_ok=True)
         return {"ok": False, "error": "SHA-256 verification failed. Update file was removed."}
+
+    try:
+        part_path.replace(dest_path)
+    except Exception as exc:
+        part_path.unlink(missing_ok=True)
+        return {"ok": False, "error": f"Could not finalize update package: {exc}"}
 
     return {"ok": True, "file_path": str(dest_path), "sha256": actual_hash}
 
 
 def launch_downloaded_update(file_path: str, install_kind: str | None = None) -> dict:
-    """Launch verified Setup installer cleanly or swap portable executable after exit."""
+    """Exit cleanly, launch the verified Setup package silently, and relaunch DriveSweep."""
     target = Path(file_path)
     if not target.exists():
         return {"ok": False, "error": "Downloaded update file does not exist."}
@@ -225,12 +283,29 @@ def launch_downloaded_update(file_path: str, install_kind: str | None = None) ->
     try:
         clean_env = sanitized_subprocess_env()
         creation_flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        no_window_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | creation_flags
 
         if "setup" in name_lower and name_lower.endswith(".exe"):
+            env = sanitized_subprocess_env({
+                "DRIVESWEEP_SETUP_EXE": str(target.resolve()),
+                "DRIVESWEEP_PID": str(os.getpid()),
+            })
+            ps_script = (
+                "$p=[int]$env:DRIVESWEEP_PID; "
+                "$deadline=[DateTime]::UtcNow.AddSeconds(20); "
+                "while ((Get-Process -Id $p -ErrorAction SilentlyContinue) -and ([DateTime]::UtcNow -lt $deadline)) "
+                "{ Start-Sleep -Milliseconds 200 }; "
+                "Start-Sleep -Milliseconds 350; "
+                "Get-ChildItem Env:_PYI_* -ErrorAction SilentlyContinue | Remove-Item -ErrorAction SilentlyContinue; "
+                "Remove-Item Env:_MEIPASS2 -ErrorAction SilentlyContinue; "
+                "$a = @('/SILENT','/SUPPRESSMSGBOXES','/NORESTART','/CLOSEAPPLICATIONS','/NORESTARTAPPLICATIONS','/AUTOSTART=1'); "
+                "try { Start-Process -FilePath $env:DRIVESWEEP_SETUP_EXE -ArgumentList $a -ErrorAction Stop } "
+                "catch { & $env:DRIVESWEEP_SETUP_EXE $a }"
+            )
             subprocess.Popen(
-                [str(target), "/SILENT", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS", "/AUTOSTART=1"],
-                env=clean_env,
-                creationflags=creation_flags,
+                ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_script],
+                env=env,
+                creationflags=no_window_flags,
                 close_fds=True,
             )
             return {"ok": True, "should_exit": True, "mode": "setup"}
@@ -253,11 +328,10 @@ def launch_downloaded_update(file_path: str, install_kind: str | None = None) ->
                 "}; "
                 "Start-Process -FilePath $env:DRIVESWEEP_OLD_EXE"
             )
-            ps_flags = subprocess.CREATE_NO_WINDOW | creation_flags
             subprocess.Popen(
                 ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_script],
                 env=env,
-                creationflags=ps_flags,
+                creationflags=no_window_flags,
                 close_fds=True,
             )
             return {"ok": True, "should_exit": True, "mode": "portable_swap"}

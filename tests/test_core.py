@@ -340,7 +340,9 @@ def test_updater_semver_sha256_and_url_verification(tmp_path: Path, monkeypatch)
         {"name": "SHA256SUMS.txt", "browser_download_url": "https://github.com/a/SHA256SUMS.txt"},
     ]
     assert updater.pick_release_asset(assets, "setup")["name"] == "DriveSweep-Setup-0.2.1.exe"
-    assert updater.pick_release_asset(assets, "onefile_exe")["name"] == "DriveSweep.exe"
+    assert updater.pick_release_asset(assets, "onedir_zip")["name"] == "DriveSweep-Setup-0.2.1.exe"
+    assert updater.pick_release_asset(assets, "onefile_exe")["name"] == "DriveSweep-Setup-0.2.1.exe"
+    assert updater.pick_release_asset(assets, "onefile_exe", prefer_setup=False)["name"] == "DriveSweep.exe"
 
     payload = b"MZ-mock-installer-binary"
     good_hash = hashlib.sha256(payload).hexdigest()
@@ -470,12 +472,17 @@ def test_sanitized_subprocess_env_strips_pyi_markers(tmp_path: Path, monkeypatch
     assert "_PYI_PARENT_PROCESS_LEVEL" not in captured["env"]
     assert "_MEIPASS2" not in captured["env"]
 
-    setup_exe = tmp_path / "DriveSweep-Setup-0.2.6.exe"
+    setup_exe = tmp_path / "DriveSweep-Setup-0.2.7.exe"
     setup_exe.write_bytes(b"MZ")
     setup_res = updater.launch_downloaded_update(str(setup_exe), install_kind="setup")
     assert setup_res["ok"] is True
     assert setup_res["mode"] == "setup"
-    assert "/AUTOSTART=1" in captured["cmd"]
+    cmd_joined = " ".join(captured["cmd"])
+    assert "powershell" in captured["cmd"][0].lower()
+    assert "/AUTOSTART=1" in cmd_joined
+    assert "/NORESTARTAPPLICATIONS" in cmd_joined
+    assert "/SILENT" in cmd_joined
+    assert captured["env"].get("DRIVESWEEP_SETUP_EXE") == str(setup_exe.resolve())
     assert "_PYI_PARENT_PROCESS_LEVEL" not in captured["env"]
 
 
@@ -523,3 +530,68 @@ def test_async_cleanup_progress_and_cancel(tmp_path: Path, monkeypatch):
     assert cancel_res.cancelled is True
     assert cancel_res.deleted_count == 0
     assert f3.exists()
+
+
+def test_async_update_install_progress_and_stale_cleanup(tmp_path: Path, monkeypatch):
+    import hashlib
+    import io
+    import tempfile
+    import time
+    import app.api as api_mod
+    import app.updater as updater
+
+    monkeypatch.setenv("DRIVESWEEP_DATA_DIR", str(tmp_path / "appdata"))
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+
+    upd_dir = tmp_path / "DriveSweep-Updates"
+    upd_dir.mkdir(parents=True)
+    stale = upd_dir / "DriveSweep-Setup-0.2.0.exe"
+    stale.write_bytes(b"old")
+    updater.cleanup_stale_updates()
+    assert not stale.exists()
+
+    payload = b"MZ-setup-package-bytes" * 200
+    good_hash = hashlib.sha256(payload).hexdigest()
+    sums = f"{good_hash}  DriveSweep-Setup-0.2.7.exe\n".encode("utf-8")
+
+    class FakeResp(io.BytesIO):
+        headers = {}
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            self.close()
+
+    def fake_urlopen(req, timeout=15.0):
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+        r = FakeResp(sums if "SHA256SUMS" in url else payload)
+        r.headers = {"Content-Length": str(len(sums if "SHA256SUMS" in url else payload))}
+        return r
+
+    monkeypatch.setattr(updater.urllib.request, "urlopen", fake_urlopen)
+    launched: list[str] = []
+    monkeypatch.setattr(
+        api_mod,
+        "launch_downloaded_update",
+        lambda fp, install_kind=None: (launched.append(fp), {"ok": True, "should_exit": True, "mode": "setup"})[1],
+    )
+
+    api = api_mod.DriveSweepAPI()
+    api.start_update_install(
+        "https://github.com/rauell1/drive-sweep/releases/download/v0.2.7/DriveSweep-Setup-0.2.7.exe",
+        "DriveSweep-Setup-0.2.7.exe",
+        "https://github.com/rauell1/drive-sweep/releases/download/v0.2.7/SHA256SUMS.txt",
+        expected_size=len(payload),
+    )
+
+    deadline = time.time() + 5.0
+    st = api.get_update_status()
+    while st["status"] in ("downloading", "verifying") and time.time() < deadline:
+        time.sleep(0.02)
+        st = api.get_update_status()
+
+    assert st["status"] == "launching"
+    assert st["mode"] == "setup"
+    assert st["sha256"] == good_hash
+    assert len(launched) == 1
+    assert launched[0].endswith("DriveSweep-Setup-0.2.7.exe")
+    assert Path(launched[0]).exists()

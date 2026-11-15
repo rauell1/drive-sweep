@@ -16,7 +16,7 @@ Choose **Option A** (standard Windows installer, recommended for most users) or 
 ### Option A: Windows Installer (Recommended)
 
 1. Open the **[GitHub Releases](https://github.com/rauell1/drive-sweep/releases)** page.
-2. Under the latest release (**Assets** section at the bottom), click **`DriveSweep-Setup-0.2.6.exe`** (or the newest version listed) to download it.
+2. Under the latest release (**Assets** section at the bottom), click **`DriveSweep-Setup-0.2.7.exe`** (or the newest version listed) to download it.
 3. Open your `Downloads` folder and double-click the downloaded `DriveSweep-Setup-...exe` file.
 4. **If Windows shows a "Windows protected your PC" (SmartScreen) blue popup:**
    - This appears on new open-source Windows apps until code signing is complete. You can verify the file checksum against `SHA256SUMS.txt` on the Releases page if you wish.
@@ -53,8 +53,8 @@ Choose **Option A** (standard Windows installer, recommended for most users) or 
 - **Always Keep:** Any folder or file you mark **Keep** is protected from deletion across both Quick Clean and Drive Scanner. You can remove it from this list later if you change your mind.
 - **Cleanup History:** Shows a local record of past cleanups on your PC and lets you open **Updates & Privacy** to check for newer releases.
 
-### 4. Automatic Update Checks
-Open **Cleanup History** (left sidebar) -> **Check for Updates**. DriveSweep checks GitHub Releases over HTTPS, verifies the `SHA256SUMS.txt` checksum before running the installer or replacing a portable build, and lets you install the update cleanly on your machine. Auto-checking on startup can be turned on or off anytime.
+### 4. Automatic Updates via Setup
+Open **Updates & Privacy** (left sidebar) -> **Check for Updates**. DriveSweep checks GitHub Releases over HTTPS, shows live download progress for the verified Setup installer package, checks `SHA256SUMS.txt` before installing, closes DriveSweep cleanly so Setup can upgrade files in place, and relaunches the updated app automatically. Auto-checking on startup can be turned on or off anytime.
 
 ---
 

@@ -61,6 +61,19 @@ class DriveSweepAPI:
             "result": None,
             "error": None,
         }
+        self._update_lock = threading.Lock()
+        self._update_thread: threading.Thread | None = None
+        self._update_state: dict = {
+            "status": "idle",
+            "stage": "idle",
+            "downloaded_bytes": 0,
+            "total_bytes": 0,
+            "percent": 0,
+            "message": "",
+            "sha256": "",
+            "mode": "",
+            "error": None,
+        }
 
     def set_window(self, window: webview.Window) -> None:
         self._window = window
@@ -100,6 +113,92 @@ class DriveSweepAPI:
         if launch.get("should_exit") and self._window:
             threading.Timer(0.25, self._window.destroy).start()
         return {**launch, "sha256": dl.get("sha256", "")}
+
+    def start_update_install(
+        self,
+        asset_url: str,
+        asset_name: str,
+        sha256_url: str,
+        expected_size: int = 0,
+    ) -> dict:
+        with self._update_lock:
+            if self._update_state["status"] in ("downloading", "verifying", "launching"):
+                return dict(self._update_state)
+            total = max(0, int(expected_size or 0))
+            self._update_state = {
+                "status": "downloading",
+                "stage": "checksum",
+                "downloaded_bytes": 0,
+                "total_bytes": total,
+                "percent": 0,
+                "message": "Preparing update package download...",
+                "sha256": "",
+                "mode": "",
+                "error": None,
+            }
+
+        def _worker() -> None:
+            def on_progress(stage: str, downloaded: int, total_bytes: int, message: str) -> None:
+                pct = 0
+                if total_bytes > 0:
+                    pct = min(99 if stage == "downloading" else 100, int((downloaded / total_bytes) * 100))
+                status = "verifying" if stage == "verifying" else "downloading"
+                with self._update_lock:
+                    self._update_state["status"] = status
+                    self._update_state["stage"] = stage
+                    self._update_state["downloaded_bytes"] = downloaded
+                    self._update_state["total_bytes"] = total_bytes
+                    self._update_state["percent"] = pct
+                    self._update_state["message"] = message
+
+            try:
+                dl = download_and_verify_update(
+                    asset_url,
+                    asset_name,
+                    sha256_url,
+                    progress_cb=on_progress,
+                    expected_size=expected_size,
+                )
+                if not dl.get("ok"):
+                    with self._update_lock:
+                        self._update_state["status"] = "error"
+                        self._update_state["stage"] = "error"
+                        self._update_state["error"] = dl.get("error") or "Update download failed."
+                    return
+
+                with self._update_lock:
+                    self._update_state["status"] = "launching"
+                    self._update_state["stage"] = "launching"
+                    self._update_state["percent"] = 100
+                    self._update_state["sha256"] = dl.get("sha256", "")
+                    self._update_state["message"] = "Verified checksum. Closing DriveSweep and starting Setup..."
+
+                launch = launch_downloaded_update(dl["file_path"])
+                if not launch.get("ok"):
+                    with self._update_lock:
+                        self._update_state["status"] = "error"
+                        self._update_state["stage"] = "error"
+                        self._update_state["error"] = launch.get("error") or "Could not start installer."
+                    return
+
+                with self._update_lock:
+                    self._update_state["mode"] = launch.get("mode", "setup")
+
+                if launch.get("should_exit") and self._window:
+                    threading.Timer(0.35, self._window.destroy).start()
+            except Exception as exc:
+                with self._update_lock:
+                    self._update_state["status"] = "error"
+                    self._update_state["stage"] = "error"
+                    self._update_state["error"] = str(exc)
+
+        self._update_thread = threading.Thread(target=_worker, daemon=True)
+        self._update_thread.start()
+        return self.get_update_status()
+
+    def get_update_status(self) -> dict:
+        with self._update_lock:
+            return dict(self._update_state)
 
     def open_data_dir(self) -> dict:
         return self.open_in_explorer(str(get_app_data_dir()))
