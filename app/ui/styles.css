@@ -155,12 +155,42 @@ html, body {
 
 .sidebar-mini-btn {
   background: transparent;
-  border: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
   color: var(--accent-2);
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;
-  padding: 0;
+  padding: 3px 8px;
+  text-transform: none;
+  letter-spacing: 0;
+  transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+}
+.sidebar-mini-btn:hover:not(:disabled) {
+  background: var(--surface-2);
+  border-color: var(--border);
+}
+.sidebar-mini-btn:focus:not(:focus-visible) { outline: none; }
+.sidebar-mini-btn:focus-visible {
+  outline: 2px solid rgba(59, 130, 246, 0.55);
+  outline-offset: 1px;
+}
+.sidebar-mini-btn:disabled { cursor: default; opacity: 0.78; }
+.sidebar-mini-btn.is-busy { color: var(--muted); }
+.sidebar-mini-btn.is-done {
+  color: var(--good);
+  background: rgba(16, 185, 129, 0.12);
+  border-color: rgba(16, 185, 129, 0.3);
+}
+.sidebar-mini-btn.is-error { color: var(--danger); }
+
+@keyframes drivePulse {
+  0% { border-color: var(--accent-2); box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2); }
+  100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+}
+.side-drive.drive-refreshed,
+.drive-card.drive-refreshed {
+  animation: drivePulse 0.65s ease-out;
 }
 
 .nav-list { display: flex; flex-direction: column; gap: 3px; }

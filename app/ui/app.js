@@ -245,17 +245,24 @@ function switchExplorerSubView(subName) {
   document.querySelectorAll(".subview").forEach((v) => v.classList.toggle("active", v.id === `subview-${subName}`));
 }
 
-function renderDrives(drives) {
+function renderDrives(drives, pulse = false) {
   state.drives = drives || [];
+  if (state.activeDriveRoot) {
+    const stillPresent = state.drives.some((d) => d.path === state.activeDriveRoot);
+    if (!stillPresent) {
+      state.activeDriveRoot = null;
+    }
+  }
   const sideEl = document.getElementById("sidebar-drives");
   const cardsEl = document.getElementById("drive-cards");
 
   const gaugeClass = (pct) => (pct >= 90 ? "danger" : pct >= 75 ? "warn" : "");
+  const pulseCls = pulse ? " drive-refreshed" : "";
 
   sideEl.innerHTML = state.drives
     .map(
       (d) => `
-      <button class="side-drive ${state.activeDriveRoot === d.path ? "active" : ""}" data-drive="${escapeHtml(d.path)}">
+      <button class="side-drive ${state.activeDriveRoot === d.path ? "active" : ""}${pulseCls}" data-drive="${escapeHtml(d.path)}">
         <div class="side-drive-top">
           <span>Drive ${escapeHtml(d.name)}</span>
           <span class="muted">${d.used_percent}%</span>
@@ -271,7 +278,7 @@ function renderDrives(drives) {
   cardsEl.innerHTML = state.drives
     .map(
       (d) => `
-      <button class="drive-card ${state.activeDriveRoot === d.path ? "active" : ""}" data-drive="${escapeHtml(d.path)}">
+      <button class="drive-card ${state.activeDriveRoot === d.path ? "active" : ""}${pulseCls}" data-drive="${escapeHtml(d.path)}">
         <div class="drive-card-top">
           <span>Drive ${escapeHtml(d.name)}</span>
           <span class="muted small-text">${escapeHtml(d.fstype)}</span>
@@ -540,6 +547,11 @@ function updateHeaderUpdateBadge(u) {
 /* ==================== TAB 1: SMART CACHE SCAN ==================== */
 
 async function loadSmartScan() {
+  const rescanBtn = document.getElementById("btn-smart-scan");
+  if (rescanBtn) {
+    rescanBtn.disabled = true;
+    rescanBtn.textContent = "Scanning...";
+  }
   document.getElementById("smart-count-sub").textContent = "Scanning locations...";
   const groupsEl = document.getElementById("smart-groups");
   groupsEl.innerHTML = "";
@@ -566,6 +578,11 @@ async function loadSmartScan() {
     renderSmartGroups();
   } catch (err) {
     document.getElementById("smart-count-sub").textContent = `Scan failed: ${String(err)}`;
+  } finally {
+    if (rescanBtn) {
+      rescanBtn.disabled = false;
+      rescanBtn.textContent = "Re-scan";
+    }
   }
 }
 
@@ -1375,6 +1392,44 @@ async function runCleanup(items, mode) {
   );
 }
 
+let refreshResetTimer = null;
+
+async function handleRefreshDrives() {
+  const btn = document.getElementById("btn-refresh-drives");
+  if (!btn || btn.disabled) return;
+  if (refreshResetTimer) {
+    clearTimeout(refreshResetTimer);
+    refreshResetTimer = null;
+  }
+
+  btn.disabled = true;
+  btn.classList.remove("is-done", "is-error");
+  btn.classList.add("is-busy");
+  btn.textContent = "Refreshing...";
+
+  try {
+    const [drives] = await Promise.all([
+      api().refresh_drives(),
+      new Promise((resolve) => setTimeout(resolve, 240)),
+    ]);
+    renderDrives(drives, true);
+    btn.classList.remove("is-busy");
+    btn.classList.add("is-done");
+    btn.textContent = "Updated";
+  } catch (_err) {
+    btn.classList.remove("is-busy");
+    btn.classList.add("is-error");
+    btn.textContent = "Failed";
+  } finally {
+    btn.disabled = false;
+    refreshResetTimer = setTimeout(() => {
+      btn.classList.remove("is-busy", "is-done", "is-error");
+      btn.textContent = "Refresh";
+      refreshResetTimer = null;
+    }, 1600);
+  }
+}
+
 /* ==================== BOOTSTRAP & EVENT LISTENERS ==================== */
 
 function bindEvents() {
@@ -1419,10 +1474,7 @@ function bindEvents() {
     });
   });
 
-  document.getElementById("btn-refresh-drives").addEventListener("click", async () => {
-    const drives = await api().refresh_drives();
-    renderDrives(drives);
-  });
+  document.getElementById("btn-refresh-drives").addEventListener("click", handleRefreshDrives);
 
   document.getElementById("btn-exclusions").addEventListener("click", openExclusionsModal);
   document.getElementById("btn-history").addEventListener("click", openHistoryModal);

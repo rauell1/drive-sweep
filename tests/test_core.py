@@ -417,3 +417,10 @@ def test_universal_windows_cache_safety_and_dynamic_discovery(tmp_path: Path):
     assert str(local_app / "OtherApp-updater") in paths_str
     assert str(local_app / "Microsoft" / "Cache") not in paths_str
     assert "Desktop Apps" in groups
+
+    from app.api import DriveSweepAPI
+
+    api = DriveSweepAPI()
+    refreshed = api.refresh_drives()
+    assert isinstance(refreshed, list) and len(refreshed) >= 1
+    assert {"path", "name", "free_human", "total_human", "used_percent"} <= set(refreshed[0].keys())
