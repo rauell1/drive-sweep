@@ -133,6 +133,12 @@ html, body {
   background: var(--surface-2);
   border: 1px solid var(--border);
   color: var(--muted);
+  cursor: pointer;
+}
+.ver-chip.update-ready {
+  background: rgba(59, 130, 246, 0.16);
+  border-color: rgba(59, 130, 246, 0.38);
+  color: var(--accent);
 }
 
 .sidebar-section-label {

@@ -15,6 +15,11 @@ const ICON_MOON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" s
 
 const state = {
   theme: "dark",
+  version: "0.2.0",
+  dataDir: "",
+  installKind: "source",
+  autoCheckUpdates: true,
+  latestUpdateInfo: null,
   drives: [],
   smartItems: [],
   exclusions: [],
@@ -406,6 +411,130 @@ async function openHistoryModal() {
       { text: "Close", cls: "btn-primary", onClick: closeModal },
     ]
   );
+}
+
+async function openUpdatesPrivacyModal(runCheckNow = false) {
+  const renderBody = (statusHtml) => `
+    <div class="summary-strip" style="margin-bottom:12px;">
+      <div>
+        <div style="font-weight:700;">100% Local Data &amp; Zero Telemetry</div>
+        <div class="muted small-text" style="margin-top:2px;">
+          All settings, exclusions, and cleanup history stay on this device at:
+        </div>
+        <div class="item-subpath" style="margin-top:4px;">${escapeHtml(state.dataDir)}</div>
+      </div>
+      <button id="btn-open-data-dir" class="btn btn-soft btn-sm">Open Folder</button>
+    </div>
+
+    <label class="review-row" style="cursor:pointer;margin-bottom:12px;">
+      <div>
+        <div style="font-weight:600;font-size:13px;">Check GitHub Releases on startup</div>
+        <div class="muted small-text">Uses a read-only GET to public GitHub Releases. Never sends logs or device info.</div>
+      </div>
+      <label class="toggle-switch">
+        <input id="chk-auto-updates" type="checkbox" ${state.autoCheckUpdates ? "checked" : ""} />
+        <span class="toggle-slider"></span>
+      </label>
+    </label>
+
+    <div id="update-status-panel" class="summary-strip">${statusHtml}</div>
+  `;
+
+  const formatUpdatePanel = (u) => {
+    if (!u) {
+      return `<div><strong>Current Version:</strong> v${escapeHtml(state.version)}<div class="muted small-text">Click "Check for Updates" to check GitHub Releases.</div></div>`;
+    }
+    if (!u.ok) {
+      return `<div><strong>Update check failed</strong><div class="muted small-text">${escapeHtml(u.error || "Network error")}</div></div>`;
+    }
+    if (!u.update_available) {
+      return `<div><strong>Up to date (v${escapeHtml(state.version)})</strong><div class="muted small-text">Latest release on GitHub is v${escapeHtml(u.latest_version)}.</div></div>`;
+    }
+    return `
+      <div style="width:100%;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+          <div>
+            <strong>Update Available: v${escapeHtml(u.latest_version)}</strong>
+            <span class="badge badge-info">Installed: v${escapeHtml(state.version)}</span>
+          </div>
+          <span class="muted small-text">${escapeHtml(u.asset_name || "GitHub Release")}</span>
+        </div>
+        <div class="muted small-text" style="margin-top:6px;">
+          Downloads directly from GitHub Releases and verifies SHA-256 against SHA256SUMS.txt before asking Windows to install.
+        </div>
+      </div>`;
+  };
+
+  const buildFooterButtons = () => {
+    const btns = [
+      {
+        text: "Check for Updates",
+        cls: "btn-soft",
+        onClick: async () => {
+          const panel = document.getElementById("update-status-panel");
+          if (panel) panel.innerHTML = `<div class="muted">Checking GitHub Releases...</div>`;
+          const res = await api().check_for_updates();
+          state.latestUpdateInfo = res;
+          updateHeaderUpdateBadge(res);
+          openUpdatesPrivacyModal(false);
+        },
+      },
+    ];
+    const u = state.latestUpdateInfo;
+    if (u && u.ok && u.update_available && u.asset_url && u.sha256_url) {
+      btns.push({
+        text: `Verify SHA-256 & Install v${u.latest_version}`,
+        cls: "btn-cta",
+        onClick: async () => {
+          const panel = document.getElementById("update-status-panel");
+          if (panel) panel.innerHTML = `<div class="muted">Downloading and verifying SHA-256 checksum...</div>`;
+          const res = await api().download_and_apply_update(u.asset_url, u.asset_name, u.sha256_url);
+          if (!res.ok) {
+            if (panel) panel.innerHTML = `<div class="warning-box" style="margin:0;width:100%;">${escapeHtml(res.error || "Update failed.")}</div>`;
+            return;
+          }
+          if (panel) panel.innerHTML = `<div class="muted">Verified SHA-256 (${escapeHtml(res.sha256.slice(0, 12))}...). Launching installer...</div>`;
+        },
+      });
+    }
+    btns.push({ text: "Close", cls: "btn-primary", onClick: closeModal });
+    return btns;
+  };
+
+  showModal(
+    "Updates & Local Privacy",
+    renderBody(formatUpdatePanel(state.latestUpdateInfo)),
+    buildFooterButtons()
+  );
+
+  document.getElementById("btn-open-data-dir")?.addEventListener("click", () => api().open_data_dir());
+  document.getElementById("chk-auto-updates")?.addEventListener("change", async (e) => {
+    state.autoCheckUpdates = !!e.target.checked;
+    await api().set_auto_check_updates(state.autoCheckUpdates);
+  });
+
+  if (runCheckNow) {
+    const panel = document.getElementById("update-status-panel");
+    if (panel) panel.innerHTML = `<div class="muted">Checking GitHub Releases...</div>`;
+    const res = await api().check_for_updates();
+    state.latestUpdateInfo = res;
+    updateHeaderUpdateBadge(res);
+    openUpdatesPrivacyModal(false);
+  }
+}
+
+function updateHeaderUpdateBadge(u) {
+  const chip = document.getElementById("app-version");
+  const navBadge = document.getElementById("update-nav-badge");
+  if (u && u.ok && u.update_available) {
+    chip.classList.add("update-ready");
+    chip.title = `Update available: v${u.latest_version}. Click to view.`;
+    navBadge?.classList.remove("hidden");
+  } else {
+    chip.classList.remove("update-ready");
+    chip.title = "View updates and local privacy settings";
+    navBadge?.classList.add("hidden");
+  }
 }
 
 /* ==================== TAB 1: SMART CACHE SCAN ==================== */
@@ -1387,6 +1516,8 @@ function bindEvents() {
 
   document.getElementById("btn-review-queue").addEventListener("click", openReviewModal);
   document.getElementById("btn-clean-now").addEventListener("click", openConfirmCleanModal);
+  document.getElementById("btn-updates-privacy").addEventListener("click", () => openUpdatesPrivacyModal(false));
+  document.getElementById("app-version").addEventListener("click", () => openUpdatesPrivacyModal(false));
   document.getElementById("modal-close").addEventListener("click", closeModal);
 }
 
@@ -1396,7 +1527,11 @@ async function initApp() {
   applyTheme(info.theme || "dark");
   state.isAdmin = !!info.is_admin;
   state.osName = info.os || "Windows";
-  document.getElementById("app-version").textContent = `v${info.version}`;
+  state.version = info.version || "0.2.0";
+  state.dataDir = info.data_dir || "";
+  state.installKind = info.install_kind || "source";
+  state.autoCheckUpdates = info.auto_check_updates !== false;
+  document.getElementById("app-version").textContent = `v${state.version}`;
   updateHeaderCounts(info.exclusions || [], info.history_count || 0);
 
   if (state.isAdmin) {
@@ -1409,6 +1544,13 @@ async function initApp() {
 
   renderDrives(info.drives);
   await loadSmartScan();
+
+  if (state.autoCheckUpdates) {
+    api().check_for_updates().then((u) => {
+      state.latestUpdateInfo = u;
+      updateHeaderUpdateBadge(u);
+    }).catch(() => {});
+  }
 }
 
 if (window.pywebview && window.pywebview.api) {

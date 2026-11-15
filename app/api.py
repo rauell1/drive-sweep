@@ -6,6 +6,7 @@ import os
 import platform
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import webview
@@ -28,8 +29,16 @@ from app.storage import (
     get_exclusions,
     get_history,
     get_theme,
+    load_settings,
     remove_exclusion,
+    set_auto_check_updates,
     set_theme,
+)
+from app.updater import (
+    check_for_updates as updater_check,
+    detect_install_kind,
+    download_and_verify_update,
+    launch_downloaded_update,
 )
 
 
@@ -44,20 +53,43 @@ class DriveSweepAPI:
         self._window = window
 
     def get_app_info(self) -> dict:
+        settings = load_settings()
         return {
             "version": __version__,
             "os": platform.system(),
             "home": str(Path.home()),
             "drives": list_drives(),
             "is_admin": is_admin(),
-            "exclusions": get_exclusions(),
+            "exclusions": settings["exclusions"],
             "history_count": len(get_history(limit=200)),
-            "theme": get_theme(),
+            "theme": settings["theme"],
+            "auto_check_updates": settings["auto_check_updates"],
+            "install_kind": detect_install_kind(),
             "data_dir": str(get_app_data_dir()),
         }
 
     def set_theme(self, theme: str) -> dict:
         return set_theme(theme)
+
+    def set_auto_check_updates(self, enabled: bool) -> dict:
+        return set_auto_check_updates(bool(enabled))
+
+    def check_for_updates(self) -> dict:
+        return updater_check(current_version=__version__)
+
+    def download_and_apply_update(self, asset_url: str, asset_name: str, sha256_url: str) -> dict:
+        dl = download_and_verify_update(asset_url, asset_name, sha256_url)
+        if not dl.get("ok"):
+            return dl
+        launch = launch_downloaded_update(dl["file_path"])
+        if not launch.get("ok"):
+            return launch
+        if launch.get("should_exit") and self._window:
+            threading.Timer(0.25, self._window.destroy).start()
+        return {**launch, "sha256": dl.get("sha256", "")}
+
+    def open_data_dir(self) -> dict:
+        return self.open_in_explorer(str(get_app_data_dir()))
 
     def refresh_drives(self) -> list[dict]:
         return list_drives()

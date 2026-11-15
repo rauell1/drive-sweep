@@ -318,3 +318,70 @@ def test_ensure_admin_or_relaunch(monkeypatch):
     # If user declines UAC, returns True cleanly instead of looping infinitely
     monkeypatch.setattr(entry_main, "relaunch_as_admin", lambda: {"ok": False, "error": "cancelled"})
     assert entry_main.ensure_admin_or_relaunch([]) is True
+
+
+def test_updater_semver_sha256_and_url_verification(tmp_path: Path, monkeypatch):
+    import hashlib
+    import io
+    import app.updater as updater
+
+    assert updater.is_newer_version("v0.2.1", "0.2.0") is True
+    assert updater.is_newer_version("v0.2.0", "0.2.0") is False
+    assert updater.is_newer_version("v0.1.9", "0.2.0") is False
+
+    assert updater.verify_https_github_url("https://github.com/rauell1/drive-sweep/releases/download/v0.2.1/DriveSweep-Setup-0.2.1.exe") is True
+    assert updater.verify_https_github_url("https://objects.githubusercontent.com/abc/DriveSweep.exe") is True
+    assert updater.verify_https_github_url("http://github.com/rauell1/drive-sweep/releases") is False
+    assert updater.verify_https_github_url("https://evil.example.com/DriveSweep.exe") is False
+
+    assets = [
+        {"name": "DriveSweep.exe", "browser_download_url": "https://github.com/a/DriveSweep.exe"},
+        {"name": "DriveSweep-Setup-0.2.1.exe", "browser_download_url": "https://github.com/a/DriveSweep-Setup-0.2.1.exe"},
+        {"name": "SHA256SUMS.txt", "browser_download_url": "https://github.com/a/SHA256SUMS.txt"},
+    ]
+    assert updater.pick_release_asset(assets, "setup")["name"] == "DriveSweep-Setup-0.2.1.exe"
+    assert updater.pick_release_asset(assets, "onefile_exe")["name"] == "DriveSweep.exe"
+
+    payload = b"MZ-mock-installer-binary"
+    good_hash = hashlib.sha256(payload).hexdigest()
+    bad_hash = "0" * 64
+    sums_good = f"{good_hash}  DriveSweep-Setup-0.2.1.exe\n".encode("utf-8")
+    sums_bad = f"{bad_hash}  DriveSweep-Setup-0.2.1.exe\n".encode("utf-8")
+
+    class FakeResp(io.BytesIO):
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            self.close()
+
+    monkeypatch.setenv("TEMP", str(tmp_path))
+    monkeypatch.setenv("TMP", str(tmp_path))
+    import tempfile
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+
+    def fake_urlopen_good(req, timeout=15.0):
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+        return FakeResp(sums_good if "SHA256SUMS" in url else payload)
+
+    monkeypatch.setattr(updater.urllib.request, "urlopen", fake_urlopen_good)
+    ok_res = updater.download_and_verify_update(
+        "https://github.com/rauell1/drive-sweep/releases/download/v0.2.1/DriveSweep-Setup-0.2.1.exe",
+        "DriveSweep-Setup-0.2.1.exe",
+        "https://github.com/rauell1/drive-sweep/releases/download/v0.2.1/SHA256SUMS.txt",
+    )
+    assert ok_res["ok"] is True
+    assert ok_res["sha256"] == good_hash
+    assert Path(ok_res["file_path"]).exists()
+
+    def fake_urlopen_bad(req, timeout=15.0):
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+        return FakeResp(sums_bad if "SHA256SUMS" in url else payload)
+
+    monkeypatch.setattr(updater.urllib.request, "urlopen", fake_urlopen_bad)
+    bad_res = updater.download_and_verify_update(
+        "https://github.com/rauell1/drive-sweep/releases/download/v0.2.1/DriveSweep-Setup-0.2.1.exe",
+        "DriveSweep-Setup-0.2.1.exe",
+        "https://github.com/rauell1/drive-sweep/releases/download/v0.2.1/SHA256SUMS.txt",
+    )
+    assert bad_res["ok"] is False
+    assert "verification failed" in bad_res["error"].lower()

@@ -68,7 +68,8 @@ try {
 
     # 6. Write SHA256SUMS.txt
     $hashLines = @()
-    foreach ($file in @("dist\DriveSweep.exe", "dist\DriveSweep-win64.zip", "dist\DriveSweep-Setup-0.2.0.exe")) {
+    $targets = @("dist\DriveSweep.exe", "dist\DriveSweep-win64.zip") + @(Get-ChildItem (Join-Path $Root "dist\DriveSweep-Setup-*.exe") -ErrorAction SilentlyContinue | ForEach-Object { "dist\$($_.Name)" })
+    foreach ($file in $targets) {
         $full = Join-Path $Root $file
         if (Test-Path $full) {
             $h = (Get-FileHash -Path $full -Algorithm SHA256).Hash.ToLower()

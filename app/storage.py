@@ -41,7 +41,12 @@ def _norm_path(raw_path: str) -> str:
 
 def load_settings() -> dict:
     path = _settings_path()
-    default = {"exclusions": [], "default_delete_mode": "recycle", "theme": "dark"}
+    default = {
+        "exclusions": [],
+        "default_delete_mode": "recycle",
+        "theme": "dark",
+        "auto_check_updates": True,
+    }
     if not path.exists():
         return default
     try:
@@ -61,6 +66,7 @@ def load_settings() -> dict:
             "exclusions": [str(x) for x in exclusions if x],
             "default_delete_mode": mode,
             "theme": theme,
+            "auto_check_updates": bool(data.get("auto_check_updates", True)),
         }
     except Exception:
         return default
@@ -78,6 +84,7 @@ def save_settings(settings: dict) -> dict:
         "exclusions": list(dict.fromkeys(str(x) for x in settings.get("exclusions", []) if x)),
         "default_delete_mode": mode,
         "theme": theme,
+        "auto_check_updates": bool(settings.get("auto_check_updates", True)),
     }
     path.write_text(json.dumps(cleaned, indent=2), encoding="utf-8")
     return cleaned
@@ -130,6 +137,12 @@ def set_default_delete_mode(mode: str) -> dict:
     settings = load_settings()
     if mode in ("recycle", "permanent"):
         settings["default_delete_mode"] = mode
+    return save_settings(settings)
+
+
+def set_auto_check_updates(enabled: bool) -> dict:
+    settings = load_settings()
+    settings["auto_check_updates"] = bool(enabled)
     return save_settings(settings)
 
 
