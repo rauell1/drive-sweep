@@ -15,7 +15,7 @@ const ICON_MOON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" s
 
 const state = {
   theme: "dark",
-  version: "0.2.7",
+  version: "0.2.8",
   dataDir: "",
   installKind: "source",
   autoCheckUpdates: true,
@@ -32,6 +32,8 @@ const state = {
   scanTimer: null,
   isCleaning: false,
   isUpdating: false,
+  isCheckingUpdates: false,
+  modalToken: 0,
   browseState: { path: null, sort: "size", query: "", offset: 0, limit: 250 },
   allFilesState: { query: "", ext: "", minMb: 0, minAgeDays: 0, sort: "size", offset: 0, limit: 200 },
   devBloatMinAgeDays: 0,
@@ -438,6 +440,9 @@ async function openHistoryModal() {
 }
 
 async function openUpdatesPrivacyModal(runCheckNow = false) {
+  if (state.isUpdating && !document.getElementById("modal-backdrop")?.classList.contains("hidden")) {
+    return;
+  }
   const renderBody = (statusHtml) => `
     <div class="summary-strip" style="margin-bottom:12px;">
       <div>
@@ -562,16 +567,10 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
     const btns = [
       {
         id: "btn-update-check",
-        text: "Check for Updates",
+        text: state.isCheckingUpdates ? "Checking..." : "Check for Updates",
         cls: "btn-soft",
-        onClick: async () => {
-          const panel = document.getElementById("update-status-panel");
-          if (panel) panel.innerHTML = `<div class="muted">Checking GitHub Releases...</div>`;
-          const res = await api().check_for_updates();
-          state.latestUpdateInfo = res;
-          updateHeaderUpdateBadge(res);
-          openUpdatesPrivacyModal(false);
-        },
+        disabled: state.isCheckingUpdates || state.isUpdating,
+        onClick: () => runCheckInModal(modalToken),
       },
     ];
     const u = state.latestUpdateInfo;
@@ -580,14 +579,48 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
         id: "btn-update-install",
         text: `Download & Update v${u.latest_version}`,
         cls: "btn-cta",
+        disabled: state.isCheckingUpdates || state.isUpdating,
         onClick: () => runGuidedUpdate(u),
       });
     }
-    btns.push({ id: "btn-update-close", text: "Close", cls: "btn-primary", onClick: closeModal });
+    btns.push({
+      id: "btn-update-close",
+      text: "Close",
+      cls: "btn-primary",
+      disabled: state.isUpdating,
+      onClick: closeModal,
+    });
     return btns;
   };
 
-  showModal(
+  let modalToken = 0;
+
+  const runCheckInModal = async (expectedToken) => {
+    if (state.isCheckingUpdates || state.isUpdating) return;
+    state.isCheckingUpdates = true;
+    setModalFooterButtons(buildFooterButtons());
+    const panel = document.getElementById("update-status-panel");
+    if (panel) panel.innerHTML = `<div class="muted">Checking GitHub Releases...</div>`;
+    try {
+      const res = await api().check_for_updates();
+      state.latestUpdateInfo = res;
+      updateHeaderUpdateBadge(res);
+      if (state.modalToken !== expectedToken) return;
+      const curPanel = document.getElementById("update-status-panel");
+      if (curPanel) curPanel.innerHTML = formatUpdatePanel(res);
+    } catch (err) {
+      if (state.modalToken !== expectedToken) return;
+      const curPanel = document.getElementById("update-status-panel");
+      if (curPanel) curPanel.innerHTML = `<div class="warning-box" style="margin:0;width:100%;">${escapeHtml(String(err))}</div>`;
+    } finally {
+      state.isCheckingUpdates = false;
+      if (state.modalToken === expectedToken && !state.isUpdating) {
+        setModalFooterButtons(buildFooterButtons());
+      }
+    }
+  };
+
+  modalToken = showModal(
     "Updates & Local Privacy",
     renderBody(formatUpdatePanel(state.latestUpdateInfo)),
     buildFooterButtons()
@@ -599,13 +632,8 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
     await api().set_auto_check_updates(state.autoCheckUpdates);
   });
 
-  if (runCheckNow) {
-    const panel = document.getElementById("update-status-panel");
-    if (panel) panel.innerHTML = `<div class="muted">Checking GitHub Releases...</div>`;
-    const res = await api().check_for_updates();
-    state.latestUpdateInfo = res;
-    updateHeaderUpdateBadge(res);
-    openUpdatesPrivacyModal(false);
+  if (runCheckNow && !state.isUpdating) {
+    await runCheckInModal(modalToken);
   }
 }
 
@@ -1321,9 +1349,7 @@ function renderPager(elId, total, offset, limit, onPage) {
 
 /* ==================== MODALS & SAFETY PERMISSION GATES ==================== */
 
-function showModal(title, bodyHtml, footerButtons) {
-  document.getElementById("modal-title").textContent = title;
-  document.getElementById("modal-body").innerHTML = bodyHtml;
+function setModalFooterButtons(footerButtons) {
   const footer = document.getElementById("modal-footer");
   footer.innerHTML = "";
   for (const btnCfg of footerButtons) {
@@ -1335,10 +1361,19 @@ function showModal(title, bodyHtml, footerButtons) {
     btn.addEventListener("click", btnCfg.onClick);
     footer.appendChild(btn);
   }
+}
+
+function showModal(title, bodyHtml, footerButtons) {
+  state.modalToken += 1;
+  document.getElementById("modal-title").textContent = title;
+  document.getElementById("modal-body").innerHTML = bodyHtml;
+  setModalFooterButtons(footerButtons);
   document.getElementById("modal-backdrop").classList.remove("hidden");
+  return state.modalToken;
 }
 
 function closeModal() {
+  state.modalToken += 1;
   document.getElementById("modal-backdrop").classList.add("hidden");
 }
 
@@ -1804,7 +1839,7 @@ async function initApp() {
   applyTheme(info.theme || "dark");
   state.isAdmin = !!info.is_admin;
   state.osName = info.os || "Windows";
-  state.version = info.version || "0.2.7";
+  state.version = info.version || "0.2.8";
   state.dataDir = info.data_dir || "";
   state.installKind = info.install_kind || "source";
   state.autoCheckUpdates = info.auto_check_updates !== false;

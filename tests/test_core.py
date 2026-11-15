@@ -472,7 +472,7 @@ def test_sanitized_subprocess_env_strips_pyi_markers(tmp_path: Path, monkeypatch
     assert "_PYI_PARENT_PROCESS_LEVEL" not in captured["env"]
     assert "_MEIPASS2" not in captured["env"]
 
-    setup_exe = tmp_path / "DriveSweep-Setup-0.2.7.exe"
+    setup_exe = tmp_path / "DriveSweep-Setup-0.2.8.exe"
     setup_exe.write_bytes(b"MZ")
     setup_res = updater.launch_downloaded_update(str(setup_exe), install_kind="setup")
     assert setup_res["ok"] is True
@@ -480,9 +480,11 @@ def test_sanitized_subprocess_env_strips_pyi_markers(tmp_path: Path, monkeypatch
     cmd_joined = " ".join(captured["cmd"])
     assert "powershell" in captured["cmd"][0].lower()
     assert "/AUTOSTART=1" in cmd_joined
+    assert "/FORCECLOSEAPPLICATIONS" in cmd_joined
     assert "/NORESTARTAPPLICATIONS" in cmd_joined
     assert "/SILENT" in cmd_joined
     assert captured["env"].get("DRIVESWEEP_SETUP_EXE") == str(setup_exe.resolve())
+    assert "DRIVESWEEP_PPID" in captured["env"]
     assert "_PYI_PARENT_PROCESS_LEVEL" not in captured["env"]
 
 
@@ -595,3 +597,31 @@ def test_async_update_install_progress_and_stale_cleanup(tmp_path: Path, monkeyp
     assert len(launched) == 1
     assert launched[0].endswith("DriveSweep-Setup-0.2.7.exe")
     assert Path(launched[0]).exists()
+
+
+def test_update_check_web_fallback_on_rate_limit(monkeypatch):
+    import io
+    import urllib.error
+    import app.updater as updater
+
+    class FakeWebResp(io.BytesIO):
+        def geturl(self):
+            return "https://github.com/rauell1/drive-sweep/releases/tag/v0.9.9"
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            self.close()
+
+    def fake_urlopen(req, timeout=8.0):
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+        if "api.github.com" in url:
+            raise urllib.error.HTTPError(url, 403, "rate limit exceeded", {}, None)
+        return FakeWebResp(b'{"tag_name": "v0.9.9"}')
+
+    monkeypatch.setattr(updater.urllib.request, "urlopen", fake_urlopen)
+    res = updater.check_for_updates(current_version="0.2.8")
+    assert res["ok"] is True
+    assert res["update_available"] is True
+    assert res["latest_version"] == "0.9.9"
+    assert res["asset_name"] == "DriveSweep-Setup-0.9.9.exe"
+    assert res["sha256_url"].endswith("/v0.9.9/SHA256SUMS.txt")

@@ -130,6 +130,61 @@ def cleanup_stale_updates() -> None:
         pass
 
 
+LATEST_RELEASE_WEB = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
+
+
+def _check_updates_via_web_redirect(
+    current_version: str,
+    install_kind: str,
+    timeout: float,
+) -> dict | None:
+    """Rate-limit-free fallback using github.com/releases/latest when api.github.com throttles."""
+    req = urllib.request.Request(
+        LATEST_RELEASE_WEB,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": f"DriveSweep/{current_version}",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            final_url = str(resp.geturl() or "")
+            raw = resp.read().decode("utf-8", errors="replace")
+    except Exception:
+        return None
+
+    tag = ""
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            tag = str(data.get("tag_name") or "").strip()
+    except Exception:
+        tag = ""
+    if not tag and "/releases/tag/" in final_url:
+        tag = final_url.rsplit("/releases/tag/", 1)[-1].split("?")[0].strip()
+    if not tag:
+        return None
+
+    latest_ver = tag.lstrip("vV") or current_version
+    asset_name = f"DriveSweep-Setup-{latest_ver}.exe"
+    asset_url = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases/download/{tag}/{asset_name}"
+    sha256_url = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases/download/{tag}/SHA256SUMS.txt"
+    return {
+        "ok": True,
+        "current_version": current_version,
+        "latest_version": latest_ver,
+        "update_available": is_newer_version(tag, current_version),
+        "install_kind": install_kind,
+        "release_url": f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases/tag/{tag}",
+        "release_notes": "",
+        "asset_name": asset_name,
+        "asset_url": asset_url,
+        "asset_size": 0,
+        "sha256_url": sha256_url,
+    }
+
+
 def check_for_updates(current_version: str = __version__, timeout: float = 8.0) -> dict:
     """Perform a read-only GET to public GitHub Releases without sending user/device data."""
     install_kind = detect_install_kind()
@@ -154,8 +209,15 @@ def check_for_updates(current_version: str = __version__, timeout: float = 8.0) 
                 "install_kind": install_kind,
                 "message": "No published updates found yet.",
             }
+        if exc.code in (403, 429):
+            fallback = _check_updates_via_web_redirect(current_version, install_kind, timeout)
+            if fallback is not None:
+                return fallback
         return {"ok": False, "error": f"Update check failed (HTTP {exc.code}).", "current_version": current_version}
     except Exception as exc:
+        fallback = _check_updates_via_web_redirect(current_version, install_kind, timeout)
+        if fallback is not None:
+            return fallback
         return {"ok": False, "error": f"Could not reach GitHub Releases: {exc}", "current_version": current_version}
 
     tag = str(payload.get("tag_name") or "").strip()
@@ -268,6 +330,21 @@ def download_and_verify_update(
     return {"ok": True, "file_path": str(dest_path), "sha256": actual_hash}
 
 
+def _pyinstaller_bootloader_ppid() -> int:
+    """Return parent bootloader PID if running frozen inside onefile DriveSweep.exe."""
+    if not getattr(sys, "frozen", False):
+        return 0
+    try:
+        import psutil
+
+        ppid = os.getppid()
+        if ppid > 0 and psutil.Process(ppid).name().lower() == "drivesweep.exe":
+            return ppid
+    except Exception:
+        pass
+    return 0
+
+
 def launch_downloaded_update(file_path: str, install_kind: str | None = None) -> dict:
     """Exit cleanly, launch the verified Setup package silently, and relaunch DriveSweep."""
     target = Path(file_path)
@@ -286,19 +363,22 @@ def launch_downloaded_update(file_path: str, install_kind: str | None = None) ->
         no_window_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | creation_flags
 
         if "setup" in name_lower and name_lower.endswith(".exe"):
+            ppid = _pyinstaller_bootloader_ppid()
             env = sanitized_subprocess_env({
                 "DRIVESWEEP_SETUP_EXE": str(target.resolve()),
                 "DRIVESWEEP_PID": str(os.getpid()),
+                "DRIVESWEEP_PPID": str(ppid),
             })
             ps_script = (
                 "$p=[int]$env:DRIVESWEEP_PID; "
+                "$pp=[int]$env:DRIVESWEEP_PPID; "
                 "$deadline=[DateTime]::UtcNow.AddSeconds(20); "
-                "while ((Get-Process -Id $p -ErrorAction SilentlyContinue) -and ([DateTime]::UtcNow -lt $deadline)) "
+                "while (((Get-Process -Id $p -ErrorAction SilentlyContinue) -or ($pp -gt 0 -and (Get-Process -Id $pp -ErrorAction SilentlyContinue))) -and ([DateTime]::UtcNow -lt $deadline)) "
                 "{ Start-Sleep -Milliseconds 200 }; "
-                "Start-Sleep -Milliseconds 350; "
+                "Start-Sleep -Milliseconds 400; "
                 "Get-ChildItem Env:_PYI_* -ErrorAction SilentlyContinue | Remove-Item -ErrorAction SilentlyContinue; "
                 "Remove-Item Env:_MEIPASS2 -ErrorAction SilentlyContinue; "
-                "$a = @('/SILENT','/SUPPRESSMSGBOXES','/NORESTART','/CLOSEAPPLICATIONS','/NORESTARTAPPLICATIONS','/AUTOSTART=1'); "
+                "$a = @('/SILENT','/SUPPRESSMSGBOXES','/NORESTART','/CLOSEAPPLICATIONS','/FORCECLOSEAPPLICATIONS','/NORESTARTAPPLICATIONS','/AUTOSTART=1'); "
                 "try { Start-Process -FilePath $env:DRIVESWEEP_SETUP_EXE -ArgumentList $a -ErrorAction Stop } "
                 "catch { & $env:DRIVESWEEP_SETUP_EXE $a }"
             )

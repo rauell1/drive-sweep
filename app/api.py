@@ -103,6 +103,25 @@ class DriveSweepAPI:
     def check_for_updates(self) -> dict:
         return updater_check(current_version=__version__)
 
+    def _schedule_clean_exit(self, delay: float = 0.35) -> None:
+        win = self._window
+        if win is None:
+            return
+
+        def _close_win() -> None:
+            try:
+                win.destroy()
+            except Exception:
+                os._exit(0)
+
+        t_close = threading.Timer(delay, _close_win)
+        t_close.daemon = True
+        t_close.start()
+
+        t_watchdog = threading.Timer(delay + 3.5, lambda: os._exit(0))
+        t_watchdog.daemon = True
+        t_watchdog.start()
+
     def download_and_apply_update(self, asset_url: str, asset_name: str, sha256_url: str) -> dict:
         dl = download_and_verify_update(asset_url, asset_name, sha256_url)
         if not dl.get("ok"):
@@ -110,8 +129,8 @@ class DriveSweepAPI:
         launch = launch_downloaded_update(dl["file_path"])
         if not launch.get("ok"):
             return launch
-        if launch.get("should_exit") and self._window:
-            threading.Timer(0.25, self._window.destroy).start()
+        if launch.get("should_exit"):
+            self._schedule_clean_exit(0.25)
         return {**launch, "sha256": dl.get("sha256", "")}
 
     def start_update_install(
@@ -184,8 +203,8 @@ class DriveSweepAPI:
                 with self._update_lock:
                     self._update_state["mode"] = launch.get("mode", "setup")
 
-                if launch.get("should_exit") and self._window:
-                    threading.Timer(0.35, self._window.destroy).start()
+                if launch.get("should_exit"):
+                    self._schedule_clean_exit(0.35)
             except Exception as exc:
                 with self._update_lock:
                     self._update_state["status"] = "error"
