@@ -148,7 +148,7 @@ class DriveSweepAPI:
     def check_for_updates(self) -> dict:
         return updater_check(current_version=__version__)
 
-    def _schedule_clean_exit(self, delay: float = 0.35) -> None:
+    def _schedule_clean_exit(self, delay: float = 0.1) -> None:
         win = self._window
         if win is None:
             return
@@ -163,7 +163,7 @@ class DriveSweepAPI:
         t_close.daemon = True
         t_close.start()
 
-        t_watchdog = threading.Timer(delay + 3.5, lambda: os._exit(0))
+        t_watchdog = threading.Timer(delay + 0.65, lambda: os._exit(0))
         t_watchdog.daemon = True
         t_watchdog.start()
 
@@ -175,7 +175,7 @@ class DriveSweepAPI:
         if not launch.get("ok"):
             return launch
         if launch.get("should_exit"):
-            self._schedule_clean_exit(0.25)
+            self._schedule_clean_exit(0.1)
         return {**launch, "sha256": dl.get("sha256", "")}
 
     def start_update_install(
@@ -235,7 +235,7 @@ class DriveSweepAPI:
                     self._update_state["stage"] = "launching"
                     self._update_state["percent"] = 100
                     self._update_state["sha256"] = dl.get("sha256", "")
-                    self._update_state["message"] = "Verified checksum. Closing DriveSweep and starting Setup..."
+                    self._update_state["message"] = "Verified checksum. Opening Windows installer..."
 
                 launch = launch_downloaded_update(dl["file_path"])
                 if not launch.get("ok"):
@@ -247,9 +247,10 @@ class DriveSweepAPI:
 
                 with self._update_lock:
                     self._update_state["mode"] = launch.get("mode", "setup")
+                    self._update_state["message"] = "Installer started. Closing DriveSweep to upgrade..."
 
                 if launch.get("should_exit"):
-                    self._schedule_clean_exit(0.35)
+                    self._schedule_clean_exit(0.1)
             except Exception as exc:
                 with self._update_lock:
                     self._update_state["status"] = "error"

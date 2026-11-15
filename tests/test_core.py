@@ -472,20 +472,29 @@ def test_sanitized_subprocess_env_strips_pyi_markers(tmp_path: Path, monkeypatch
     assert "_PYI_PARENT_PROCESS_LEVEL" not in captured["env"]
     assert "_MEIPASS2" not in captured["env"]
 
-    setup_exe = tmp_path / "DriveSweep-Setup-0.2.8.exe"
+    setup_exe = tmp_path / "DriveSweep-Setup-0.3.3.exe"
     setup_exe.write_bytes(b"MZ")
+    setup_calls: list[tuple[str, str]] = []
+
+    def fake_shell_setup(exe_path: Path, args_str: str):
+        setup_calls.append((str(exe_path), args_str))
+        return True, 42
+
+    monkeypatch.setattr(updater, "_launch_windows_setup", fake_shell_setup)
     setup_res = updater.launch_downloaded_update(str(setup_exe), install_kind="setup")
     assert setup_res["ok"] is True
     assert setup_res["mode"] == "setup"
-    cmd_joined = " ".join(captured["cmd"])
-    assert "powershell" in captured["cmd"][0].lower()
-    assert "/AUTOSTART=1" in cmd_joined
-    assert "/FORCECLOSEAPPLICATIONS" in cmd_joined
-    assert "/NORESTARTAPPLICATIONS" in cmd_joined
-    assert "/SILENT" in cmd_joined
-    assert captured["env"].get("DRIVESWEEP_SETUP_EXE") == str(setup_exe.resolve())
-    assert "DRIVESWEEP_PPID" in captured["env"]
-    assert "_PYI_PARENT_PROCESS_LEVEL" not in captured["env"]
+    assert len(setup_calls) == 1
+    assert setup_calls[0][0] == str(setup_exe.resolve())
+    assert "/AUTOSTART=1" in setup_calls[0][1]
+    assert "/FORCECLOSEAPPLICATIONS" in setup_calls[0][1]
+    assert "/NORESTARTAPPLICATIONS" in setup_calls[0][1]
+    assert "/SILENT" in setup_calls[0][1]
+
+    # If user cancels UAC (rc <= 32), updater reports cleanly without exiting
+    monkeypatch.setattr(updater, "_launch_windows_setup", lambda *_args: (False, 5))
+    denied_res = updater.launch_downloaded_update(str(setup_exe), install_kind="setup")
+    assert denied_res["ok"] is False
 
 
 def test_async_cleanup_progress_and_cancel(tmp_path: Path, monkeypatch):

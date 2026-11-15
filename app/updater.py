@@ -345,8 +345,42 @@ def _pyinstaller_bootloader_ppid() -> int:
     return 0
 
 
+def _strip_pyi_from_process_env() -> None:
+    """Remove PyInstaller _PYI_* / _MEIPASS2 variables before spawning an external installer."""
+    for key in [k for k in list(os.environ.keys()) if k.startswith("_PYI_") or k == "_MEIPASS2"]:
+        os.environ.pop(key, None)
+
+
+def _launch_windows_setup(setup_exe: Path, setup_args: str) -> tuple[bool, int]:
+    """Launch Inno Setup directly via ShellExecuteW so UAC appears immediately without PowerShell delay."""
+    import ctypes
+    import ctypes.wintypes as wintypes
+
+    _strip_pyi_from_process_env()
+    shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    shell32.ShellExecuteW.argtypes = [
+        wintypes.HWND,
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        ctypes.c_int,
+    ]
+    shell32.ShellExecuteW.restype = wintypes.HINSTANCE
+    hinst = shell32.ShellExecuteW(
+        None,
+        "open",
+        str(setup_exe),
+        setup_args,
+        str(setup_exe.parent),
+        1,
+    )
+    rc = int(hinst or 0)
+    return rc > 32, rc
+
+
 def launch_downloaded_update(file_path: str, install_kind: str | None = None) -> dict:
-    """Exit cleanly, launch the verified Setup package silently, and relaunch DriveSweep."""
+    """Launch the verified Setup package directly (instant UAC) and signal DriveSweep to exit."""
     target = Path(file_path)
     if not target.exists():
         return {"ok": False, "error": "Downloaded update file does not exist."}
@@ -363,31 +397,18 @@ def launch_downloaded_update(file_path: str, install_kind: str | None = None) ->
         no_window_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | creation_flags
 
         if "setup" in name_lower and name_lower.endswith(".exe"):
-            ppid = _pyinstaller_bootloader_ppid()
-            env = sanitized_subprocess_env({
-                "DRIVESWEEP_SETUP_EXE": str(target.resolve()),
-                "DRIVESWEEP_PID": str(os.getpid()),
-                "DRIVESWEEP_PPID": str(ppid),
-            })
-            ps_script = (
-                "$p=[int]$env:DRIVESWEEP_PID; "
-                "$pp=[int]$env:DRIVESWEEP_PPID; "
-                "$deadline=[DateTime]::UtcNow.AddSeconds(20); "
-                "while (((Get-Process -Id $p -ErrorAction SilentlyContinue) -or ($pp -gt 0 -and (Get-Process -Id $pp -ErrorAction SilentlyContinue))) -and ([DateTime]::UtcNow -lt $deadline)) "
-                "{ Start-Sleep -Milliseconds 200 }; "
-                "Start-Sleep -Milliseconds 400; "
-                "Get-ChildItem Env:_PYI_* -ErrorAction SilentlyContinue | Remove-Item -ErrorAction SilentlyContinue; "
-                "Remove-Item Env:_MEIPASS2 -ErrorAction SilentlyContinue; "
-                "$a = @('/SILENT','/SUPPRESSMSGBOXES','/NORESTART','/CLOSEAPPLICATIONS','/FORCECLOSEAPPLICATIONS','/NORESTARTAPPLICATIONS','/AUTOSTART=1'); "
-                "try { Start-Process -FilePath $env:DRIVESWEEP_SETUP_EXE -ArgumentList $a -ErrorAction Stop } "
-                "catch { & $env:DRIVESWEEP_SETUP_EXE $a }"
+            resolved_setup = target.resolve()
+            setup_args = (
+                "/SILENT /SUPPRESSMSGBOXES /NORESTART "
+                "/CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS "
+                "/NORESTARTAPPLICATIONS /AUTOSTART=1"
             )
-            subprocess.Popen(
-                ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_script],
-                env=env,
-                creationflags=no_window_flags,
-                close_fds=True,
-            )
+            ok, rc = _launch_windows_setup(resolved_setup, setup_args)
+            if not ok:
+                return {
+                    "ok": False,
+                    "error": f"Windows installer did not start (ShellExecute code {rc}). Try again or run Setup manually.",
+                }
             return {"ok": True, "should_exit": True, "mode": "setup"}
 
         if kind == "onefile_exe" and getattr(sys, "frozen", False):
