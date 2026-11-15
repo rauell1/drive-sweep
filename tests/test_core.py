@@ -424,3 +424,48 @@ def test_universal_windows_cache_safety_and_dynamic_discovery(tmp_path: Path):
     refreshed = api.refresh_drives()
     assert isinstance(refreshed, list) and len(refreshed) >= 1
     assert {"path", "name", "free_human", "total_human", "used_percent"} <= set(refreshed[0].keys())
+
+
+def test_sanitized_subprocess_env_strips_pyi_markers(tmp_path: Path, monkeypatch):
+    import sys
+    import app.updater as updater
+
+    monkeypatch.setenv("_PYI_PARENT_PROCESS_LEVEL", "1")
+    monkeypatch.setenv("_PYI_ARCHIVE_FILE", r"C:\old\DriveSweep.exe")
+    monkeypatch.setenv("_PYI_APPLICATION_HOME_DIR", r"C:\temp\_MEI123")
+    monkeypatch.setenv("_PYI_SPLASH_IPC", "999")
+    monkeypatch.setenv("_MEIPASS2", r"C:\temp\_MEI123")
+    monkeypatch.setenv("DRIVESWEEP_KEEP_ENV", "yes")
+
+    clean = safety.sanitized_subprocess_env({"EXTRA_KEY": "1"})
+    assert clean.get("DRIVESWEEP_KEEP_ENV") == "yes"
+    assert clean.get("EXTRA_KEY") == "1"
+    for bad_key in (
+        "_PYI_PARENT_PROCESS_LEVEL",
+        "_PYI_ARCHIVE_FILE",
+        "_PYI_APPLICATION_HOME_DIR",
+        "_PYI_SPLASH_IPC",
+        "_MEIPASS2",
+    ):
+        assert bad_key not in clean
+
+    fake_exe = tmp_path / "DriveSweep.exe"
+    fake_exe.write_bytes(b"MZ")
+    captured: dict = {}
+
+    def fake_popen(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["env"] = kwargs.get("env") or {}
+        class DummyProc:
+            pass
+        return DummyProc()
+
+    monkeypatch.setattr(updater.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    res = updater.launch_downloaded_update(str(fake_exe), install_kind="onefile_exe")
+    assert res["ok"] is True
+    assert res["mode"] == "portable_swap"
+    assert "_PYI_PARENT_PROCESS_LEVEL" not in captured["env"]
+    assert "_MEIPASS2" not in captured["env"]

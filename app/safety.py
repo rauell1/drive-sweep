@@ -71,12 +71,36 @@ def is_admin() -> bool:
         return False
 
 
+_PYI_ENV_EXACT = {"_MEIPASS2"}
+
+
+def sanitized_subprocess_env(extra: dict[str, str] | None = None) -> dict[str, str]:
+    """Return a copy of os.environ without PyInstaller onefile bootloader markers.
+
+    PyInstaller 6+ onefile executables fail with 'invalid originating onefile parent
+    process (PID not found)' if spawned by a child of an already-exited onefile app
+    that inherited _PYI_PARENT_PROCESS_LEVEL / _PYI_* environment variables.
+    """
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith("_PYI_") and k not in _PYI_ENV_EXACT
+    }
+    if extra:
+        env.update(extra)
+    return env
+
+
 def relaunch_as_admin() -> dict:
     """Prompt UAC elevation to restart DriveSweep with Administrator rights on Windows."""
     if os.name != "nt":
         return {"ok": False, "error": "Elevation prompt is only implemented for Windows."}
     if is_admin():
         return {"ok": True, "already_admin": True}
+    removed: dict[str, str] = {}
+    for key in list(os.environ.keys()):
+        if key.startswith("_PYI_") or key in _PYI_ENV_EXACT:
+            removed[key] = os.environ.pop(key)
     try:
         if getattr(sys, "frozen", False):
             exe = sys.executable
@@ -86,9 +110,11 @@ def relaunch_as_admin() -> dict:
             params = subprocess.list2cmdline(sys.argv)
         rc = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, params, None, 1)
         if rc <= 32:
+            os.environ.update(removed)
             return {"ok": False, "error": f"Elevation cancelled or failed (code {rc})."}
         return {"ok": True, "launching": True}
     except Exception as exc:
+        os.environ.update(removed)
         return {"ok": False, "error": str(exc)}
 
 

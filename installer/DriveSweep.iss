@@ -1,6 +1,6 @@
 ; Inno Setup script for DriveSweep Windows Installer
 #define MyAppName "DriveSweep"
-#define MyAppVersion "0.2.3"
+#define MyAppVersion "0.2.4"
 #define MyAppPublisher "DriveSweep"
 #define MyAppExeName "DriveSweep.exe"
 
@@ -37,3 +37,17 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+function ClearSetupEnvVar(lpName: string; lpValue: LongWord): BOOL;
+  external 'SetEnvironmentVariableW@kernel32.dll stdcall';
+
+function InitializeSetup(): Boolean;
+begin
+  ClearSetupEnvVar('_PYI_PARENT_PROCESS_LEVEL', 0);
+  ClearSetupEnvVar('_PYI_ARCHIVE_FILE', 0);
+  ClearSetupEnvVar('_PYI_APPLICATION_HOME_DIR', 0);
+  ClearSetupEnvVar('_PYI_SPLASH_IPC', 0);
+  ClearSetupEnvVar('_MEIPASS2', 0);
+  Result := True;
+end;

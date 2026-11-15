@@ -15,6 +15,7 @@ import urllib.request
 from pathlib import Path
 
 from app import __version__
+from app.safety import sanitized_subprocess_env
 
 GITHUB_OWNER = "rauell1"
 GITHUB_REPO = "drive-sweep"
@@ -222,32 +223,51 @@ def launch_downloaded_update(file_path: str, install_kind: str | None = None) ->
         return {"ok": False, "error": "Self-install updates are currently supported on Windows."}
 
     try:
+        clean_env = sanitized_subprocess_env()
+        creation_flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+
         if "setup" in name_lower and name_lower.endswith(".exe"):
             subprocess.Popen(
                 [str(target), "/SILENT", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS"],
+                env=clean_env,
+                creationflags=creation_flags,
                 close_fds=True,
             )
             return {"ok": True, "should_exit": True, "mode": "setup"}
 
         if kind == "onefile_exe" and getattr(sys, "frozen", False):
-            env = os.environ.copy()
-            env["DRIVESWEEP_OLD_EXE"] = str(Path(sys.executable).resolve())
-            env["DRIVESWEEP_NEW_EXE"] = str(target.resolve())
-            env["DRIVESWEEP_PID"] = str(os.getpid())
+            env = sanitized_subprocess_env({
+                "DRIVESWEEP_OLD_EXE": str(Path(sys.executable).resolve()),
+                "DRIVESWEEP_NEW_EXE": str(target.resolve()),
+                "DRIVESWEEP_PID": str(os.getpid()),
+            })
             ps_script = (
                 "$p=[int]$env:DRIVESWEEP_PID; "
                 "while (Get-Process -Id $p -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 250 }; "
-                "Move-Item -Force -Path $env:DRIVESWEEP_NEW_EXE -Destination $env:DRIVESWEEP_OLD_EXE; "
+                "Start-Sleep -Milliseconds 350; "
+                "Get-ChildItem Env:_PYI_* -ErrorAction SilentlyContinue | Remove-Item -ErrorAction SilentlyContinue; "
+                "Remove-Item Env:_MEIPASS2 -ErrorAction SilentlyContinue; "
+                "for ($i=0; $i -lt 10; $i++) { "
+                "  try { Move-Item -Force -Path $env:DRIVESWEEP_NEW_EXE -Destination $env:DRIVESWEEP_OLD_EXE -ErrorAction Stop; break } "
+                "  catch { Start-Sleep -Milliseconds 300 } "
+                "}; "
                 "Start-Process -FilePath $env:DRIVESWEEP_OLD_EXE"
             )
+            ps_flags = subprocess.CREATE_NO_WINDOW | creation_flags
             subprocess.Popen(
                 ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_script],
                 env=env,
+                creationflags=ps_flags,
                 close_fds=True,
             )
             return {"ok": True, "should_exit": True, "mode": "portable_swap"}
 
-        subprocess.Popen([str(target)], close_fds=True)
+        subprocess.Popen(
+            [str(target)],
+            env=clean_env,
+            creationflags=creation_flags,
+            close_fds=True,
+        )
         return {"ok": True, "should_exit": True, "mode": "launch"}
     except Exception as exc:
         return {"ok": False, "error": f"Failed to start installer: {exc}"}
