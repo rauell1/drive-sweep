@@ -16,7 +16,7 @@ Choose **Option A** (standard Windows installer, recommended for most users) or 
 ### Option A: Windows Installer (Recommended)
 
 1. Open the **[GitHub Releases](https://github.com/rauell1/drive-sweep/releases)** page.
-2. Under the latest release (**Assets** section at the bottom), click **`DriveSweep-Setup-0.2.8.exe`** (or the newest version listed) to download it.
+2. Under the latest release (**Assets** section at the bottom), click **`DriveSweep-Setup-0.3.0.exe`** (or the newest version listed) to download it.
 3. Open your `Downloads` folder and double-click the downloaded `DriveSweep-Setup-...exe` file.
 4. **If Windows shows a "Windows protected your PC" (SmartScreen) blue popup:**
    - This appears on new open-source Windows apps until code signing is complete. You can verify the file checksum against `SHA256SUMS.txt` on the Releases page if you wish.
@@ -36,25 +36,36 @@ Choose **Option A** (standard Windows installer, recommended for most users) or 
 
 ### 1. Quick Clean (Easiest Way to Free Space)
 1. When DriveSweep opens, **Quick Clean** scans your PC automatically for safe, regenerable temporary files and app caches.
-2. Each item is grouped clearly (`Windows & Temp`, `Web Browsers`, `Desktop Apps`, `AI & Coding Tools`, `Dev Editors & Packages`, `Other App Caches`) and labeled **Safe** or **Caution**.
-3. Turn toggles on or off for any item you want to clean or skip. Click **Open Folder** on any row to inspect the actual folder in Windows Explorer before deleting.
-4. Look at the bottom bar: keep **Recycle Bin (Safe)** selected (recommended), then click the blue **Clean** button and confirm.
+2. Each item is grouped clearly (`Windows & Temp`, `Web Browsers`, `Desktop Apps`, `AI & Coding Tools`, `Dev Editors & Packages`, `Custom Folders`, `Other App Caches`) and labeled **Safe** or **Caution**.
+3. Click **+ Add Custom Folder** anytime to save any custom cleanup folder to your **Custom Folders** list (critical Windows system folders stay blocked).
+4. Turn toggles on or off for any item you want to clean or skip. Click **Open Folder** on any row to inspect the actual folder in Windows Explorer before deleting.
+5. Look at the bottom bar: keep **Recycle Bin (Safe)** selected (recommended), then click the blue **Clean** button and confirm.
 
-### 2. Drive Scanner (Find What Is Filling Up Any Drive)
-1. Click **Drive Scanner** on the left sidebar, then click any drive (`Drive C:`, `Drive D:`, etc.) or **Scan Custom Folder...** to analyze a specific folder.
-2. Explore the 5 tabs:
-   - **Visual Summary:** Shows **Largest Folders**, **What Takes Up Space** (videos, archives, documents, code, other), **How Old Your Files Are**, and **Top Space Users**, plus safety cards (**System Files**, **Important Files**, **Standard Files**).
+### 2. Drive Scanner, Interactive Disk Map & Duplicate Finder
+1. Click **Drive Scanner** on the left sidebar, then click any drive (`Drive C:`, `Drive D:`, etc.) or **Scan Custom Folder...** to analyze a specific folder. When running as Administrator on a local NTFS drive root, DriveSweep automatically uses fast NTFS Master File Table (MFT) scanning and falls back seamlessly to standard multi-threaded scanning otherwise.
+2. Export full scan summaries anytime via **Export CSV** or **Export JSON**.
+3. Explore the 6 tabs:
+   - **Visual Summary:** Features an interactive proportional **Disk Map (Treemap)** with click-to-zoom folder drill-down and breadcrumbs, **What Takes Up Space**, **How Old Your Files Are**, and **Top Space Users**, plus safety cards (**System Files**, **Important Files**, **Standard Files**).
    - **Folders:** Browse folders from largest to smallest, check items to clean, or click **Keep** to protect a folder permanently.
    - **Find Any File:** Search by file name, extension (such as `.zip` or `.mp4`), minimum size in MB, or age (for example, files untouched for over 90 days).
    - **Biggest Files:** Quickly lists the largest individual files on the selected drive.
    - **Project Caches:** Finds old build and dependency folders (`node_modules`, `.venv`, `target`, `dist`, and similar) if you work on coding projects.
+   - **Duplicates:** Finds exact duplicate files using byte-size grouping and SHA-256 checksums, recommends keeping 1 copy per group, and lets you queue extra copies cleanly.
 
-### 3. Always Keep & Cleanup History
-- **Always Keep:** Any folder or file you mark **Keep** is protected from deletion across both Quick Clean and Drive Scanner. You can remove it from this list later if you change your mind.
-- **Cleanup History:** Shows a local record of past cleanups on your PC and lets you open **Updates & Privacy** to check for newer releases.
+### 3. Windows Space Tools
+Click **Windows Tools** on the left sidebar to inspect and reclaim space across:
+- **Windows Recycle Bin:** View item count and total size, open the Recycle Bin folder directly, or empty it after confirmation.
+- **Old Download Installers (> 30 days):** Spot old `.exe`, `.msi`, `.zip`, `.iso`, and archive installers in `Downloads` and queue selected ones for cleanup.
+- **WinSxS Component Store (DISM):** Safely analyze and clean superseded Windows Update backups when running as Administrator.
+- **Hibernation & Virtual Disks:** View `hiberfil.sys` size and locate large WSL2 / Docker `.vhdx` virtual disks.
 
-### 4. Automatic Updates via Setup
-Open **Updates & Privacy** (left sidebar) -> **Check for Updates**. DriveSweep checks GitHub Releases over HTTPS, shows live download progress for the verified Setup installer package, checks `SHA256SUMS.txt` before installing, closes DriveSweep cleanly so Setup can upgrade files in place, and relaunches the updated app automatically. Auto-checking on startup can be turned on or off anytime.
+### 4. Always Keep, Cleanup Log & Scheduled Low-Disk Reminders
+- **Always Keep:** Any folder or file you mark **Keep** is protected from deletion across Quick Clean, Drive Scanner, and Duplicates. You can remove it from this list later if you change your mind.
+- **Cleanup Log:** Shows a local record of past cleanups on your PC and includes an **Open Recycle Bin** button for quick restoration.
+- **Settings & Updates:** Switch UI language (`English`, `Espanol`, `Francais`, `Deutsch`, `Portugues`), configure an optional Windows Task Scheduler low-disk space reminder, verify local storage privacy, and check or install updates via GitHub Releases Setup.
+
+### 5. Automatic Updates via Setup
+Open **Settings & Updates** (left sidebar) -> **Check for Updates**. DriveSweep checks GitHub Releases over HTTPS, shows live download progress for the verified Setup installer package, checks `SHA256SUMS.txt` before installing, closes DriveSweep cleanly so Setup can upgrade files in place, and relaunches the updated app automatically. Auto-checking on startup can be turned on or off anytime.
 
 ---
 

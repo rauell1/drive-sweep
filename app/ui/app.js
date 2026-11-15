@@ -4,6 +4,7 @@ const GROUP_COLORS = {
   "Desktop Apps": "#ec4899",
   "AI & Coding Tools": "#8b5cf6",
   "Dev Editors & Packages": "#3b82f6",
+  "Custom Folders": "#14b8a6",
   "Other App Caches": "#06b6d4",
 };
 
@@ -15,10 +16,15 @@ const ICON_MOON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" s
 
 const state = {
   theme: "dark",
-  version: "0.2.8",
+  language: "en",
+  version: "0.3.0",
   dataDir: "",
   installKind: "source",
   autoCheckUpdates: true,
+  reminderEnabled: false,
+  reminderFrequency: "weekly",
+  reminderThresholdPct: 15,
+  lowDiskAlerts: null,
   latestUpdateInfo: null,
   drives: [],
   smartItems: [],
@@ -29,7 +35,10 @@ const state = {
   osName: "Windows",
   selectedMap: new Map(),
   activeDriveRoot: null,
+  treemapPath: null,
   scanTimer: null,
+  dupTimer: null,
+  dupResult: null,
   isCleaning: false,
   isUpdating: false,
   isCheckingUpdates: false,
@@ -249,12 +258,12 @@ function switchTab(tabName) {
   const toolbarEl = document.getElementById("header-toolbar");
 
   if (tabName === "smart") {
-    titleEl.textContent = "Quick Safe Cleanup";
-    subEl.textContent = "Clean temporary files, browser caches, and leftover installers without touching your personal folders.";
+    titleEl.textContent = window.DriveSweepI18n ? window.DriveSweepI18n.t("smart_title") : "Quick Safe Cleanup";
+    subEl.textContent = window.DriveSweepI18n ? window.DriveSweepI18n.t("smart_subtitle") : "Clean temporary files, browser caches, and leftover installers without touching your personal folders.";
     toolbarEl.classList.remove("hidden");
   } else {
-    titleEl.textContent = "Drive Scanner";
-    subEl.textContent = "Scan any drive or folder to see what takes up space, check safety levels, and choose what to keep or delete.";
+    titleEl.textContent = window.DriveSweepI18n ? window.DriveSweepI18n.t("explorer_title") : "Drive Scanner";
+    subEl.textContent = window.DriveSweepI18n ? window.DriveSweepI18n.t("explorer_subtitle") : "Scan any drive or folder to see what takes up space, check safety levels, and find duplicates.";
     toolbarEl.classList.add("hidden");
   }
 }
@@ -408,6 +417,13 @@ async function openHistoryModal() {
     `Cleanup Log (${entries.length})`,
     `<div class="review-list">${rows || "<p class='muted'>No cleanup runs recorded yet.</p>"}</div>`,
     [
+      {
+        text: "Open Recycle Bin",
+        cls: "btn-soft",
+        onClick: async () => {
+          await api().open_recycle_bin();
+        },
+      },
       ...(entries.length
         ? [
             {
@@ -443,16 +459,61 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
   if (state.isUpdating && !document.getElementById("modal-backdrop")?.classList.contains("hidden")) {
     return;
   }
+  let remStatus = {
+    enabled: !!state.reminderEnabled,
+    frequency: state.reminderFrequency || "weekly",
+    threshold_pct: state.reminderThresholdPct || 15,
+    task: { installed: false, next_run: "" },
+  };
+  try {
+    remStatus = await api().get_reminder_status();
+  } catch (_err) {}
+
+  const langOptions = (window.DriveSweepI18n ? window.DriveSweepI18n.SUPPORTED : [{ code: "en", label: "English" }])
+    .map((l) => `<option value="${l.code}" ${state.language === l.code ? "selected" : ""}>${escapeHtml(l.label)}</option>`)
+    .join("");
+
   const renderBody = (statusHtml) => `
-    <div class="summary-strip" style="margin-bottom:12px;">
-      <div>
-        <div style="font-weight:700;">100% Local Data &amp; Zero Telemetry</div>
-        <div class="muted small-text" style="margin-top:2px;">
-          All settings, exclusions, and cleanup history stay on this device at:
+    <div class="settings-section">
+      <h4>Language &amp; Privacy</h4>
+      <div class="settings-row">
+        <div>
+          <div style="font-weight:600;font-size:13px;">Interface Language</div>
+          <div class="muted small-text">Changes menus and headings offline without restart.</div>
         </div>
-        <div class="item-subpath" style="margin-top:4px;">${escapeHtml(state.dataDir)}</div>
+        <select id="sel-ui-language" class="select">${langOptions}</select>
       </div>
-      <button id="btn-open-data-dir" class="btn btn-soft btn-sm">Open Folder</button>
+      <div class="settings-row" style="margin-top:10px;">
+        <div style="flex:1;min-width:0;">
+          <div style="font-weight:600;font-size:13px;">100% Local Data &amp; Zero Telemetry</div>
+          <div class="item-subpath" style="margin-top:2px;">${escapeHtml(state.dataDir)}</div>
+        </div>
+        <button id="btn-open-data-dir" class="btn btn-soft btn-sm">Open Folder</button>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h4>Optional Low-Disk Space Reminder (Windows Task Scheduler)</h4>
+      <div class="settings-row">
+        <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;">
+          <input id="chk-reminder-enabled" type="checkbox" ${remStatus.enabled ? "checked" : ""} />
+          <span>Notify me when a drive drops below</span>
+        </label>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <input id="inp-reminder-pct" type="number" min="5" max="50" class="input input-sm" style="width:68px;" value="${Number(remStatus.threshold_pct || 15)}" />
+          <span class="small-text muted">% free</span>
+          <select id="sel-reminder-freq" class="select">
+            <option value="daily" ${remStatus.frequency === "daily" ? "selected" : ""}>Daily</option>
+            <option value="weekly" ${remStatus.frequency === "weekly" ? "selected" : ""}>Weekly</option>
+            <option value="monthly" ${remStatus.frequency === "monthly" ? "selected" : ""}>Monthly</option>
+          </select>
+          <button id="btn-save-reminder" class="btn btn-primary btn-xs">Save</button>
+          <button id="btn-test-reminder" class="btn btn-soft btn-xs">Test Alert</button>
+        </div>
+      </div>
+      <div id="reminder-status-msg" class="muted small-text" style="margin-top:6px;">
+        ${remStatus.task?.installed ? `Scheduled task active${remStatus.task.next_run ? ` (Next run: ${escapeHtml(remStatus.task.next_run)})` : ""}.` : "Not scheduled (disabled by default)."}
+      </div>
     </div>
 
     <label class="review-row" style="cursor:pointer;margin-bottom:12px;">
@@ -621,7 +682,7 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
   };
 
   modalToken = showModal(
-    "Updates & Local Privacy",
+    "Settings, Schedule & Updates",
     renderBody(formatUpdatePanel(state.latestUpdateInfo)),
     buildFooterButtons()
   );
@@ -630,6 +691,39 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
   document.getElementById("chk-auto-updates")?.addEventListener("change", async (e) => {
     state.autoCheckUpdates = !!e.target.checked;
     await api().set_auto_check_updates(state.autoCheckUpdates);
+  });
+  document.getElementById("sel-ui-language")?.addEventListener("change", async (e) => {
+    const lang = e.target.value || "en";
+    state.language = lang;
+    await api().set_language(lang);
+    if (window.DriveSweepI18n) {
+      window.DriveSweepI18n.setLanguage(lang);
+    }
+  });
+  document.getElementById("btn-save-reminder")?.addEventListener("click", async () => {
+    const enabled = !!document.getElementById("chk-reminder-enabled")?.checked;
+    const freq = document.getElementById("sel-reminder-freq")?.value || "weekly";
+    const pct = Number(document.getElementById("inp-reminder-pct")?.value || 15);
+    const msgEl = document.getElementById("reminder-status-msg");
+    if (msgEl) msgEl.textContent = "Saving Windows schedule...";
+    const res = await api().configure_disk_reminder(enabled, freq, pct);
+    state.reminderEnabled = !!res.enabled;
+    state.reminderFrequency = res.frequency || freq;
+    state.reminderThresholdPct = Number(res.threshold_pct || pct);
+    state.lowDiskAlerts = res.alerts || null;
+    renderLowDiskBanner();
+    if (msgEl) {
+      msgEl.textContent = res.ok
+        ? (res.enabled ? `Scheduled ${res.frequency} reminder saved.` : "Scheduled reminder disabled.")
+        : `Could not update Task Scheduler: ${res.error || "Unknown error"}`;
+    }
+  });
+  document.getElementById("btn-test-reminder")?.addEventListener("click", async () => {
+    const msgEl = document.getElementById("reminder-status-msg");
+    const res = await api().test_low_disk_notification();
+    if (msgEl) {
+      msgEl.textContent = res.ok ? "Test notification sent to Windows tray." : `Notification error: ${res.error || "Failed"}`;
+    }
   });
 
   if (runCheckNow && !state.isUpdating) {
@@ -649,6 +743,257 @@ function updateHeaderUpdateBadge(u) {
     chip.title = "View updates and local privacy settings";
     navBadge?.classList.add("hidden");
   }
+}
+
+function renderLowDiskBanner() {
+  const banner = document.getElementById("low-disk-banner");
+  if (!banner) return;
+  const info = state.lowDiskAlerts;
+  const alerts = (info && info.alerts) || [];
+  if (!alerts.length) {
+    banner.classList.add("hidden");
+    banner.innerHTML = "";
+    return;
+  }
+  const hasCritical = alerts.some((a) => a.severity === "critical");
+  banner.classList.toggle("is-critical", hasCritical);
+  banner.classList.remove("hidden");
+  const summary = alerts
+    .map((a) => `<strong>Drive ${escapeHtml(a.drive.replace(/\\+$/, ""))}</strong> (${escapeHtml(a.free_human)} free, ${a.free_pct}%)`)
+    .join(" | ");
+  banner.innerHTML = `
+    <div style="font-size:12.5px;">
+      <strong>Low Disk Space Alert:</strong> ${summary}
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <button id="btn-banner-scan" class="btn btn-primary btn-xs">Scan ${escapeHtml(alerts[0].drive)}</button>
+      <button id="btn-banner-tools" class="btn btn-soft btn-xs">Windows Tools</button>
+    </div>
+  `;
+  document.getElementById("btn-banner-scan")?.addEventListener("click", () => {
+    switchTab("explorer");
+    startDriveScan(alerts[0].drive);
+  });
+  document.getElementById("btn-banner-tools")?.addEventListener("click", openSystemToolsModal);
+}
+
+async function promptAddCustomPreset() {
+  const res = await api().add_custom_preset("", "", true);
+  if (res.cancelled) return;
+  if (!res.ok) {
+    showModal(
+      "Could Not Add Custom Folder",
+      `<div class="warning-box">${escapeHtml(res.error || "Invalid folder.")}</div>`,
+      [{ text: "Close", cls: "btn-primary", onClick: closeModal }]
+    );
+    return;
+  }
+  await loadSmartScan();
+}
+
+async function openSystemToolsModal() {
+  showModal(
+    "Windows Space & System Tools",
+    `<div class="muted">Checking Recycle Bin, old Download installers, hibernation, and virtual disks...</div>`,
+    [{ text: "Close", cls: "btn-primary", onClick: closeModal }]
+  );
+
+  let data;
+  try {
+    data = await api().inspect_system_space(30);
+  } catch (err) {
+    showModal(
+      "Windows Space & System Tools",
+      `<div class="warning-box">${escapeHtml(String(err))}</div>`,
+      [{ text: "Close", cls: "btn-primary", onClick: closeModal }]
+    );
+    return;
+  }
+
+  const rb = data.recycle_bin || {};
+  const oldInst = data.old_installers || { count: 0, total_human: "0 B", items: [] };
+  const hib = data.hibernation || {};
+  const vhdx = data.virtual_disks || { count: 0, total_human: "0 B", items: [] };
+
+  const instRows = (oldInst.items || [])
+    .slice(0, 12)
+    .map(
+      (it) => `
+      <div class="review-row">
+        <div style="flex:1;min-width:0;">
+          <div style="font-weight:600;font-size:12.5px;">${escapeHtml(it.name)}</div>
+          <div class="item-subpath">${it.age_days} days old | ${escapeHtml(it.path)}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <strong>${escapeHtml(it.size_human)}</strong>
+          <button class="btn btn-soft btn-xs btn-queue-inst" data-path="${escapeHtml(it.path)}" data-name="${escapeHtml(it.name)}" data-size="${it.size_bytes}" data-human="${escapeHtml(it.size_human)}">Queue</button>
+        </div>
+      </div>`
+    )
+    .join("");
+
+  const vhdxRows = (vhdx.items || [])
+    .slice(0, 6)
+    .map(
+      (v) => `
+      <div class="review-row">
+        <div style="flex:1;min-width:0;">
+          <div style="font-weight:600;font-size:12.5px;">${escapeHtml(v.name)} <span class="muted">(${escapeHtml(v.parent)})</span></div>
+          <div class="item-subpath">${escapeHtml(v.path)}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <strong>${escapeHtml(v.size_human)}</strong>
+          <button class="btn btn-soft btn-xs btn-open-vhdx" data-path="${escapeHtml(v.path)}">Reveal</button>
+        </div>
+      </div>`
+    )
+    .join("");
+
+  showModal(
+    "Windows Space & System Tools",
+    `
+    <div class="settings-section">
+      <h4>Windows Recycle Bin</h4>
+      <div class="settings-row">
+        <div>
+          <strong id="rb-size-label">${escapeHtml(rb.size_human || "0 B")}</strong>
+          <span class="muted small-text">(${Number(rb.item_count || 0).toLocaleString()} items in Recycle Bin)</span>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button id="btn-sys-open-rb" class="btn btn-soft btn-xs">Open Recycle Bin</button>
+          <button id="btn-sys-empty-rb" class="btn btn-danger btn-xs" ${(rb.size_bytes || 0) === 0 && (rb.item_count || 0) === 0 ? "disabled" : ""}>Empty Recycle Bin</button>
+        </div>
+      </div>
+      <div id="rb-status-msg" class="muted small-text" style="margin-top:6px;"></div>
+    </div>
+
+    <div class="settings-section">
+      <h4>Old Installers &amp; Archives in Downloads (&gt; 30 days)</h4>
+      <div class="settings-row" style="margin-bottom:8px;">
+        <div class="muted small-text">${oldInst.count} old files totaling <strong>${escapeHtml(oldInst.total_human)}</strong></div>
+        <button id="btn-sys-queue-all-inst" class="btn btn-primary btn-xs" ${oldInst.count === 0 ? "disabled" : ""}>Queue All for Review</button>
+      </div>
+      <div class="review-list">${instRows || "<div class='muted small-text'>No installers older than 30 days found in Downloads.</div>"}</div>
+    </div>
+
+    <div class="settings-section">
+      <h4>Windows Update Component Store (WinSxS / DISM)</h4>
+      <div class="settings-row">
+        <div class="muted small-text">Check or safely trim superseded Windows Update backups (requires Administrator).</div>
+        <div style="display:flex;gap:8px;">
+          <button id="btn-sys-winsxs-analyze" class="btn btn-soft btn-xs">Analyze WinSxS</button>
+          <button id="btn-sys-winsxs-clean" class="btn btn-primary btn-xs">Clean Old Updates</button>
+        </div>
+      </div>
+      <div id="winsxs-output" class="tool-output-box hidden"></div>
+    </div>
+
+    <div class="settings-section">
+      <h4>Hibernation &amp; WSL2 / Docker Virtual Disks</h4>
+      <div class="small-text" style="margin-bottom:8px;">
+        Hibernation file (<code>hiberfil.sys</code>):
+        <strong>${hib.present ? escapeHtml(hib.size_human) : "Not active (0 B)"}</strong>
+        ${hib.present ? `<span class="muted"> | Can be disabled via elevated terminal: <code>powercfg /hibernate off</code></span>` : ""}
+      </div>
+      <div class="small-text muted" style="margin-bottom:6px;">WSL2 / Docker Virtual Disks (${vhdx.count} files, ${escapeHtml(vhdx.total_human)}): shrink with <code>wsl --shutdown</code> and <code>Optimize-VHD</code>.</div>
+      <div class="review-list">${vhdxRows || "<div class='muted small-text'>No .vhdx virtual disks detected.</div>"}</div>
+    </div>
+    `,
+    [{ text: "Close", cls: "btn-primary", onClick: closeModal }]
+  );
+
+  document.getElementById("btn-sys-open-rb")?.addEventListener("click", () => api().open_recycle_bin());
+  document.getElementById("btn-sys-empty-rb")?.addEventListener("click", async () => {
+    const rbBtn = document.getElementById("btn-sys-empty-rb");
+    const msgEl = document.getElementById("rb-status-msg");
+    if (rbBtn) rbBtn.disabled = true;
+    if (msgEl) msgEl.textContent = "Emptying Windows Recycle Bin...";
+    const res = await api().empty_recycle_bin(null);
+    if (res.ok) {
+      if (res.drives_after) renderDrives(res.drives_after);
+      const lbl = document.getElementById("rb-size-label");
+      if (lbl) lbl.textContent = "0 B";
+      if (msgEl) msgEl.textContent = res.already_empty ? "Recycle Bin is already empty." : `Freed ${res.freed_human} from Recycle Bin.`;
+    } else {
+      if (msgEl) msgEl.textContent = res.error || "Could not empty Recycle Bin.";
+      if (rbBtn) rbBtn.disabled = false;
+    }
+  });
+
+  document.querySelectorAll(".btn-queue-inst").forEach((b) => {
+    b.addEventListener("click", () => {
+      setItemSelected(
+        {
+          path: b.dataset.path,
+          label: b.dataset.name,
+          size_bytes: Number(b.dataset.size || 0),
+          size_human: b.dataset.human,
+          contents_only: false,
+          risk_level: "caution",
+          risk_reason: "Old installer package in Downloads (>30 days).",
+          source: "explorer",
+        },
+        true
+      );
+      b.textContent = "Queued";
+      b.disabled = true;
+    });
+  });
+
+  document.getElementById("btn-sys-queue-all-inst")?.addEventListener("click", () => {
+    for (const it of oldInst.items || []) {
+      setItemSelected(
+        {
+          path: it.path,
+          label: it.name,
+          size_bytes: it.size_bytes,
+          size_human: it.size_human,
+          contents_only: false,
+          risk_level: "caution",
+          risk_reason: `Old installer (${it.age_days} days old) in Downloads.`,
+          source: "explorer",
+        },
+        true
+      );
+    }
+    closeModal();
+    openReviewModal();
+  });
+
+  document.querySelectorAll(".btn-open-vhdx").forEach((b) => {
+    b.addEventListener("click", () => api().open_in_explorer(b.dataset.path));
+  });
+
+  const outBox = document.getElementById("winsxs-output");
+  document.getElementById("btn-sys-winsxs-analyze")?.addEventListener("click", async () => {
+    if (!outBox) return;
+    outBox.classList.remove("hidden");
+    outBox.textContent = "Running DISM /AnalyzeComponentStore (this can take up to 1-2 minutes)...";
+    const res = await api().analyze_winsxs();
+    if (!res.ok) {
+      outBox.textContent = res.error || "WinSxS analysis failed.";
+      return;
+    }
+    outBox.innerHTML = `
+      <div><strong>Component Store Size:</strong> ${escapeHtml(res.component_store_size || "Unknown")}</div>
+      <div><strong>Backups &amp; Disabled Features:</strong> ${escapeHtml(res.backups_and_disabled || "0")}</div>
+      <div><strong>Reclaimable Packages:</strong> ${escapeHtml(res.reclaimable_packages || "0")}</div>
+      <div><strong>Cleanup Recommended:</strong> ${res.cleanup_recommended ? "Yes" : "No"}</div>
+    `;
+  });
+
+  document.getElementById("btn-sys-winsxs-clean")?.addEventListener("click", async () => {
+    if (!outBox) return;
+    outBox.classList.remove("hidden");
+    outBox.textContent = "Running DISM /StartComponentCleanup (please keep DriveSweep open until it completes)...";
+    const res = await api().run_winsxs_cleanup();
+    if (res.ok) {
+      if (res.drives_after) renderDrives(res.drives_after);
+      outBox.textContent = "WinSxS component cleanup finished successfully.";
+    } else {
+      outBox.textContent = res.error || "WinSxS cleanup failed.";
+    }
+  });
 }
 
 /* ==================== TAB 1: SMART CACHE SCAN ==================== */
@@ -855,6 +1200,7 @@ function renderSmartGroups() {
         </div>
         <div class="preset-right">
           <div class="row-hover-actions">
+            ${item.is_custom ? `<button class="btn btn-soft btn-xs btn-remove-custom" data-id="${escapeHtml(item.id)}">Remove</button>` : ""}
             ${item.is_docker_prune ? "" : `<button class="btn btn-soft btn-xs btn-keep-toggle">${excluded ? "Allow" : "Keep"}</button>`}
             ${item.is_docker_prune ? "" : `<button class="btn btn-soft btn-xs btn-open">Open Folder</button>`}
           </div>
@@ -878,6 +1224,14 @@ function renderSmartGroups() {
       const openBtn = row.querySelector(".btn-open");
       if (openBtn) {
         openBtn.addEventListener("click", () => api().open_in_explorer(item.path));
+      }
+
+      const remCustomBtn = row.querySelector(".btn-remove-custom");
+      if (remCustomBtn) {
+        remCustomBtn.addEventListener("click", async () => {
+          await api().remove_custom_preset(remCustomBtn.dataset.id);
+          await loadSmartScan();
+        });
       }
 
       body.appendChild(row);
@@ -935,11 +1289,128 @@ async function pollScanStatus() {
   document.getElementById("explorer-summary-pill").textContent =
     `${prefix}Scanned ${st.files_scanned.toLocaleString()} files (${st.bytes_human}) in ${st.elapsed_sec}s` +
     (st.skipped_count ? ` | ${st.skipped_count} locked entries skipped` : "");
+  const engineBadge = document.getElementById("scan-engine-badge");
+  if (engineBadge) {
+    engineBadge.classList.remove("hidden");
+    engineBadge.textContent = st.scan_engine === "ntfs_mft" ? "Fast NTFS MFT Scan" : "Standard Scan";
+  }
+  document.getElementById("btn-export-csv")?.classList.remove("hidden");
+  document.getElementById("btn-export-json")?.classList.remove("hidden");
   document.getElementById("btn-explorer-rescan").classList.remove("hidden");
+
+  state.treemapPath = st.root_path;
+  state.dupResult = null;
+  document.getElementById("dup-groups").innerHTML = "";
+  document.getElementById("btn-dup-select-extra")?.classList.add("hidden");
 
   state.browseState.path = st.root_path;
   state.browseState.offset = 0;
   await Promise.all([loadAnalytics(), loadBrowseFolder(), loadAllFiles(), loadLargestFiles(), loadDevArtifacts()]);
+}
+
+function computeProportionalRects(items, x, y, w, h, out = []) {
+  if (!items.length || w <= 0.1 || h <= 0.1) return out;
+  if (items.length === 1) {
+    out.push({ item: items[0], x, y, w, h });
+    return out;
+  }
+  const total = items.reduce((s, it) => s + Math.max(1, Number(it.size_bytes || 0)), 0);
+  let running = 0;
+  let splitIdx = 0;
+  const half = total / 2;
+  for (let i = 0; i < items.length - 1; i++) {
+    running += Math.max(1, Number(items[i].size_bytes || 0));
+    splitIdx = i + 1;
+    if (running >= half) break;
+  }
+  const left = items.slice(0, splitIdx);
+  const right = items.slice(splitIdx);
+  const leftSum = left.reduce((s, it) => s + Math.max(1, Number(it.size_bytes || 0)), 0);
+  const ratio = Math.max(0.08, Math.min(0.92, leftSum / total));
+
+  if (w >= h) {
+    const wLeft = w * ratio;
+    computeProportionalRects(left, x, y, wLeft, h, out);
+    computeProportionalRects(right, x + wLeft, y, w - wLeft, h, out);
+  } else {
+    const hTop = h * ratio;
+    computeProportionalRects(left, x, y, w, hTop, out);
+    computeProportionalRects(right, x, y + hTop, w, h - hTop, out);
+  }
+  return out;
+}
+
+async function loadTreemap(targetPath) {
+  const data = await api().get_treemap_data(targetPath || state.treemapPath || state.browseState.path);
+  state.treemapPath = data.current_path;
+  const controlsEl = document.getElementById("treemap-controls");
+  const canvasEl = document.getElementById("treemap-grid");
+  if (!controlsEl || !canvasEl) return;
+
+  const crumbs = data.breadcrumbs || [];
+  const parentPath = crumbs.length > 1 ? crumbs[crumbs.length - 2].path : null;
+  const crumbsHtml = crumbs
+    .map((c, idx) => `<button class="crumb-btn tm-crumb" data-path="${escapeHtml(c.path)}">${idx === 0 ? "Root" : escapeHtml(c.name)}</button>`)
+    .join(`<span class="muted">/</span>`);
+
+  controlsEl.innerHTML = `
+    <div class="breadcrumbs">${crumbsHtml}</div>
+    <div style="display:flex;gap:6px;align-items:center;">
+      <span class="muted small-text">${escapeHtml(data.total_human || "0 B")}</span>
+      <button id="btn-treemap-up" class="btn btn-soft btn-xs" ${parentPath ? "" : "disabled"}>Up One Level</button>
+      <button id="btn-treemap-browse" class="btn btn-soft btn-xs">Open in Folders</button>
+    </div>
+  `;
+
+  controlsEl.querySelectorAll(".tm-crumb").forEach((b) => {
+    b.addEventListener("click", () => loadTreemap(b.dataset.path));
+  });
+  if (parentPath) {
+    document.getElementById("btn-treemap-up")?.addEventListener("click", () => loadTreemap(parentPath));
+  }
+  document.getElementById("btn-treemap-browse")?.addEventListener("click", () => {
+    state.browseState.path = data.current_path;
+    state.browseState.offset = 0;
+    switchExplorerSubView("browse");
+    loadBrowseFolder();
+  });
+
+  const items = (data.items || []).filter((it) => Number(it.size_bytes || 0) > 0);
+  if (!items.length) {
+    canvasEl.innerHTML = `<div class="muted small-text" style="padding:18px;">No sized items in this folder.</div>`;
+    return;
+  }
+
+  const rects = computeProportionalRects(items, 0, 0, 100, 100);
+  canvasEl.innerHTML = rects
+    .map(({ item, x, y, w, h }) => {
+      const tiny = w < 10 || h < 14;
+      const drill = item.kind === "dir" && item.has_children;
+      return `
+        <button class="treemap-rect risk-${escapeHtml(item.risk_level || "safe")}"
+          data-kind="${escapeHtml(item.kind)}"
+          data-path="${escapeHtml(item.path)}"
+          data-drill="${drill ? "1" : "0"}"
+          title="${escapeHtml(item.name)} | ${escapeHtml(item.size_human)} (${item.percent}%)"
+          style="left:${x.toFixed(2)}%;top:${y.toFixed(2)}%;width:${w.toFixed(2)}%;height:${h.toFixed(2)}%;">
+          ${tiny ? "" : `<div class="treemap-rect-name">${escapeHtml(item.name)}</div><div class="treemap-rect-size">${escapeHtml(item.size_human)} (${item.percent}%)</div>`}
+        </button>
+      `;
+    })
+    .join("");
+
+  canvasEl.querySelectorAll(".treemap-rect").forEach((rect) => {
+    rect.addEventListener("click", () => {
+      if (rect.dataset.drill === "1") {
+        loadTreemap(rect.dataset.path);
+      } else {
+        state.browseState.path = rect.dataset.path;
+        state.browseState.offset = 0;
+        switchExplorerSubView("browse");
+        loadBrowseFolder();
+      }
+    });
+  });
 }
 
 async function loadAnalytics() {
@@ -976,35 +1447,8 @@ async function loadAnalytics() {
     </div>
   `;
 
-  // Treemap tiles
-  const treemapEl = document.getElementById("treemap-grid");
-  const topFolders = data.top_folders || [];
-  if (topFolders.length === 0) {
-    treemapEl.innerHTML = `<div class="muted small-text">No subfolders in this location.</div>`;
-  } else {
-    const maxPct = Math.max(1, ...topFolders.map((f) => f.percent || 0));
-    treemapEl.innerHTML = topFolders
-      .map(
-        (f) => `
-        <button class="treemap-tile risk-${escapeHtml(f.risk_level)}" data-path="${escapeHtml(f.path)}">
-          <div class="treemap-name">${escapeHtml(f.name)}</div>
-          <div class="treemap-meta">
-            <strong>${escapeHtml(f.size_human)}</strong>
-            <span>${f.percent}%</span>
-          </div>
-          <div class="treemap-tile-fill" style="width:${Math.min(100, (f.percent / maxPct) * 100)}%;"></div>
-        </button>`
-      )
-      .join("");
-    treemapEl.querySelectorAll(".treemap-tile").forEach((tile) => {
-      tile.addEventListener("click", () => {
-        state.browseState.path = tile.dataset.path;
-        state.browseState.offset = 0;
-        switchExplorerSubView("browse");
-        loadBrowseFolder();
-      });
-    });
-  }
+  // Interactive Proportional Zoomable Treemap
+  await loadTreemap(state.treemapPath || state.browseState.path);
 
   // Category Donut Chart
   const catSegs = (data.by_category || []).map((c) => ({
@@ -1802,6 +2246,14 @@ function bindEvents() {
     loadDevArtifacts();
   });
 
+  document.getElementById("btn-system-tools")?.addEventListener("click", openSystemToolsModal);
+  document.getElementById("btn-add-custom-preset")?.addEventListener("click", promptAddCustomPreset);
+  document.getElementById("btn-export-csv")?.addEventListener("click", () => handleExportReport("csv"));
+  document.getElementById("btn-export-json")?.addEventListener("click", () => handleExportReport("json"));
+  document.getElementById("btn-find-dups")?.addEventListener("click", startDuplicateScan);
+  document.getElementById("btn-cancel-dups")?.addEventListener("click", () => api().cancel_duplicate_scan());
+  document.getElementById("btn-dup-select-extra")?.addEventListener("click", selectAllExtraDuplicates);
+
   document.getElementById("btn-review-queue").addEventListener("click", openReviewModal);
   document.getElementById("btn-clean-now").addEventListener("click", openConfirmCleanModal);
   document.getElementById("btn-updates-privacy").addEventListener("click", () => openUpdatesPrivacyModal(false));
@@ -1833,18 +2285,223 @@ function bindEvents() {
   });
 }
 
+async function handleExportReport(fmt) {
+  const res = await api().export_scan_report(fmt);
+  if (res.cancelled) return;
+  if (!res.ok) {
+    showModal(
+      "Export Failed",
+      `<div class="warning-box">${escapeHtml(res.error || "Could not export report.")}</div>`,
+      [{ text: "Close", cls: "btn-primary", onClick: closeModal }]
+    );
+    return;
+  }
+  showModal(
+    "Scan Report Exported",
+    `<div class="summary-strip" style="margin-bottom:10px;">
+       <div>Exported <strong>${res.folders_exported}</strong> folders and <strong>${res.files_exported}</strong> largest files as <strong>${escapeHtml(res.format.toUpperCase())}</strong>.</div>
+     </div>
+     <div class="item-subpath">${escapeHtml(res.path)}</div>`,
+    [
+      { text: "Reveal File", cls: "btn-soft", onClick: () => api().open_in_explorer(res.path) },
+      { text: "Close", cls: "btn-primary", onClick: closeModal },
+    ]
+  );
+}
+
+async function startDuplicateScan() {
+  const minKb = Number(document.getElementById("dup-min-size")?.value || 100);
+  const prog = document.getElementById("dup-progress");
+  const findBtn = document.getElementById("btn-find-dups");
+  const cancelBtn = document.getElementById("btn-cancel-dups");
+  const groupsEl = document.getElementById("dup-groups");
+
+  if (groupsEl) groupsEl.innerHTML = "";
+  document.getElementById("btn-dup-select-extra")?.classList.add("hidden");
+  prog?.classList.remove("hidden");
+  cancelBtn?.classList.remove("hidden");
+  if (findBtn) findBtn.disabled = true;
+
+  const st = await api().start_duplicate_scan(minKb);
+  if (st.status === "error") {
+    prog?.classList.add("hidden");
+    cancelBtn?.classList.add("hidden");
+    if (findBtn) findBtn.disabled = false;
+    document.getElementById("dup-meta").textContent = st.error || "Could not start duplicate scan.";
+    return;
+  }
+
+  if (state.dupTimer) clearInterval(state.dupTimer);
+  state.dupTimer = setInterval(pollDuplicateStatus, 220);
+  await pollDuplicateStatus();
+}
+
+async function pollDuplicateStatus() {
+  const st = await api().get_duplicate_status();
+  const prog = document.getElementById("dup-progress");
+  const lbl = document.getElementById("dup-status-label");
+  const statsEl = document.getElementById("dup-stats-text");
+  const fillEl = document.getElementById("dup-progress-fill");
+  const findBtn = document.getElementById("btn-find-dups");
+  const cancelBtn = document.getElementById("btn-cancel-dups");
+
+  if (st.status === "running") {
+    const tot = Math.max(1, Number(st.total || 0));
+    const pct = st.total > 0 ? Math.min(100, Math.max(5, Math.round((st.progress / tot) * 100))) : 15;
+    if (lbl) lbl.textContent = st.stage === "hashing" ? "Verifying SHA-256 checksums..." : "Checking matching file sizes...";
+    if (statsEl) statsEl.textContent = st.total > 0 ? `${st.progress} / ${st.total}` : "...";
+    if (fillEl) fillEl.style.width = `${pct}%`;
+    return;
+  }
+
+  clearInterval(state.dupTimer);
+  state.dupTimer = null;
+  prog?.classList.add("hidden");
+  cancelBtn?.classList.add("hidden");
+  if (findBtn) findBtn.disabled = false;
+
+  if (st.status === "error") {
+    document.getElementById("dup-meta").textContent = st.error || "Duplicate search failed.";
+    return;
+  }
+
+  state.dupResult = st.result || null;
+  renderDuplicateResults();
+}
+
+function renderDuplicateResults() {
+  const container = document.getElementById("dup-groups");
+  const meta = document.getElementById("dup-meta");
+  const selAllBtn = document.getElementById("btn-dup-select-extra");
+  if (!container) return;
+
+  const res = state.dupResult;
+  if (!res || !(res.groups || []).length) {
+    meta.textContent = "No duplicate files found for this size threshold.";
+    container.innerHTML = `<div class="muted small-text" style="padding:14px;">No exact duplicates found.</div>`;
+    selAllBtn?.classList.add("hidden");
+    return;
+  }
+
+  meta.textContent = `${res.total_groups} duplicate group(s) | ${res.reclaimable_human} reclaimable if extra copies are cleaned`;
+  selAllBtn?.classList.remove("hidden");
+  container.innerHTML = "";
+
+  for (const grp of res.groups) {
+    const card = document.createElement("div");
+    card.className = "group-card";
+    card.innerHTML = `
+      <div class="group-header">
+        <div class="group-title-wrap">
+          <span class="group-title">${escapeHtml(grp.name)}</span>
+          <span class="badge badge-info">${grp.copy_count} copies</span>
+          <span class="badge badge-warn">Hash: ${escapeHtml(grp.sha256_short)}</span>
+        </div>
+        <div class="group-right">
+          <span class="muted small-text">Each ${escapeHtml(grp.size_human)}</span>
+          <span class="group-size">${escapeHtml(grp.reclaimable_human)} extra</span>
+        </div>
+      </div>
+      <div class="group-body"></div>
+    `;
+    const body = card.querySelector(".group-body");
+    for (const copy of grp.copies) {
+      const excluded = !!copy.excluded || isPathExcludedLocal(copy.path);
+      const disabled = !!copy.is_protected || excluded;
+      const checked = !disabled && isItemSelected(copy.path, false);
+
+      const row = document.createElement("div");
+      row.className = "preset-row";
+      row.innerHTML = `
+        <label class="toggle-switch">
+          <input type="checkbox" ${checked ? "checked" : ""} ${disabled ? "disabled" : ""} />
+          <span class="toggle-slider"></span>
+        </label>
+        <div class="preset-main">
+          <div class="preset-title-line">
+            <span class="preset-title">${escapeHtml(copy.name)}</span>
+            ${copy.keep_recommended ? `<span class="badge badge-good">Keep Original</span>` : `<span class="badge badge-warn">Extra Copy</span>`}
+            ${renderRiskBadge(copy.risk_level || "safe", copy.risk_reason || "")}
+          </div>
+          <div class="preset-path" title="${escapeHtml(copy.path)}">${escapeHtml(copy.path)}</div>
+        </div>
+        <div class="preset-right">
+          <button class="btn btn-soft btn-xs btn-open">Open Folder</button>
+          <span class="size-pill">${escapeHtml(copy.size_human)}</span>
+        </div>
+      `;
+      const cb = row.querySelector('input[type="checkbox"]');
+      if (!disabled) {
+        cb.addEventListener("change", () => {
+          setItemSelected(
+            {
+              path: copy.path,
+              label: `Duplicate: ${copy.name}`,
+              size_bytes: copy.size_bytes,
+              size_human: copy.size_human,
+              contents_only: false,
+              risk_level: copy.risk_level || "caution",
+              risk_reason: copy.risk_reason || "Exact duplicate file.",
+              source: "duplicates",
+            },
+            cb.checked
+          );
+        });
+      }
+      row.querySelector(".btn-open")?.addEventListener("click", () => api().open_in_explorer(copy.path));
+      body.appendChild(row);
+    }
+    container.appendChild(card);
+  }
+}
+
+function selectAllExtraDuplicates() {
+  const res = state.dupResult;
+  if (!res || !res.groups) return;
+  for (const grp of res.groups) {
+    for (const copy of grp.copies) {
+      if (copy.keep_recommended || copy.is_protected || copy.excluded || isPathExcludedLocal(copy.path)) {
+        continue;
+      }
+      setItemSelected(
+        {
+          path: copy.path,
+          label: `Duplicate: ${copy.name}`,
+          size_bytes: copy.size_bytes,
+          size_human: copy.size_human,
+          contents_only: false,
+          risk_level: copy.risk_level || "caution",
+          risk_reason: copy.risk_reason || "Exact duplicate copy.",
+          source: "duplicates",
+        },
+        true
+      );
+    }
+  }
+  renderDuplicateResults();
+}
+
 async function initApp() {
   bindEvents();
   const info = await api().get_app_info();
   applyTheme(info.theme || "dark");
+  state.language = info.language || "en";
+  if (window.DriveSweepI18n) {
+    window.DriveSweepI18n.setLanguage(state.language);
+  }
   state.isAdmin = !!info.is_admin;
   state.osName = info.os || "Windows";
-  state.version = info.version || "0.2.8";
+  state.version = info.version || "0.3.0";
   state.dataDir = info.data_dir || "";
   state.installKind = info.install_kind || "source";
   state.autoCheckUpdates = info.auto_check_updates !== false;
+  state.reminderEnabled = !!info.reminder_enabled;
+  state.reminderFrequency = info.reminder_frequency || "weekly";
+  state.reminderThresholdPct = Number(info.reminder_threshold_pct || 15);
+  state.lowDiskAlerts = info.low_disk_alerts || null;
   document.getElementById("app-version").textContent = `v${state.version}`;
   updateHeaderCounts(info.exclusions || [], info.history_count || 0);
+  renderLowDiskBanner();
 
   if (state.isAdmin) {
     document.getElementById("priv-title").textContent = "Administrator";

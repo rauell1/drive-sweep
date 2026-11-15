@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+import json
 import os
 import stat
 import threading
@@ -13,6 +15,7 @@ from pathlib import Path
 
 import psutil
 
+from app.ntfs_mft import try_ntfs_mft_scan
 from app.safety import (
     CAUTION_EXTENSIONS,
     ScanGuard,
@@ -133,6 +136,7 @@ class DriveScanner:
         self._nodes: dict[str, DirNode] = {}
         self._largest_files: list[dict] = []
         self._dev_artifacts: list[dict] = []
+        self.scan_engine: str = "fast_scandir"
         self.is_cached: bool = False
         self._scan_cache: dict[str, dict] = {}
 
@@ -163,6 +167,7 @@ class DriveScanner:
                 self._nodes = snap["nodes"]
                 self._largest_files = snap["largest_files"]
                 self._dev_artifacts = snap["dev_artifacts"]
+                self.scan_engine = snap.get("scan_engine", "fast_scandir")
                 self.is_cached = True
                 return self.get_status()
 
@@ -177,6 +182,7 @@ class DriveScanner:
             self.current_path = norm_root
             self.started_at = time.monotonic()
             self.finished_at = 0.0
+            self.scan_engine = "fast_scandir"
             self.is_cached = False
             self._nodes = {}
             self._largest_files = []
@@ -212,6 +218,7 @@ class DriveScanner:
                 "elapsed_sec": round(max(0.0, elapsed), 2),
                 "dev_artifacts_count": len(self._dev_artifacts),
                 "largest_files_count": len(self._largest_files),
+                "scan_engine": self.scan_engine,
                 "cached": self.is_cached,
             }
 
@@ -487,17 +494,40 @@ class DriveScanner:
                 worker_outputs.append((w_nodes, w_dev_paths))
 
         try:
-            worker_count = min(20, max(10, (os.cpu_count() or 4) * 2))
-            workers = [threading.Thread(target=worker, daemon=True) for _ in range(worker_count)]
-            for w in workers:
-                w.start()
-            for w in workers:
-                w.join()
+            engine_used = "fast_scandir"
+            mft_result = None
+            if is_nt and not cancel_event.is_set():
+                def _mft_progress(d_cnt: int, f_cnt: int, b_cnt: int, cur_p: str) -> None:
+                    with self._lock:
+                        self.dirs_scanned = d_cnt
+                        self.files_scanned = f_cnt
+                        self.bytes_scanned = b_cnt
+                        self.current_path = cur_p
 
-            for w_nodes, w_dev_paths in worker_outputs:
-                nodes.update(w_nodes)
-                if w_dev_paths:
-                    dev_paths.extend(w_dev_paths)
+                mft_result = try_ntfs_mft_scan(
+                    root_path,
+                    guard=guard,
+                    dev_bloat_names=dev_bloat_names,
+                    dir_node_cls=DirNode,
+                    cancel_event=cancel_event,
+                    progress_cb=_mft_progress,
+                )
+
+            if mft_result is not None and not cancel_event.is_set():
+                nodes, dev_paths, local_files_scanned, local_dirs_scanned, local_bytes_scanned = mft_result
+                engine_used = "ntfs_mft"
+            else:
+                worker_count = min(20, max(10, (os.cpu_count() or 4) * 2))
+                workers = [threading.Thread(target=worker, daemon=True) for _ in range(worker_count)]
+                for w in workers:
+                    w.start()
+                for w in workers:
+                    w.join()
+
+                for w_nodes, w_dev_paths in worker_outputs:
+                    nodes.update(w_nodes)
+                    if w_dev_paths:
+                        dev_paths.extend(w_dev_paths)
 
             largest_files, dev_artifacts = self._rebuild_derived_views(nodes, dev_paths)
             finished_mono = time.monotonic()
@@ -510,6 +540,7 @@ class DriveScanner:
                 self.files_scanned = local_files_scanned
                 self.bytes_scanned = local_bytes_scanned
                 self.skipped_count = local_skipped
+                self.scan_engine = engine_used
                 self.finished_at = finished_mono
                 cancelled = self._cancel_event.is_set()
                 self.status = "cancelled" if cancelled else "done"
@@ -527,6 +558,7 @@ class DriveScanner:
                         "dirs_scanned": local_dirs_scanned,
                         "bytes_scanned": local_bytes_scanned,
                         "skipped_count": local_skipped,
+                        "scan_engine": engine_used,
                         "elapsed_sec": max(0.0, finished_mono - self.started_at),
                     }
         except Exception as exc:
@@ -861,6 +893,184 @@ class DriveScanner:
                 "by_age": by_age,
                 "risk_summary": risk_summary,
             }
+
+    def get_treemap_data(self, folder_path: str | None = None, limit: int = 28) -> dict:
+        """Return hierarchical treemap rectangles & breadcrumbs for any indexed folder."""
+        with self._lock:
+            target = os.path.normpath(folder_path) if folder_path else self.root_path
+            node = self._nodes.get(target)
+            if not node:
+                node = self._nodes.get(self.root_path)
+                target = self.root_path
+            if not node:
+                return {
+                    "root_path": self.root_path,
+                    "current_path": target or "",
+                    "total_bytes": 0,
+                    "total_human": "0 B",
+                    "breadcrumbs": [],
+                    "items": [],
+                }
+
+            breadcrumbs: list[dict] = []
+            cur = node
+            while cur is not None:
+                breadcrumbs.append({"name": cur.name, "path": cur.path})
+                cur = self._nodes.get(cur.parent_path) if cur.parent_path else None
+            breadcrumbs.reverse()
+
+            total = max(1, node.total_size)
+            items: list[dict] = []
+            for cpath in node.child_dirs:
+                cnode = self._nodes.get(cpath)
+                if not cnode or cnode.total_size <= 0:
+                    continue
+                mtime_str, age_days = _format_mtime(cnode.latest_mtime)
+                risk = classify_path_risk(
+                    cnode.path,
+                    is_dir=True,
+                    age_days=age_days,
+                    is_dev_bloat=cnode.is_dev_bloat,
+                )
+                items.append({
+                    "kind": "dir",
+                    "name": cnode.name,
+                    "path": cnode.path,
+                    "size_bytes": cnode.total_size,
+                    "size_human": format_bytes(cnode.total_size),
+                    "percent": round((cnode.total_size / total) * 100.0, 1),
+                    "file_count": cnode.total_file_count,
+                    "has_children": bool(cnode.child_dirs) or cnode.own_file_count > 0,
+                    "risk_level": risk["risk_level"],
+                    "mtime_str": mtime_str,
+                })
+
+            if node.own_size > 0:
+                items.append({
+                    "kind": "files",
+                    "name": f"Direct Files ({node.own_file_count:,})",
+                    "path": node.path,
+                    "size_bytes": node.own_size,
+                    "size_human": format_bytes(node.own_size),
+                    "percent": round((node.own_size / total) * 100.0, 1),
+                    "file_count": node.own_file_count,
+                    "has_children": False,
+                    "risk_level": "caution" if node.is_personal else ("critical" if node.is_protected else "safe"),
+                    "mtime_str": "",
+                })
+
+            items.sort(key=lambda x: x["size_bytes"], reverse=True)
+            if len(items) > limit:
+                head = items[: limit - 1]
+                tail = items[limit - 1 :]
+                tail_bytes = sum(t["size_bytes"] for t in tail)
+                tail_files = sum(t["file_count"] for t in tail)
+                head.append({
+                    "kind": "other",
+                    "name": f"{len(tail)} Smaller Items",
+                    "path": node.path,
+                    "size_bytes": tail_bytes,
+                    "size_human": format_bytes(tail_bytes),
+                    "percent": round((tail_bytes / total) * 100.0, 1),
+                    "file_count": tail_files,
+                    "has_children": False,
+                    "risk_level": "safe",
+                    "mtime_str": "",
+                })
+                items = head
+
+            return {
+                "root_path": self.root_path,
+                "current_path": node.path,
+                "total_bytes": node.total_size,
+                "total_human": format_bytes(node.total_size),
+                "breadcrumbs": breadcrumbs,
+                "items": items,
+            }
+
+    def get_nodes_snapshot(self) -> dict[str, DirNode]:
+        """Return a shallow dict copy of currently indexed DirNodes."""
+        with self._lock:
+            return dict(self._nodes)
+
+    def export_scan_report(self, output_path: str, fmt: str = "csv") -> dict:
+        """Export indexed folder summary and largest files to CSV or JSON."""
+        with self._lock:
+            if not self._nodes or not self.root_path:
+                return {"ok": False, "error": "No scan results are available to export."}
+            norm_fmt = str(fmt or "csv").strip().lower()
+            if norm_fmt not in ("csv", "json"):
+                return {"ok": False, "error": f"Unsupported export format: {norm_fmt}"}
+
+            root_node = self._nodes.get(self.root_path)
+            total_bytes = root_node.total_size if root_node else self.bytes_scanned
+            folders_sorted = sorted(
+                (n for n in self._nodes.values() if n.total_size > 0),
+                key=lambda n: n.total_size,
+                reverse=True,
+            )[:500]
+            largest_snapshot = list(self._largest_files)
+            dev_snapshot = list(self._dev_artifacts)
+
+        dest = Path(output_path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        generated_at = datetime.now().isoformat(timespec="seconds")
+
+        if norm_fmt == "json":
+            payload = {
+                "generated_at": generated_at,
+                "root_path": self.root_path,
+                "scan_engine": self.scan_engine,
+                "files_scanned": self.files_scanned,
+                "dirs_scanned": self.dirs_scanned,
+                "total_bytes": total_bytes,
+                "total_human": format_bytes(total_bytes),
+                "top_folders": [
+                    {
+                        "path": n.path,
+                        "name": n.name,
+                        "total_bytes": n.total_size,
+                        "total_human": format_bytes(n.total_size),
+                        "file_count": n.total_file_count,
+                    }
+                    for n in folders_sorted
+                ],
+                "largest_files": largest_snapshot,
+                "dev_artifacts": dev_snapshot,
+            }
+            dest.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        else:
+            with dest.open("w", newline="", encoding="utf-8-sig") as fh:
+                writer = csv.writer(fh)
+                writer.writerow(["Type", "Name", "Path", "Size (Bytes)", "Size", "Files / Age", "Safety"])
+                for n in folders_sorted:
+                    writer.writerow([
+                        "Folder",
+                        n.name,
+                        n.path,
+                        n.total_size,
+                        format_bytes(n.total_size),
+                        f"{n.total_file_count} files",
+                        "Protected" if n.is_protected else ("Personal" if n.is_personal else "Standard"),
+                    ])
+                for item in largest_snapshot:
+                    writer.writerow([
+                        "Largest File",
+                        item.get("name", ""),
+                        item.get("path", ""),
+                        item.get("size_bytes", 0),
+                        item.get("size_human", ""),
+                        f"{item.get('age_days', 0)}d old",
+                        item.get("risk_level", ""),
+                    ])
+
+        return {
+            "ok": True,
+            "path": str(dest),
+            "format": norm_fmt,
+            "folders_exported": len(folders_sorted),
+            "files_exported": len(largest_snapshot),
+        }
 
     def remove_deleted_paths(
         self,

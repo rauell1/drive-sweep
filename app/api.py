@@ -7,32 +7,54 @@ import platform
 import subprocess
 import sys
 import threading
+from datetime import datetime
 from pathlib import Path
 
 import webview
 
 from app import __version__
+from app.duplicates import find_duplicates
 from app.presets import scan_smart_presets
 from app.safety import (
     delete_targets,
     format_bytes,
     is_admin,
+    is_os_protected_path,
     relaunch_as_admin,
     run_docker_builder_prune,
+    sanitized_subprocess_env,
 )
 from app.scanner import DriveScanner, list_drives
+from app.scheduler import (
+    configure_windows_reminder_task,
+    evaluate_low_disk_alerts,
+    query_scheduled_task,
+    show_low_disk_notification,
+)
 from app.storage import (
+    add_custom_preset,
     add_exclusion,
     append_history,
     clear_history,
     get_app_data_dir,
+    get_custom_presets,
     get_exclusions,
     get_history,
     get_theme,
     load_settings,
+    remove_custom_preset,
     remove_exclusion,
     set_auto_check_updates,
+    set_language,
+    set_reminder_settings,
     set_theme,
+)
+from app.system_tools import (
+    analyze_winsxs,
+    empty_recycle_bin,
+    inspect_system_space,
+    open_recycle_bin_folder,
+    run_winsxs_cleanup,
 )
 from app.updater import (
     check_for_updates as updater_check,
@@ -74,12 +96,24 @@ class DriveSweepAPI:
             "mode": "",
             "error": None,
         }
+        self._dup_lock = threading.Lock()
+        self._dup_cancel = threading.Event()
+        self._dup_thread: threading.Thread | None = None
+        self._dup_state: dict = {
+            "status": "idle",
+            "stage": "idle",
+            "progress": 0,
+            "total": 0,
+            "result": None,
+            "error": None,
+        }
 
     def set_window(self, window: webview.Window) -> None:
         self._window = window
 
     def get_app_info(self) -> dict:
         settings = load_settings()
+        rem_pct = int(settings.get("reminder_threshold_pct", 15))
         return {
             "version": __version__,
             "os": platform.system(),
@@ -87,15 +121,24 @@ class DriveSweepAPI:
             "drives": list_drives(),
             "is_admin": is_admin(),
             "exclusions": settings["exclusions"],
+            "custom_presets": settings["custom_presets"],
             "history_count": len(get_history(limit=200)),
             "theme": settings["theme"],
+            "language": settings["language"],
             "auto_check_updates": settings["auto_check_updates"],
+            "reminder_enabled": settings["reminder_enabled"],
+            "reminder_frequency": settings["reminder_frequency"],
+            "reminder_threshold_pct": rem_pct,
+            "low_disk_alerts": evaluate_low_disk_alerts(threshold_free_pct=rem_pct),
             "install_kind": detect_install_kind(),
             "data_dir": str(get_app_data_dir()),
         }
 
     def set_theme(self, theme: str) -> dict:
         return set_theme(theme)
+
+    def set_language(self, language: str) -> dict:
+        return set_language(language)
 
     def set_auto_check_updates(self, enabled: bool) -> dict:
         return set_auto_check_updates(bool(enabled))
@@ -451,14 +494,204 @@ class DriveSweepAPI:
         try:
             if os.name == "nt":
                 if p.is_file():
-                    subprocess.Popen(["explorer", "/select,", str(p)])
+                    subprocess.Popen(["explorer", "/select,", str(p)], env=sanitized_subprocess_env())
                 else:
                     os.startfile(str(p))  # type: ignore[attr-defined]
             elif sys.platform == "darwin":
-                subprocess.Popen(["open", "-R", str(p)] if p.is_file() else ["open", str(p)])
+                subprocess.Popen(
+                    ["open", "-R", str(p)] if p.is_file() else ["open", str(p)],
+                    env=sanitized_subprocess_env(),
+                )
             else:
                 target = str(p.parent if p.is_file() else p)
-                subprocess.Popen(["xdg-open", target])
+                subprocess.Popen(["xdg-open", target], env=sanitized_subprocess_env())
             return {"ok": True}
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
+
+    def get_treemap_data(self, folder_path: str | None = None) -> dict:
+        return self.scanner.get_treemap_data(folder_path=folder_path)
+
+    def export_scan_report(self, fmt: str = "csv") -> dict:
+        norm_fmt = "json" if str(fmt or "").strip().lower() == "json" else "csv"
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        default_name = f"DriveSweep-Report-{ts}.{norm_fmt}"
+        output_path = ""
+
+        if self._window is not None:
+            try:
+                file_types = (
+                    ("JSON Report (*.json)",)
+                    if norm_fmt == "json"
+                    else ("CSV Spreadsheet (*.csv)",)
+                )
+                picked = self._window.create_file_dialog(
+                    webview.SAVE_DIALOG,
+                    save_filename=default_name,
+                    file_types=file_types,
+                )
+                if not picked:
+                    return {"ok": False, "cancelled": True}
+                output_path = picked[0] if isinstance(picked, (list, tuple)) else str(picked)
+            except Exception:
+                output_path = ""
+
+        if not output_path:
+            docs = Path.home() / "Documents"
+            base_dir = docs if docs.exists() else get_app_data_dir()
+            output_path = str(base_dir / default_name)
+
+        return self.scanner.export_scan_report(output_path, fmt=norm_fmt)
+
+    def start_duplicate_scan(self, min_size_kb: int = 100) -> dict:
+        nodes = self.scanner.get_nodes_snapshot()
+        if not nodes:
+            return {"status": "error", "error": "Scan a drive or folder first before finding duplicates."}
+
+        with self._dup_lock:
+            if self._dup_state.get("status") == "running":
+                return dict(self._dup_state)
+            self._dup_cancel.clear()
+            self._dup_state = {
+                "status": "running",
+                "stage": "grouping",
+                "progress": 0,
+                "total": 0,
+                "result": None,
+                "error": None,
+            }
+
+        min_bytes = max(1024, int(min_size_kb) * 1024)
+        exclusions = get_exclusions()
+
+        def _dup_worker() -> None:
+            def on_prog(stage: str, done: int, total: int) -> None:
+                with self._dup_lock:
+                    self._dup_state["stage"] = stage
+                    self._dup_state["progress"] = done
+                    self._dup_state["total"] = total
+
+            try:
+                res = find_duplicates(
+                    nodes,
+                    min_size_bytes=min_bytes,
+                    exclusions=exclusions,
+                    cancel_event=self._dup_cancel,
+                    progress_cb=on_prog,
+                )
+                with self._dup_lock:
+                    self._dup_state["status"] = "cancelled" if res.get("cancelled") else "done"
+                    self._dup_state["stage"] = "done"
+                    self._dup_state["result"] = res
+            except Exception as exc:
+                with self._dup_lock:
+                    self._dup_state["status"] = "error"
+                    self._dup_state["error"] = str(exc)
+
+        self._dup_thread = threading.Thread(target=_dup_worker, daemon=True)
+        self._dup_thread.start()
+        return self.get_duplicate_status()
+
+    def get_duplicate_status(self) -> dict:
+        with self._dup_lock:
+            return dict(self._dup_state)
+
+    def cancel_duplicate_scan(self) -> dict:
+        self._dup_cancel.set()
+        return self.get_duplicate_status()
+
+    def inspect_system_space(self, max_age_days: int = 30) -> dict:
+        return inspect_system_space(max_age_days=max_age_days)
+
+    def empty_recycle_bin(self, drive_root: str | None = None) -> dict:
+        res = empty_recycle_bin(root_path=drive_root)
+        res["drives_after"] = list_drives()
+        return res
+
+    def open_recycle_bin(self) -> dict:
+        return open_recycle_bin_folder()
+
+    def analyze_winsxs(self) -> dict:
+        return analyze_winsxs()
+
+    def run_winsxs_cleanup(self) -> dict:
+        res = run_winsxs_cleanup()
+        res["drives_after"] = list_drives()
+        return res
+
+    def get_custom_presets(self) -> list[dict]:
+        return get_custom_presets()
+
+    def add_custom_preset(
+        self,
+        raw_path: str = "",
+        name: str = "",
+        contents_only: bool = True,
+    ) -> dict:
+        target_path = str(raw_path or "").strip()
+        if not target_path and self._window is not None:
+            try:
+                picked = self._window.create_file_dialog(webview.FOLDER_DIALOG)
+                if not picked:
+                    return {"ok": False, "cancelled": True}
+                target_path = picked[0] if isinstance(picked, (list, tuple)) else str(picked)
+            except Exception as exc:
+                return {"ok": False, "error": str(exc)}
+        if not target_path:
+            return {"ok": False, "error": "No folder selected."}
+
+        p = Path(target_path)
+        if not p.exists() or not p.is_dir():
+            return {"ok": False, "error": f"Folder does not exist: {target_path}"}
+        if is_os_protected_path(p, allow_temp_contents=bool(contents_only)):
+            return {
+                "ok": False,
+                "error": "Cannot add critical Windows system folders as cleanup presets.",
+            }
+        items = add_custom_preset(str(p), name=name, contents_only=bool(contents_only))
+        return {"ok": True, "custom_presets": items}
+
+    def remove_custom_preset(self, preset_id_or_path: str) -> dict:
+        items = remove_custom_preset(preset_id_or_path)
+        return {"ok": True, "custom_presets": items}
+
+    def get_reminder_status(self) -> dict:
+        settings = load_settings()
+        task_info = query_scheduled_task()
+        threshold = int(settings.get("reminder_threshold_pct", 15))
+        return {
+            "enabled": bool(settings.get("reminder_enabled", False)),
+            "frequency": settings.get("reminder_frequency", "weekly"),
+            "threshold_pct": threshold,
+            "task": task_info,
+            "alerts": evaluate_low_disk_alerts(threshold_free_pct=threshold),
+        }
+
+    def configure_disk_reminder(
+        self,
+        enabled: bool,
+        frequency: str = "weekly",
+        threshold_pct: int = 15,
+    ) -> dict:
+        task_res = configure_windows_reminder_task(bool(enabled), frequency=frequency)
+        settings = set_reminder_settings(
+            enabled=bool(enabled) and bool(task_res.get("ok", False)),
+            frequency=frequency,
+            threshold_pct=int(threshold_pct),
+        )
+        return {
+            **task_res,
+            "enabled": settings["reminder_enabled"],
+            "frequency": settings["reminder_frequency"],
+            "threshold_pct": settings["reminder_threshold_pct"],
+            "alerts": evaluate_low_disk_alerts(threshold_free_pct=settings["reminder_threshold_pct"]),
+        }
+
+    def test_low_disk_notification(self) -> dict:
+        settings = load_settings()
+        threshold = int(settings.get("reminder_threshold_pct", 15))
+        alerts = evaluate_low_disk_alerts(threshold_free_pct=threshold)
+        target_alerts = alerts["alerts"] or [
+            {"drive": "C:\\", "free_human": "Test Alert", "free_pct": threshold}
+        ]
+        return show_low_disk_notification(target_alerts)

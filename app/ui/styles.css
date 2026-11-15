@@ -683,3 +683,114 @@ html, body {
 .summary-strip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px; display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
 .ack-box { display: flex; align-items: flex-start; gap: 8px; background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 9px; padding: 10px 12px; margin-top: 12px; cursor: pointer; font-weight: 600; font-size: 12.5px; }
 .ack-box input { margin-top: 2px; width: 16px; height: 16px; accent-color: var(--danger); }
+
+/* Interactive Proportional Treemap */
+.treemap-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.treemap-canvas {
+  position: relative;
+  width: 100%;
+  height: 290px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.treemap-rect {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid var(--surface);
+  border-radius: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow: hidden;
+  text-align: left;
+  transition: filter 0.14s ease, transform 0.14s ease, border-color 0.14s ease;
+}
+.treemap-rect:hover {
+  filter: brightness(1.08);
+  border-color: var(--accent-2);
+  z-index: 2;
+}
+.treemap-rect.risk-safe {
+  background: linear-gradient(155deg, rgba(59, 130, 246, 0.24), rgba(37, 99, 235, 0.12));
+}
+.treemap-rect.risk-caution {
+  background: linear-gradient(155deg, rgba(245, 158, 11, 0.24), rgba(217, 119, 6, 0.11));
+}
+.treemap-rect.risk-critical {
+  background: linear-gradient(155deg, rgba(239, 68, 68, 0.22), rgba(185, 28, 28, 0.10));
+}
+.treemap-rect-name {
+  font-weight: 700;
+  font-size: 12px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.treemap-rect-size {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Low-Disk Banner */
+.low-disk-banner {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.low-disk-banner.is-critical {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.38);
+}
+
+/* Settings & Windows Tools Sections */
+.settings-section {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+.settings-section h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+.settings-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.tool-output-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 11px;
+  font-size: 12px;
+  margin-top: 8px;
+}

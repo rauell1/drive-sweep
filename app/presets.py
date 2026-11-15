@@ -12,7 +12,7 @@ from pathlib import Path
 import psutil
 
 from app.safety import format_bytes, is_os_protected_path, is_personal_guarded_path, to_os_path
-from app.storage import get_exclusions, is_path_excluded
+from app.storage import get_custom_presets, get_exclusions, is_path_excluded
 
 
 @dataclass
@@ -26,6 +26,7 @@ class SmartPresetCandidate:
     default_checked: bool = True
     process_hint: str | None = None
     is_docker_prune: bool = False
+    is_custom: bool = False
 
 
 @dataclass
@@ -45,6 +46,7 @@ class SmartPresetResult:
     risk_reason: str
     running_app: str | None
     is_docker_prune: bool = False
+    is_custom: bool = False
 
 
 def _get_running_process_names() -> set[str]:
@@ -761,9 +763,41 @@ def _discover_unix_candidates() -> list[SmartPresetCandidate]:
     return items
 
 
-def scan_smart_presets(exclusions: list[str] | None = None) -> dict:
+def scan_smart_presets(
+    exclusions: list[str] | None = None,
+    custom_presets: list[dict] | None = None,
+) -> dict:
     """Scan all smart presets on the current user's system and return sizes, warnings, & exclusions."""
     candidates = _discover_windows_candidates() if os.name == "nt" else _discover_unix_candidates()
+    custom_list = custom_presets if custom_presets is not None else get_custom_presets()
+    seen_norm = {os.path.normcase(os.path.abspath(c.path)) for c in candidates}
+    for custom in custom_list:
+        raw_path = str(custom.get("path", "")).strip()
+        if not raw_path:
+            continue
+        target = Path(raw_path)
+        norm_key = os.path.normcase(os.path.abspath(str(target)))
+        if norm_key in seen_norm:
+            continue
+        contents_only = bool(custom.get("contents_only", True))
+        if is_os_protected_path(target, allow_temp_contents=contents_only):
+            continue
+        seen_norm.add(norm_key)
+        candidates.append(
+            SmartPresetCandidate(
+                id=str(custom.get("id", f"custom_{abs(hash(norm_key)) & 0xFFFFFFFF:08x}")),
+                group="Custom Folders",
+                label=str(custom.get("name") or target.name or str(target)),
+                path=str(target),
+                contents_only=contents_only,
+                safety_note="User-added custom cleanup folder. Review before cleaning.",
+                default_checked=False,
+                process_hint=None,
+                is_docker_prune=False,
+                is_custom=True,
+            )
+        )
+
     running_names = _get_running_process_names()
     ex_list = exclusions if exclusions is not None else get_exclusions()
 
@@ -778,7 +812,7 @@ def scan_smart_presets(exclusions: list[str] | None = None) -> dict:
             except Exception:
                 size_bytes, file_count = 0, 0
 
-            if size_bytes <= 0 and file_count == 0:
+            if not item.is_custom and size_bytes <= 0 and file_count == 0:
                 continue
 
             excluded = is_path_excluded(item.path, ex_list)
@@ -805,6 +839,7 @@ def scan_smart_presets(exclusions: list[str] | None = None) -> dict:
                     risk_reason=risk_reason,
                     running_app=_is_process_running(running_names, item.process_hint),
                     is_docker_prune=item.is_docker_prune,
+                    is_custom=item.is_custom,
                 )
             )
 

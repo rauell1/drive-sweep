@@ -10,6 +10,8 @@ import webview
 
 from app.api import DriveSweepAPI
 from app.safety import is_admin, relaunch_as_admin
+from app.scheduler import evaluate_low_disk_alerts, show_low_disk_notification
+from app.storage import load_settings
 from app.updater import cleanup_stale_updates
 
 
@@ -53,7 +55,19 @@ def get_icon_path() -> str | None:
     return None
 
 
+def run_low_disk_check_cli() -> int:
+    """Headless low-disk check invoked by Windows Task Scheduler."""
+    settings = load_settings()
+    threshold = int(settings.get("reminder_threshold_pct", 15))
+    report = evaluate_low_disk_alerts(threshold_free_pct=threshold)
+    if report["has_alerts"]:
+        show_low_disk_notification(report["alerts"])
+    return 0
+
+
 def main() -> None:
+    if "--low-disk-check" in sys.argv[1:]:
+        raise SystemExit(run_low_disk_check_cli())
     if not ensure_admin_or_relaunch():
         return
     cleanup_stale_updates()

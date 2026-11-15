@@ -48,11 +48,19 @@
               <path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3"/>
             </svg>
           </span>
-          <span class="nav-label">Drive Scanner</span>
+          <span class="nav-label" data-i18n="nav_explorer">Drive Scanner</span>
+        </button>
+        <button id="btn-system-tools" class="nav-item">
+          <span class="nav-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+            </svg>
+          </span>
+          <span class="nav-label" data-i18n="nav_system">Windows Tools</span>
         </button>
       </nav>
 
-      <div class="sidebar-section-label">Safety &amp; Audit</div>
+      <div class="sidebar-section-label" data-i18n="nav_safety">Safety &amp; Audit</div>
       <nav class="nav-list">
         <button id="btn-exclusions" class="nav-item">
           <span class="nav-icon">
@@ -60,7 +68,7 @@
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
             </svg>
           </span>
-          <span class="nav-label">Always Keep</span>
+          <span class="nav-label" data-i18n="nav_exclusions">Always Keep</span>
           <span id="exclusions-count" class="nav-badge">0</span>
         </button>
 
@@ -71,7 +79,7 @@
               <polyline points="12 7 12 12 15 15"/>
             </svg>
           </span>
-          <span class="nav-label">Cleanup Log</span>
+          <span class="nav-label" data-i18n="nav_history">Cleanup Log</span>
           <span id="history-count" class="nav-badge">0</span>
         </button>
 
@@ -83,14 +91,14 @@
               <line x1="12" y1="15" x2="12" y2="3"/>
             </svg>
           </span>
-          <span class="nav-label">Updates &amp; Privacy</span>
+          <span class="nav-label" data-i18n="nav_updates">Settings &amp; Updates</span>
           <span id="update-nav-badge" class="nav-badge badge-info hidden">New</span>
         </button>
       </nav>
 
       <div class="sidebar-section-label">
-        <span>Drives</span>
-        <button id="btn-refresh-drives" class="sidebar-mini-btn" title="Refresh drives">Refresh</button>
+        <span data-i18n="nav_drives">Drives</span>
+        <button id="btn-refresh-drives" class="sidebar-mini-btn" title="Refresh drives" data-i18n="refresh">Refresh</button>
       </div>
       <div id="sidebar-drives" class="sidebar-drives"></div>
 
@@ -110,8 +118,8 @@
       <!-- Top Context Header -->
       <header class="view-header">
         <div>
-          <h1 id="view-title" class="view-title">Quick Safe Cleanup</h1>
-          <p id="view-subtitle" class="view-subtitle">
+          <h1 id="view-title" class="view-title" data-i18n="smart_title">Quick Safe Cleanup</h1>
+          <p id="view-subtitle" class="view-subtitle" data-i18n="smart_subtitle">
             Clean temporary files, browser caches, and leftover installers without touching your personal folders.
           </p>
         </div>
@@ -120,14 +128,16 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
             </svg>
-            <input id="smart-filter" type="search" placeholder="Search apps or folders (chrome, temp, steam)..." />
+            <input id="smart-filter" type="search" data-i18n-placeholder="search_caches" placeholder="Search apps or folders (chrome, temp, steam)..." />
           </div>
-          <button id="btn-smart-scan" class="btn btn-primary">Re-scan</button>
+          <button id="btn-add-custom-preset" class="btn btn-soft" data-i18n="add_custom_folder">+ Add Custom Folder</button>
+          <button id="btn-smart-scan" class="btn btn-primary" data-i18n="rescan">Re-scan</button>
         </div>
       </header>
 
       <!-- Scrollable Workspace Content -->
       <main class="main-canvas">
+        <div id="low-disk-banner" class="low-disk-banner hidden"></div>
         <!-- TAB 1: Smart AI & Dev Cleanup -->
         <section id="tab-smart" class="tab-panel active">
           <!-- Visual Hero Dashboard: Donut Chart + Metrics + Breakdown Table -->
@@ -225,15 +235,19 @@
           <div id="explorer-workspace" class="explorer-workspace hidden">
             <div class="subtabs-header">
               <div class="segmented-tabs">
-                <button class="subtab-btn active" data-subview="overview">Visual Summary</button>
-                <button class="subtab-btn" data-subview="browse">Folders</button>
-                <button class="subtab-btn" data-subview="allfiles">Find Any File</button>
-                <button class="subtab-btn" data-subview="largest">Biggest Files</button>
-                <button class="subtab-btn" data-subview="devbloat">Project Caches</button>
+                <button class="subtab-btn active" data-subview="overview" data-i18n="tab_overview">Visual Summary</button>
+                <button class="subtab-btn" data-subview="browse" data-i18n="tab_browse">Folders</button>
+                <button class="subtab-btn" data-subview="allfiles" data-i18n="tab_allfiles">Find Any File</button>
+                <button class="subtab-btn" data-subview="largest" data-i18n="tab_largest">Biggest Files</button>
+                <button class="subtab-btn" data-subview="devbloat" data-i18n="tab_devbloat">Project Caches</button>
+                <button class="subtab-btn" data-subview="duplicates" data-i18n="tab_duplicates">Duplicates</button>
               </div>
               <div class="summary-chip-wrap">
+                <span id="scan-engine-badge" class="badge badge-info hidden">Standard Scan</span>
                 <div id="explorer-summary-pill" class="summary-chip"></div>
-                <button id="btn-explorer-rescan" class="btn btn-soft btn-xs hidden" title="Force fresh scan of current drive or folder">Re-scan</button>
+                <button id="btn-export-csv" class="btn btn-soft btn-xs hidden" data-i18n="export_csv">Export CSV</button>
+                <button id="btn-export-json" class="btn btn-soft btn-xs hidden" data-i18n="export_json">Export JSON</button>
+                <button id="btn-explorer-rescan" class="btn btn-soft btn-xs hidden" title="Force fresh scan of current drive or folder" data-i18n="rescan_drive">Re-scan</button>
               </div>
             </div>
 
@@ -244,10 +258,11 @@
               <div class="charts-grid">
                 <div class="chart-card">
                   <div class="chart-card-header">
-                    <span class="chart-title">Largest Folders</span>
-                    <span class="muted small-text">Click a box to open that folder</span>
+                    <span class="chart-title" data-i18n="treemap_title">Interactive Disk Map</span>
+                    <span class="muted small-text" data-i18n="treemap_subtitle">Click any block to zoom in</span>
                   </div>
-                  <div id="treemap-grid" class="treemap-grid"></div>
+                  <div id="treemap-controls" class="treemap-controls"></div>
+                  <div id="treemap-grid" class="treemap-canvas"></div>
                 </div>
 
                 <div class="chart-card">
@@ -404,6 +419,34 @@
                 </table>
               </div>
             </div>
+
+            <!-- Subview: Duplicates -->
+            <div id="subview-duplicates" class="subview">
+              <div class="browser-bar">
+                <div class="browser-filters wrap">
+                  <select id="dup-min-size" class="select">
+                    <option value="100">Files &ge; 100 KB</option>
+                    <option value="1024">Files &ge; 1 MB</option>
+                    <option value="10240">Files &ge; 10 MB</option>
+                    <option value="51200">Files &ge; 50 MB</option>
+                  </select>
+                  <button id="btn-find-dups" class="btn btn-primary btn-sm" data-i18n="dup_find_btn">Find Duplicates</button>
+                  <button id="btn-cancel-dups" class="btn btn-danger btn-sm hidden">Cancel</button>
+                  <button id="btn-dup-select-extra" class="btn btn-soft btn-sm hidden" data-i18n="dup_select_extra">Select Extra Copies</button>
+                </div>
+                <div id="dup-meta" class="muted small-text" data-i18n="dup_subtitle">
+                  Uses byte-length and SHA-256 verification inside the currently scanned drive or folder.
+                </div>
+              </div>
+              <div id="dup-progress" class="progress-card hidden">
+                <div class="progress-top">
+                  <strong id="dup-status-label">Checking matching file sizes...</strong>
+                  <span id="dup-stats-text" class="muted">0%</span>
+                </div>
+                <div class="progress-track"><div id="dup-progress-fill" class="progress-fill" style="width:15%"></div></div>
+              </div>
+              <div id="dup-groups" class="groups-stack"></div>
+            </div>
           </div>
         </section>
       </main>
@@ -448,6 +491,7 @@
     </div>
   </div>
 
+  <script src="i18n.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
