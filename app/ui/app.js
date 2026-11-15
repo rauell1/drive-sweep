@@ -17,7 +17,8 @@ const ICON_MOON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" s
 const state = {
   theme: "dark",
   language: "en",
-  version: "0.3.4",
+  version: "0.3.5",
+  activeTab: "smart",
   dataDir: "",
   installKind: "source",
   autoCheckUpdates: true,
@@ -238,6 +239,16 @@ function updateSelectionBar() {
   }
 
   document.getElementById("btn-review-queue").disabled = count === 0;
+  updateDockVisibility();
+}
+
+function updateDockVisibility() {
+  const dock = document.getElementById("dock-bar");
+  if (!dock) return;
+  const { items } = getEffectiveSelectedItems();
+  const hasExplorerSelected = items.some((it) => it.source !== "smart");
+  const shouldShow = state.activeTab === "smart" || hasExplorerSelected;
+  dock.classList.toggle("hidden", !shouldShow);
 }
 
 function setItemSelected(item, selected) {
@@ -255,6 +266,7 @@ function isItemSelected(path, contentsOnly = false) {
 }
 
 function switchTab(tabName) {
+  state.activeTab = tabName;
   document.querySelectorAll(".nav-item[data-tab]").forEach((b) => {
     b.classList.toggle("active", b.dataset.tab === tabName);
   });
@@ -265,16 +277,20 @@ function switchTab(tabName) {
   const titleEl = document.getElementById("view-title");
   const subEl = document.getElementById("view-subtitle");
   const toolbarEl = document.getElementById("header-toolbar");
+  const explorerToolbarEl = document.getElementById("explorer-header-toolbar");
 
   if (tabName === "smart") {
     titleEl.textContent = window.DriveSweepI18n ? window.DriveSweepI18n.t("smart_title") : "Quick Safe Cleanup";
     subEl.textContent = window.DriveSweepI18n ? window.DriveSweepI18n.t("smart_subtitle") : "Clean temporary files, browser caches, and leftover installers without touching your personal folders.";
     toolbarEl.classList.remove("hidden");
+    explorerToolbarEl?.classList.add("hidden");
   } else {
     titleEl.textContent = window.DriveSweepI18n ? window.DriveSweepI18n.t("explorer_title") : "Drive Scanner";
     subEl.textContent = window.DriveSweepI18n ? window.DriveSweepI18n.t("explorer_subtitle") : "Scan any drive or folder to see what takes up space, check safety levels, and find duplicates.";
     toolbarEl.classList.add("hidden");
+    explorerToolbarEl?.classList.remove("hidden");
   }
+  updateDockVisibility();
 }
 
 function switchExplorerSubView(subName) {
@@ -299,12 +315,11 @@ function renderDrives(drives, pulse = false) {
   sideEl.innerHTML = state.drives
     .map(
       (d) => `
-      <button class="side-drive ${state.activeDriveRoot === d.path ? "active" : ""}${pulseCls}" data-drive="${escapeHtml(d.path)}">
+      <button class="side-drive ${state.activeDriveRoot === d.path ? "active" : ""}${pulseCls}" data-drive="${escapeHtml(d.path)}" title="${escapeHtml(d.free_human)} free of ${escapeHtml(d.total_human)}">
         <div class="side-drive-top">
           <span>Drive ${escapeHtml(d.name)}</span>
-          <span class="muted">${d.used_percent}%</span>
+          <span class="muted">${escapeHtml(d.free_human)} free</span>
         </div>
-        <div class="side-drive-sub">${escapeHtml(d.free_human)} free of ${escapeHtml(d.total_human)}</div>
         <div class="gauge-track">
           <div class="gauge-fill ${gaugeClass(d.used_percent)}" style="width: ${Math.min(100, d.used_percent)}%"></div>
         </div>
@@ -312,26 +327,27 @@ function renderDrives(drives, pulse = false) {
     )
     .join("");
 
-  cardsEl.innerHTML = state.drives
-    .map(
-      (d) => `
-      <button class="drive-card ${state.activeDriveRoot === d.path ? "active" : ""}${pulseCls}" data-drive="${escapeHtml(d.path)}" title="Scan Drive ${escapeHtml(d.name)}: ${escapeHtml(d.free_human)} free of ${escapeHtml(d.total_human)} (${d.used_percent}% used)">
-        <span class="drive-pill-dot ${gaugeClass(d.used_percent)}"></span>
-        <span class="drive-pill-name">Drive ${escapeHtml(d.name)}</span>
-        <span class="drive-pill-meta">${escapeHtml(d.free_human)} free</span>
-      </button>`
-    )
-    .join("");
+  if (cardsEl) {
+    cardsEl.innerHTML = state.drives
+      .map(
+        (d) => `
+        <button class="drive-card ${state.activeDriveRoot === d.path ? "active" : ""}${pulseCls}" data-drive="${escapeHtml(d.path)}" title="Scan Drive ${escapeHtml(d.name)}: ${escapeHtml(d.free_human)} free of ${escapeHtml(d.total_human)} (${d.used_percent}% used)">
+          <span class="drive-pill-dot ${gaugeClass(d.used_percent)}"></span>
+          <span class="drive-pill-name">Drive ${escapeHtml(d.name)}</span>
+          <span class="drive-pill-meta">${escapeHtml(d.free_human)} free</span>
+        </button>`
+      )
+      .join("");
+    cardsEl.querySelectorAll(".drive-card").forEach((btn) => {
+      btn.addEventListener("click", () => startDriveScan(btn.dataset.drive));
+    });
+  }
 
   sideEl.querySelectorAll(".side-drive").forEach((btn) => {
     btn.addEventListener("click", () => {
       switchTab("explorer");
       startDriveScan(btn.dataset.drive);
     });
-  });
-
-  cardsEl.querySelectorAll(".drive-card").forEach((btn) => {
-    btn.addEventListener("click", () => startDriveScan(btn.dataset.drive));
   });
 }
 
@@ -1321,8 +1337,7 @@ async function pollScanStatus() {
     engineBadge.classList.remove("hidden");
     engineBadge.textContent = st.scan_engine === "ntfs_mft" ? "NTFS MFT" : "Standard Scan";
   }
-  document.getElementById("btn-export-csv")?.classList.remove("hidden");
-  document.getElementById("btn-export-json")?.classList.remove("hidden");
+  document.getElementById("export-menu-wrap")?.classList.remove("hidden");
   document.getElementById("btn-explorer-rescan").classList.remove("hidden");
 
   state.treemapPath = st.root_path;
@@ -1384,8 +1399,8 @@ async function loadTreemap(targetPath) {
     <div class="breadcrumbs">${crumbsHtml}</div>
     <div style="display:flex;gap:6px;align-items:center;">
       <span class="muted small-text">${escapeHtml(data.total_human || "0 B")}</span>
-      <button id="btn-treemap-up" class="btn btn-soft btn-xs" ${parentPath ? "" : "disabled"}>${escapeHtml(tr("treemap_up", "Up One Level"))}</button>
-      <button id="btn-treemap-browse" class="btn btn-soft btn-xs">${escapeHtml(tr("treemap_open_folders", "Open in Folders"))}</button>
+      <button id="btn-treemap-up" class="btn btn-ghost btn-xs" ${parentPath ? "" : "disabled"}>${escapeHtml(tr("treemap_up", "Up One Level"))}</button>
+      <button id="btn-treemap-browse" class="btn btn-ghost btn-xs">${escapeHtml(tr("treemap_open_folders", "Open in Folders"))}</button>
     </div>
   `;
 
@@ -1448,45 +1463,26 @@ async function loadAnalytics() {
   const safe = risk.safe || { size_human: "0 B", file_count: 0, percent: 0 };
 
   document.getElementById("risk-cards-row").innerHTML = `
-    <div class="risk-strip-card">
-      <div class="risk-strip-cols">
-        <div class="risk-strip-item" title="Windows and program files locked so they cannot be deleted by mistake.">
-          <div class="risk-card-title">
-            <span class="risk-card-label"><span class="risk-dot risk-dot-critical"></span>${escapeHtml(tr("risk_sys_title", "System Files (Locked)"))}</span>
-            <span class="muted">${crit.percent}%</span>
-          </div>
-          <div class="risk-strip-bottom">
-            <span class="risk-strip-val">${escapeHtml(crit.size_human)}</span>
-            <span class="muted small-text">${crit.file_count.toLocaleString()} locked files</span>
-          </div>
-        </div>
-        <div class="risk-strip-divider"></div>
-        <div class="risk-strip-item" title="Personal, database, app, or project files. DriveSweep asks before cleaning.">
-          <div class="risk-card-title">
-            <span class="risk-card-label"><span class="risk-dot risk-dot-caution"></span>${escapeHtml(tr("risk_imp_title", "Important Files (Review First)"))}</span>
-            <span class="muted">${caut.percent}%</span>
-          </div>
-          <div class="risk-strip-bottom">
-            <span class="risk-strip-val">${escapeHtml(caut.size_human)}</span>
-            <span class="muted small-text">${caut.file_count.toLocaleString()} review-first files</span>
-          </div>
-        </div>
-        <div class="risk-strip-divider"></div>
-        <div class="risk-strip-item" title="Regular files and temporary caches you can safely review or remove.">
-          <div class="risk-card-title">
-            <span class="risk-card-label"><span class="risk-dot risk-dot-safe"></span>${escapeHtml(tr("risk_std_title", "Standard Files"))}</span>
-            <span class="muted">${safe.percent}%</span>
-          </div>
-          <div class="risk-strip-bottom">
-            <span class="risk-strip-val">${escapeHtml(safe.size_human)}</span>
-            <span class="muted small-text">${safe.file_count.toLocaleString()} regular &amp; cache files</span>
-          </div>
-        </div>
+    <div class="risk-quiet-bar">
+      <div class="risk-quiet-item" title="Windows and program files locked so they cannot be deleted by mistake.">
+        <span class="risk-dot risk-dot-critical"></span>
+        <span>${escapeHtml(tr("risk_sys_title", "System Files (Locked)"))}:</span>
+        <strong>${escapeHtml(crit.size_human)}</strong>
+        <span class="muted">(${crit.percent}% &middot; ${crit.file_count.toLocaleString()} locked)</span>
       </div>
-      <div class="risk-strip-bar">
-        <div style="width:${Math.max(0, Number(crit.percent || 0))}%;background:var(--danger);"></div>
-        <div style="width:${Math.max(0, Number(caut.percent || 0))}%;background:var(--warn);"></div>
-        <div style="width:${Math.max(0, Number(safe.percent || 0))}%;background:var(--good);"></div>
+      <span class="risk-quiet-sep" aria-hidden="true">&middot;</span>
+      <div class="risk-quiet-item" title="Personal, database, app, or project files. DriveSweep asks before cleaning.">
+        <span class="risk-dot risk-dot-caution"></span>
+        <span>${escapeHtml(tr("risk_imp_title", "Important Files (Review First)"))}:</span>
+        <strong>${escapeHtml(caut.size_human)}</strong>
+        <span class="muted">(${caut.percent}%)</span>
+      </div>
+      <span class="risk-quiet-sep" aria-hidden="true">&middot;</span>
+      <div class="risk-quiet-item" title="Regular files and temporary caches you can safely review or remove.">
+        <span class="risk-dot risk-dot-safe"></span>
+        <span>${escapeHtml(tr("risk_std_title", "Standard Files"))}:</span>
+        <strong>${escapeHtml(safe.size_human)}</strong>
+        <span class="muted">(${safe.percent}%)</span>
       </div>
     </div>
   `;
@@ -2293,8 +2289,26 @@ function bindEvents() {
 
   document.getElementById("btn-system-tools")?.addEventListener("click", openSystemToolsModal);
   document.getElementById("btn-add-custom-preset")?.addEventListener("click", promptAddCustomPreset);
-  document.getElementById("btn-export-csv")?.addEventListener("click", () => handleExportReport("csv"));
-  document.getElementById("btn-export-json")?.addEventListener("click", () => handleExportReport("json"));
+  const exportMenuWrap = document.getElementById("export-menu-wrap");
+  const exportToggle = document.getElementById("btn-export-toggle");
+  const exportDropdown = document.getElementById("export-dropdown");
+  exportToggle?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    exportDropdown?.classList.toggle("hidden");
+  });
+  document.addEventListener("click", (e) => {
+    if (exportDropdown && exportMenuWrap && !exportMenuWrap.contains(e.target)) {
+      exportDropdown.classList.add("hidden");
+    }
+  });
+  document.getElementById("btn-export-csv")?.addEventListener("click", () => {
+    exportDropdown?.classList.add("hidden");
+    handleExportReport("csv");
+  });
+  document.getElementById("btn-export-json")?.addEventListener("click", () => {
+    exportDropdown?.classList.add("hidden");
+    handleExportReport("json");
+  });
   document.getElementById("btn-find-dups")?.addEventListener("click", startDuplicateScan);
   document.getElementById("btn-cancel-dups")?.addEventListener("click", () => api().cancel_duplicate_scan());
   document.getElementById("btn-dup-select-extra")?.addEventListener("click", selectAllExtraDuplicates);

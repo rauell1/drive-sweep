@@ -230,23 +230,24 @@ function makeEl(id, tag = "div", attrs = {{}}) {{
 }}
 
 const requiredIds = [
-  "view-title","view-subtitle","header-toolbar","smart-filter","btn-smart-scan",
+  "view-title","view-subtitle","header-toolbar","explorer-header-toolbar","smart-filter","btn-smart-scan",
   "btn-add-custom-preset","smart-total-metric","smart-rec-metric","smart-selected-metric",
   "smart-selected-sub","smart-count-sub","smart-breakdown-bar","smart-donut-wrap",
   "smart-cat-hint","smart-groups","nav-smart-badge","btn-smart-recommended","btn-smart-all",
   "btn-smart-none","btn-smart-collapse-toggle","btn-theme-toggle","theme-icon",
-  "btn-refresh-drives","sidebar-drives","drive-cards","btn-exclusions","btn-history",
+  "btn-refresh-drives","sidebar-drives","btn-exclusions","btn-history",
   "btn-updates-privacy","btn-system-tools","exclusions-count","history-count","app-version",
   "update-nav-badge","priv-title","priv-sub","btn-elevate","btn-pick-folder","btn-cancel-scan",
   "explorer-empty","scan-progress","explorer-workspace","explorer-summary-pill","scan-engine-badge",
-  "btn-export-csv","btn-export-json","btn-explorer-rescan","risk-cards-row","treemap-controls",
+  "export-menu-wrap","btn-export-toggle","export-dropdown","btn-export-csv","btn-export-json",
+  "btn-explorer-rescan","risk-cards-row","treemap-controls",
   "treemap-grid","category-chart-wrap","age-chart-wrap","top-folders-table-wrap",
   "breadcrumbs","browse-query","browse-sort","browse-tbody","browse-pager","allfiles-query",
   "allfiles-ext","allfiles-minmb","allfiles-age","allfiles-sort","btn-allfiles-search",
   "allfiles-meta","allfiles-tbody","allfiles-pager","devbloat-age","devbloat-meta","devbloat-tbody",
   "dup-min-size","btn-find-dups","btn-cancel-dups","btn-dup-select-extra","dup-meta",
   "dup-progress","dup-status-label","dup-stats-text","dup-progress-fill","dup-groups",
-  "selected-size","selected-count","dedup-note","btn-review-queue","btn-clean-now",
+  "dock-bar","selected-size","selected-count","dedup-note","btn-review-queue","btn-clean-now",
   "modal-backdrop","modal-title","modal-body","modal-footer","modal-close","low-disk-banner",
 ];
 for (const id of requiredIds) makeEl(id);
@@ -348,10 +349,15 @@ for (const lang of ["en", "es", "fr", "de", "pt"]) {{
   await new Promise((r) => setTimeout(r, 40));
   assert(apiCalls.some((c) => c[0] === "get_app_info"), "initApp did not call get_app_info");
   assert(apiCalls.some((c) => c[0] === "scan_smart_presets"), "initApp did not call scan_smart_presets");
+  assert(!elementMap.get("dock-bar").classList.contains("hidden"), "Dock should stay visible on Smart tab");
   sandbox.switchTab("explorer");
+  assert(elementMap.get("dock-bar").classList.contains("hidden"), "Dock should hide on Drive Scanner when only smart items selected");
+  sandbox.setItemSelected({{ path: "C:\\\\Temp\\\\test.log", label: "test.log", size_bytes: 1024, size_human: "1.0 KB", source: "explorer" }}, true);
+  assert(!elementMap.get("dock-bar").classList.contains("hidden"), "Dock should appear on Drive Scanner when an explorer item is selected");
+  sandbox.setItemSelected({{ path: "C:\\\\Temp\\\\test.log", source: "explorer" }}, false);
   sandbox.switchExplorerSubView("duplicates");
   await sandbox.loadAnalytics();
-  assert(elementMap.get("risk-cards-row").innerHTML.includes("risk-strip-card"), "Missing unified risk strip");
+  assert(elementMap.get("risk-cards-row").innerHTML.includes("risk-quiet-bar"), "Missing calm risk summary bar");
   assert(elementMap.get("top-folders-table-wrap").innerHTML.includes("Users"), "Missing Top Space Users row");
   await sandbox.openSystemToolsModal();
   assert(elementMap.get("modal-title").textContent.includes("Windows Space"), "Windows Tools modal failed");

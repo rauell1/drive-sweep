@@ -20,7 +20,7 @@
           </svg>
         </div>
         <div class="brand-meta">
-          <div class="brand-name">DriveSweep <span id="app-version" class="ver-chip">v0.3.4</span></div>
+          <div class="brand-name">DriveSweep <span id="app-version" class="ver-chip">v0.3.5</span></div>
           <div class="brand-tag" data-i18n="app_subtitle">Storage Analyzer</div>
         </div>
         <button id="btn-theme-toggle" class="theme-toggle-btn" title="Switch Light / Dark theme" aria-label="Toggle Light or Dark Mode">
@@ -133,6 +133,11 @@
           <button id="btn-add-custom-preset" class="btn btn-soft" data-i18n="add_custom_folder">+ Add Custom Folder</button>
           <button id="btn-smart-scan" class="btn btn-primary" data-i18n="rescan">Re-scan</button>
         </div>
+        <div id="explorer-header-toolbar" class="header-toolbar hidden">
+          <button id="btn-pick-folder" class="btn btn-soft" data-i18n="scan_custom_folder">Scan Custom Folder...</button>
+          <button id="btn-explorer-rescan" class="btn btn-soft hidden" title="Force fresh scan of current drive or folder" data-i18n="rescan_drive">Re-scan</button>
+          <button id="btn-cancel-scan" class="btn btn-danger hidden" data-i18n="cancel_scan">Cancel Scan</button>
+        </div>
       </header>
 
       <!-- Scrollable Workspace Content -->
@@ -197,15 +202,6 @@
 
         <!-- TAB 2: Full-Drive Explorer -->
         <section id="tab-explorer" class="tab-panel">
-          <!-- Drive Selector Grid -->
-          <div class="explorer-top-bar">
-            <div id="drive-cards" class="drive-grid"></div>
-            <div class="explorer-top-actions">
-              <button id="btn-pick-folder" class="btn btn-soft" data-i18n="scan_custom_folder">Scan Custom Folder...</button>
-              <button id="btn-cancel-scan" class="btn btn-danger hidden" data-i18n="cancel_scan">Cancel Scan</button>
-            </div>
-          </div>
-
           <!-- Empty State before First Scan -->
           <div id="explorer-empty" class="empty-hero">
             <div class="empty-icon">
@@ -243,11 +239,15 @@
                 <button class="subtab-btn" data-subview="duplicates" data-i18n="tab_duplicates">Duplicates</button>
               </div>
               <div class="summary-chip-wrap">
-                <span id="scan-engine-badge" class="badge badge-info hidden">Standard Scan</span>
+                <span id="scan-engine-badge" class="scan-engine-tag hidden">Standard Scan</span>
                 <div id="explorer-summary-pill" class="summary-chip"></div>
-                <button id="btn-export-csv" class="btn btn-soft btn-xs hidden" data-i18n="export_csv">Export CSV</button>
-                <button id="btn-export-json" class="btn btn-soft btn-xs hidden" data-i18n="export_json">Export JSON</button>
-                <button id="btn-explorer-rescan" class="btn btn-soft btn-xs hidden" title="Force fresh scan of current drive or folder" data-i18n="rescan_drive">Re-scan</button>
+                <div id="export-menu-wrap" class="export-menu-wrap hidden">
+                  <button id="btn-export-toggle" class="btn btn-ghost btn-xs" type="button">Export &#9662;</button>
+                  <div id="export-dropdown" class="export-dropdown hidden">
+                    <button id="btn-export-csv" class="export-option" type="button" data-i18n="export_csv">Export CSV</button>
+                    <button id="btn-export-json" class="export-option" type="button" data-i18n="export_json">Export JSON</button>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -452,7 +452,7 @@
       </main>
 
       <!-- Docked Bottom Action Bar -->
-      <footer class="dock-bar">
+      <footer id="dock-bar" class="dock-bar">
         <div class="dock-left">
           <div class="dock-stat">
             <span id="selected-size" class="dock-size">0 B</span>
