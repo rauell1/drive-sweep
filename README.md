@@ -16,7 +16,7 @@ Choose **Option A** (standard Windows installer, recommended for most users) or 
 ### Option A: Windows Installer (Recommended)
 
 1. Open the **[GitHub Releases](https://github.com/rauell1/drive-sweep/releases)** page.
-2. Under the latest release (**Assets** section at the bottom), click **`DriveSweep-Setup-0.3.9.exe`** (or the newest version listed) to download it.
+2. Under the latest release (**Assets** section at the bottom), click **`DriveSweep-Setup-0.4.0.exe`** (or the newest version listed) to download it.
 3. Open your `Downloads` folder and double-click the downloaded `DriveSweep-Setup-...exe` file.
 4. **If Windows shows a "Windows protected your PC" (SmartScreen) blue popup:**
    - This appears on new open-source Windows apps until code signing is complete. You can verify the file checksum against `SHA256SUMS.txt` on the Releases page if you wish.
@@ -53,11 +53,11 @@ Choose **Option A** (standard Windows installer, recommended for most users) or 
    - **Duplicates:** Finds exact duplicate files using byte-size grouping and SHA-256 checksums, recommends keeping 1 copy per group, and lets you queue extra copies cleanly.
 
 ### 3. Windows Space Tools
-Click **Windows Tools** on the left sidebar to inspect and reclaim space across:
-- **Windows Recycle Bin:** View item count and total size, open the Recycle Bin folder directly, or empty it after confirmation.
-- **Old Download Installers (> 30 days):** Spot old `.exe`, `.msi`, `.zip`, `.iso`, and archive installers in `Downloads` and queue selected ones for cleanup.
-- **WinSxS Component Store (DISM):** Safely analyze and clean superseded Windows Update backups when running as Administrator.
-- **Hibernation & Virtual Disks:** View `hiberfil.sys` size and locate large WSL2 / Docker `.vhdx` virtual disks.
+Click **Windows Tools** on the left sidebar to open the dedicated Windows Space & Tools workspace and inspect or reclaim space across:
+- **Windows Recycle Bin:** View total size, per-drive Recycle Bin breakdown chips, and item count, open Recycle Bin directly, or empty it after confirmation (and record the cleanup in Cleanup Log).
+- **Old Download Installers (14 / 30 / 90 days):** Filter old `.exe`, `.msi`, `.zip`, `.iso`, and archive installers in `Downloads` and queue selected items for cleanup.
+- **WinSxS Component Store (DISM):** Safely analyze and trim superseded Windows Update backups with structured KPI readouts and Administrator Cleanup Log recording.
+- **Hibernation & Virtual Disks:** View `hiberfil.sys` size, inspect WSL2 / Docker `.vhdx` virtual disks with proportional usage bars, reveal files in Explorer, and copy compact/disable commands in one click.
 
 ### 4. Always Keep, Cleanup Log & Scheduled Low-Disk Reminders
 - **Always Keep:** Protect any folder or file from deletion across Quick Clean, Large Files & Folders, Drive Scanner, and Duplicates by clicking **Keep** on any row, or by opening **Always Keep** in the sidebar and clicking **+ Add Folder...**. You can remove protected paths from this list anytime.

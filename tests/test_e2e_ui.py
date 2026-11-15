@@ -243,6 +243,7 @@ const requiredIds = [
   "export-menu-wrap","btn-export-toggle","export-dropdown","btn-export-csv","btn-export-json",
   "btn-explorer-rescan","btn-explorer-largest-files","btn-explorer-largest-folders","largest-meta","risk-cards-row","treemap-controls",
   "treemap-grid","category-chart-wrap","age-chart-wrap","top-folders-table-wrap",
+  "windows-header-toolbar","windows-installer-age","btn-windows-refresh","windows-content","toast-container",
   "breadcrumbs","browse-query","browse-sort","browse-tbody","browse-pager","allfiles-query",
   "allfiles-ext","allfiles-minmb","allfiles-age","allfiles-sort","btn-allfiles-search",
   "allfiles-meta","allfiles-tbody","allfiles-pager","devbloat-age","devbloat-meta","devbloat-tbody",
@@ -298,7 +299,9 @@ sandbox.window.pywebview = {{
         }}
         if (prop === "inspect_system_space") {{
           return {{
+            is_admin: true,
             recycle_bin: {{ size_human: "10 MB", item_count: 2, size_bytes: 10485760 }},
+            recycle_bin_drives: [{{ drive: "C:\\\\", size_human: "10 MB", item_count: 2 }}],
             old_installers: {{ count: 1, total_human: "50 MB", items: [] }},
             hibernation: {{ present: false, size_human: "0 B" }},
             virtual_disks: {{ count: 0, total_human: "0 B", items: [] }},
@@ -413,6 +416,10 @@ for (const lang of ["en", "es", "fr", "de", "pt"]) {{
   assert(elementMap.get("top-folders-table-wrap").innerHTML.includes("Users"), "Missing Top Space Users row");
   assert(elementMap.get("treemap-grid").innerHTML.includes("space-seg-bar"), "Missing segmented storage bar");
   assert(elementMap.get("treemap-grid").innerHTML.includes("space-map-row"), "Missing folder breakdown row");
+  sandbox.switchTab("windows");
+  await new Promise((r) => setTimeout(r, 20));
+  assert(elementMap.get("windows-content").innerHTML.includes("windows-tools-grid"), "Spacious Windows Tools tab failed");
+  assert(elementMap.get("windows-content").innerHTML.includes("windows-summary-strip"), "Windows summary strip missing");
   await sandbox.openSystemToolsModal();
   assert(elementMap.get("modal-title").textContent.includes("Windows Space"), "Windows Tools modal failed");
   await sandbox.openUpdatesPrivacyModal(false);

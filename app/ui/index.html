@@ -20,7 +20,7 @@
           </svg>
         </div>
         <div class="brand-meta">
-          <div class="brand-name">DriveSweep <span id="app-version" class="ver-chip">v0.3.9</span></div>
+          <div class="brand-name">DriveSweep <span id="app-version" class="ver-chip">v0.4.0</span></div>
           <div class="brand-tag" data-i18n="app_subtitle">Storage Analyzer</div>
         </div>
         <button id="btn-theme-toggle" class="theme-toggle-btn" title="Switch Light / Dark theme" aria-label="Toggle Light or Dark Mode">
@@ -61,7 +61,7 @@
           </span>
           <span class="nav-label" data-i18n="nav_explorer">Drive Scanner</span>
         </button>
-        <button id="btn-system-tools" class="nav-item">
+        <button id="btn-system-tools" class="nav-item" data-tab="windows">
           <span class="nav-icon">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
@@ -157,6 +157,14 @@
           <button id="btn-pick-folder" class="btn btn-soft" data-i18n="scan_custom_folder">Scan Custom Folder...</button>
           <button id="btn-explorer-rescan" class="btn btn-soft hidden" title="Force fresh scan of current drive or folder" data-i18n="rescan_drive">Re-scan</button>
           <button id="btn-cancel-scan" class="btn btn-danger hidden" data-i18n="cancel_scan">Cancel Scan</button>
+        </div>
+        <div id="windows-header-toolbar" class="header-toolbar hidden">
+          <select id="windows-installer-age" class="select">
+            <option value="14">Installers &gt; 14 days</option>
+            <option value="30" selected>Installers &gt; 30 days</option>
+            <option value="90">Installers &gt; 90 days</option>
+          </select>
+          <button id="btn-windows-refresh" class="btn btn-primary" data-i18n="refresh">Refresh</button>
         </div>
       </header>
 
@@ -516,6 +524,11 @@
             </div>
           </div>
         </section>
+
+        <!-- TAB 3: Windows Space & System Tools -->
+        <section id="tab-windows" class="tab-panel">
+          <div id="windows-content"></div>
+        </section>
       </main>
 
       <!-- Docked Bottom Action Bar -->
@@ -545,6 +558,9 @@
       </footer>
     </div>
   </div>
+
+  <!-- Toast Notifications -->
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
   <!-- Modal -->
   <div id="modal-backdrop" class="modal-backdrop hidden">

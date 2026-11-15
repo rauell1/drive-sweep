@@ -23,6 +23,8 @@
     th_space: "Space",
     explorer_title: "Drive Scanner",
     explorer_subtitle: "Scan any drive or folder to see what takes up space, check safety levels, and find duplicates.",
+    windows_title: "Windows Space & Tools",
+    windows_subtitle: "Inspect and reclaim Windows system storage including Recycle Bin, old Download installers, WinSxS updates, hibernation, and virtual disks.",
     search_caches: "Search apps or folders (chrome, temp, steam)...",
     add_custom_folder: "+ Add Custom Folder",
     rescan: "Re-scan",

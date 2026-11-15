@@ -17,7 +17,7 @@ const ICON_MOON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" s
 const state = {
   theme: "dark",
   language: "en",
-  version: "0.3.9",
+  version: "0.4.0",
   activeTab: "smart",
   dataDir: "",
   installKind: "source",
@@ -33,6 +33,9 @@ const state = {
   largeData: null,
   largeMode: "files",
   largestMode: "files",
+  windowsData: null,
+  windowsAgeDays: 30,
+  winsxsAnalysis: null,
   exclusions: [],
   collapsedGroups: new Set(),
   activeCategoryFilter: null,
@@ -268,6 +271,52 @@ function isItemSelected(path, contentsOnly = false) {
   return state.selectedMap.has(selectionKey(path, !!contentsOnly));
 }
 
+function showToast(message, tone = "info") {
+  const host = document.getElementById("toast-container");
+  if (!host || typeof document.createElement !== "function") return;
+  const el = document.createElement("div");
+  el.className = `toast toast-${tone}`;
+  el.textContent = message;
+  host.appendChild(el);
+  setTimeout(() => {
+    if (typeof el.remove === "function") el.remove();
+  }, 2600);
+}
+
+async function copyCommandText(cmd, btnEl) {
+  let ok = false;
+  try {
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(cmd);
+      ok = true;
+    }
+  } catch {
+    ok = false;
+  }
+  if (!ok && typeof document.createElement === "function" && document.body) {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = cmd;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      ok = document.execCommand ? document.execCommand("copy") : false;
+      ta.remove();
+    } catch {
+      ok = false;
+    }
+  }
+  if (btnEl) {
+    const prev = btnEl.textContent;
+    btnEl.textContent = ok ? "Copied" : "Ready";
+    setTimeout(() => {
+      btnEl.textContent = prev;
+    }, 1500);
+  }
+  showToast(ok ? "Command copied to clipboard" : `Command: ${cmd}`, ok ? "good" : "info");
+}
+
 function switchTab(tabName) {
   state.activeTab = tabName;
   document.querySelectorAll(".nav-item[data-tab]").forEach((b) => {
@@ -282,31 +331,42 @@ function switchTab(tabName) {
   const toolbarEl = document.getElementById("header-toolbar");
   const largeToolbarEl = document.getElementById("large-header-toolbar");
   const explorerToolbarEl = document.getElementById("explorer-header-toolbar");
+  const windowsToolbarEl = document.getElementById("windows-header-toolbar");
+
+  toolbarEl?.classList.add("hidden");
+  largeToolbarEl?.classList.add("hidden");
+  explorerToolbarEl?.classList.add("hidden");
+  windowsToolbarEl?.classList.add("hidden");
 
   if (tabName === "smart") {
     titleEl.textContent = window.DriveSweepI18n ? window.DriveSweepI18n.t("smart_title") : "Quick Safe Cleanup";
     subEl.textContent = window.DriveSweepI18n ? window.DriveSweepI18n.t("smart_subtitle") : "Clean temporary files, browser caches, and leftover installers without touching your personal folders.";
-    toolbarEl.classList.remove("hidden");
-    largeToolbarEl?.classList.add("hidden");
-    explorerToolbarEl?.classList.add("hidden");
+    toolbarEl?.classList.remove("hidden");
   } else if (tabName === "large") {
     titleEl.textContent = window.DriveSweepI18n ? window.DriveSweepI18n.t("large_title") : "Large Files & Folders";
     subEl.textContent = window.DriveSweepI18n
       ? window.DriveSweepI18n.t("large_subtitle")
       : "Review large files and folders in Downloads, user spaces, and all drives. Nothing is selected unless you check it.";
-    toolbarEl.classList.add("hidden");
     largeToolbarEl?.classList.remove("hidden");
-    explorerToolbarEl?.classList.add("hidden");
     if (state.largeData === null) {
       loadLargeSpaces();
     } else {
       renderLargeSpacesTable();
     }
+  } else if (tabName === "windows") {
+    titleEl.textContent = window.DriveSweepI18n ? window.DriveSweepI18n.t("windows_title") : "Windows Space & Tools";
+    subEl.textContent = window.DriveSweepI18n
+      ? window.DriveSweepI18n.t("windows_subtitle")
+      : "Inspect and reclaim Windows system storage including Recycle Bin, old Download installers, WinSxS updates, hibernation, and virtual disks.";
+    windowsToolbarEl?.classList.remove("hidden");
+    if (state.windowsData === null) {
+      loadWindowsToolsView(false);
+    } else {
+      renderWindowsToolsView();
+    }
   } else {
     titleEl.textContent = window.DriveSweepI18n ? window.DriveSweepI18n.t("explorer_title") : "Drive Scanner";
     subEl.textContent = window.DriveSweepI18n ? window.DriveSweepI18n.t("explorer_subtitle") : "Scan any drive or folder to see what takes up space, check safety levels, and find duplicates.";
-    toolbarEl.classList.add("hidden");
-    largeToolbarEl?.classList.add("hidden");
     explorerToolbarEl?.classList.remove("hidden");
   }
   updateDockVisibility();
@@ -869,7 +929,7 @@ function renderLowDiskBanner() {
     switchTab("explorer");
     startDriveScan(alerts[0].drive);
   });
-  document.getElementById("btn-banner-tools")?.addEventListener("click", openSystemToolsModal);
+  document.getElementById("btn-banner-tools")?.addEventListener("click", () => switchTab("windows"));
   document.getElementById("btn-banner-dismiss")?.addEventListener("click", () => {
     state.lowDiskBannerDismissed = true;
     renderLowDiskBanner();
@@ -890,29 +950,27 @@ async function promptAddCustomPreset() {
   await loadSmartScan();
 }
 
-async function openSystemToolsModal() {
-  showModal(
-    "Windows Space & System Tools",
-    `<div class="muted">Checking Recycle Bin, old Download installers, hibernation, and virtual disks...</div>`,
-    [{ text: "Close", cls: "btn-primary", onClick: closeModal }]
-  );
-
-  let data;
-  try {
-    data = await api().inspect_system_space(30);
-  } catch (err) {
-    showModal(
-      "Windows Space & System Tools",
-      `<div class="warning-box">${escapeHtml(String(err))}</div>`,
-      [{ text: "Close", cls: "btn-primary", onClick: closeModal }]
-    );
-    return;
-  }
-
+function buildWindowsToolsHtml(data, isPageView = true) {
   const rb = data.recycle_bin || {};
+  const rbDrives = Array.isArray(data.recycle_bin_drives) ? data.recycle_bin_drives : [];
   const oldInst = data.old_installers || { count: 0, total_human: "0 B", items: [] };
   const hib = data.hibernation || {};
   const vhdx = data.virtual_disks || { count: 0, total_human: "0 B", items: [] };
+  const ageDays = Number(state.windowsAgeDays || 30);
+
+  const totalKnownBytes =
+    Number(rb.size_bytes || 0) +
+    Number(oldInst.total_bytes || 0) +
+    Number(hib.size_bytes || 0) +
+    Number(vhdx.total_bytes || 0);
+
+  const rbEmpty = (rb.size_bytes || 0) === 0 && (rb.item_count || 0) === 0;
+  const rbDriveChips = rbDrives
+    .map(
+      (d) =>
+        `<span class="drive-chip"><strong>${escapeHtml(String(d.drive || "").replace(/\\+$/, ""))}</strong> ${escapeHtml(d.size_human || "0 B")} (${Number(d.item_count || 0)})</span>`
+    )
+    .join("");
 
   const instRows = (oldInst.items || [])
     .slice(0, 12)
@@ -923,7 +981,7 @@ async function openSystemToolsModal() {
           <div style="font-weight:600;font-size:12.5px;">${escapeHtml(it.name)}</div>
           <div class="item-subpath">${it.age_days} days old | ${escapeHtml(it.path)}</div>
         </div>
-        <div style="display:flex;align-items:center;gap:8px;">
+        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
           <strong>${escapeHtml(it.size_human)}</strong>
           <button class="btn btn-soft btn-xs btn-queue-inst" data-path="${escapeHtml(it.path)}" data-name="${escapeHtml(it.name)}" data-size="${it.size_bytes}" data-human="${escapeHtml(it.size_human)}">Queue</button>
         </div>
@@ -931,75 +989,140 @@ async function openSystemToolsModal() {
     )
     .join("");
 
+  const maxVhdx = Math.max(1, ...(vhdx.items || []).map((v) => Number(v.size_bytes || 0)));
   const vhdxRows = (vhdx.items || [])
     .slice(0, 6)
-    .map(
-      (v) => `
-      <div class="review-row">
-        <div style="flex:1;min-width:0;">
-          <div style="font-weight:600;font-size:12.5px;">${escapeHtml(v.name)} <span class="muted">(${escapeHtml(v.parent)})</span></div>
-          <div class="item-subpath">${escapeHtml(v.path)}</div>
+    .map((v) => {
+      const pct = Math.min(100, Math.max(4, Math.round((Number(v.size_bytes || 0) / maxVhdx) * 100)));
+      const compactCmd = `wsl --shutdown; Optimize-VHD -Path "${v.path}" -Mode Full`;
+      return `
+      <div class="vhdx-row">
+        <div class="vhdx-row-top">
+          <div style="min-width:0;flex:1;">
+            <div style="font-weight:600;font-size:12.5px;">${escapeHtml(v.name)} <span class="muted">(${escapeHtml(v.parent)})</span></div>
+            <div class="item-subpath">${escapeHtml(v.path)}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+            <strong>${escapeHtml(v.size_human)}</strong>
+            <button class="btn btn-soft btn-xs btn-open-vhdx" data-path="${escapeHtml(v.path)}">Reveal</button>
+            <button class="btn btn-soft btn-xs btn-copy-cmd" data-cmd="${escapeHtml(compactCmd)}">Copy Compact</button>
+          </div>
         </div>
-        <div style="display:flex;align-items:center;gap:8px;">
-          <strong>${escapeHtml(v.size_human)}</strong>
-          <button class="btn btn-soft btn-xs btn-open-vhdx" data-path="${escapeHtml(v.path)}">Reveal</button>
+        <div class="space-map-bar-wrap">
+          <div class="space-map-bar-fill" style="width:${pct}%;background:var(--accent-2);"></div>
         </div>
-      </div>`
-    )
+      </div>`;
+    })
     .join("");
 
-  showModal(
-    "Windows Space & System Tools",
-    `
-    <div class="settings-section">
-      <h4>Windows Recycle Bin</h4>
-      <div class="settings-row">
-        <div>
-          <strong id="rb-size-label">${escapeHtml(rb.size_human || "0 B")}</strong>
-          <span class="muted small-text">(${Number(rb.item_count || 0).toLocaleString()} items in Recycle Bin)</span>
+  const winsxsHtml = state.winsxsAnalysis
+    ? `
+      <div class="kpi-mini-grid">
+        <div class="kpi-mini-cell">
+          <div class="kpi-mini-label">Component Store</div>
+          <div class="kpi-mini-val">${escapeHtml(state.winsxsAnalysis.component_store_size || "Unknown")}</div>
         </div>
-        <div style="display:flex;gap:8px;">
-          <button id="btn-sys-open-rb" class="btn btn-soft btn-xs">Open Recycle Bin</button>
-          <button id="btn-sys-empty-rb" class="btn btn-danger btn-xs" ${(rb.size_bytes || 0) === 0 && (rb.item_count || 0) === 0 ? "disabled" : ""}>Empty Recycle Bin</button>
+        <div class="kpi-mini-cell">
+          <div class="kpi-mini-label">Backups &amp; Disabled</div>
+          <div class="kpi-mini-val">${escapeHtml(state.winsxsAnalysis.backups_and_disabled || "0")}</div>
         </div>
-      </div>
-      <div id="rb-status-msg" class="muted small-text" style="margin-top:6px;"></div>
-    </div>
-
-    <div class="settings-section">
-      <h4>Old Installers &amp; Archives in Downloads (&gt; 30 days)</h4>
-      <div class="settings-row" style="margin-bottom:8px;">
-        <div class="muted small-text">${oldInst.count} old files totaling <strong>${escapeHtml(oldInst.total_human)}</strong></div>
-        <button id="btn-sys-queue-all-inst" class="btn btn-primary btn-xs" ${oldInst.count === 0 ? "disabled" : ""}>Queue All for Review</button>
-      </div>
-      <div class="review-list">${instRows || "<div class='muted small-text'>No installers older than 30 days found in Downloads.</div>"}</div>
-    </div>
-
-    <div class="settings-section">
-      <h4>Windows Update Component Store (WinSxS / DISM)</h4>
-      <div class="settings-row">
-        <div class="muted small-text">Check or safely trim superseded Windows Update backups (requires Administrator).</div>
-        <div style="display:flex;gap:8px;">
-          <button id="btn-sys-winsxs-analyze" class="btn btn-soft btn-xs">Analyze WinSxS</button>
-          <button id="btn-sys-winsxs-clean" class="btn btn-primary btn-xs">Clean Old Updates</button>
+        <div class="kpi-mini-cell">
+          <div class="kpi-mini-label">Reclaimable</div>
+          <div class="kpi-mini-val">${escapeHtml(state.winsxsAnalysis.reclaimable_packages || "0")} packages</div>
         </div>
-      </div>
-      <div id="winsxs-output" class="tool-output-box hidden"></div>
-    </div>
+        <div class="kpi-mini-cell">
+          <div class="kpi-mini-label">Cleanup Needed</div>
+          <div class="kpi-mini-val">${state.winsxsAnalysis.cleanup_recommended ? `<span class="badge badge-warn">Recommended</span>` : `<span class="badge badge-good">Optimal</span>`}</div>
+        </div>
+      </div>`
+    : "";
 
-    <div class="settings-section">
-      <h4>Hibernation &amp; WSL2 / Docker Virtual Disks</h4>
-      <div class="small-text" style="margin-bottom:8px;">
-        Hibernation file (<code>hiberfil.sys</code>):
-        <strong>${hib.present ? escapeHtml(hib.size_human) : "Not active (0 B)"}</strong>
-        ${hib.present ? `<span class="muted"> | Can be disabled via elevated terminal: <code>powercfg /hibernate off</code></span>` : ""}
+  const summaryBanner = isPageView
+    ? `
+    <div class="windows-summary-strip">
+      <div class="windows-summary-metrics">
+        <span>Inspectable Windows space: <strong>${escapeHtml(formatBytes(totalKnownBytes))}</strong></span>
+        <span class="risk-quiet-sep">|</span>
+        <span>Recycle Bin: <strong>${escapeHtml(rb.size_human || "0 B")}</strong></span>
+        <span class="risk-quiet-sep">|</span>
+        <span>Old Downloads: <strong>${escapeHtml(oldInst.total_human || "0 B")}</strong></span>
+        <span class="risk-quiet-sep">|</span>
+        <span>Virtual Disks: <strong>${escapeHtml(vhdx.total_human || "0 B")}</strong></span>
       </div>
-      <div class="small-text muted" style="margin-bottom:6px;">WSL2 / Docker Virtual Disks (${vhdx.count} files, ${escapeHtml(vhdx.total_human)}): shrink with <code>wsl --shutdown</code> and <code>Optimize-VHD</code>.</div>
-      <div class="review-list">${vhdxRows || "<div class='muted small-text'>No .vhdx virtual disks detected.</div>"}</div>
+      <span class="badge ${data.is_admin ? "badge-good" : "badge-warn"}">${data.is_admin ? "Administrator Active" : "Admin Needed for DISM"}</span>
+    </div>`
+    : "";
+
+  return `
+    ${summaryBanner}
+    <div class="${isPageView ? "windows-tools-grid" : ""}">
+      <div class="${isPageView ? "tool-card" : "settings-section"}">
+        <div class="tool-card-header">
+          <div>
+            <h4 class="tool-card-title">Windows Recycle Bin</h4>
+            <p class="tool-card-desc">Inspect or permanently clear trashed files across all attached drives.</p>
+          </div>
+          <div style="display:flex;gap:8px;flex-shrink:0;">
+            <button id="btn-sys-open-rb" class="btn btn-soft btn-xs">Open Recycle Bin</button>
+            <button id="btn-sys-empty-rb" class="btn btn-danger btn-xs" ${rbEmpty ? "disabled" : ""}>Empty Recycle Bin</button>
+          </div>
+        </div>
+        <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;">
+          <span id="rb-size-label" class="tool-kpi-value">${escapeHtml(rb.size_human || "0 B")}</span>
+          <span class="muted small-text">${Number(rb.item_count || 0).toLocaleString()} items waiting in Recycle Bin</span>
+        </div>
+        ${rbDriveChips ? `<div class="tool-drive-chips">${rbDriveChips}</div>` : ""}
+        <div id="rb-status-msg" class="muted small-text"></div>
+      </div>
+
+      <div class="${isPageView ? "tool-card" : "settings-section"}">
+        <div class="tool-card-header">
+          <div>
+            <h4 class="tool-card-title">Old Installers &amp; Archives in Downloads</h4>
+            <p class="tool-card-desc">Untouched installers older than ${ageDays} days (${escapeHtml(oldInst.total_human || "0 B")} found).</p>
+          </div>
+          ${oldInst.count > 0 ? `<button id="btn-sys-queue-all-inst" class="btn btn-primary btn-xs">Queue All (${oldInst.count})</button>` : ""}
+        </div>
+        <div class="review-list">${instRows || `<div class="tool-empty-note">Clean: no installers or archives older than ${ageDays} days in Downloads.</div>`}</div>
+      </div>
+
+      <div class="${isPageView ? "tool-card" : "settings-section"}">
+        <div class="tool-card-header">
+          <div>
+            <h4 class="tool-card-title">Windows Update Store (WinSxS / DISM)</h4>
+            <p class="tool-card-desc">Analyze or safely remove superseded Windows Update component backups.</p>
+          </div>
+          <div style="display:flex;gap:8px;flex-shrink:0;">
+            <button id="btn-sys-winsxs-analyze" class="btn btn-soft btn-xs">Analyze WinSxS</button>
+            <button id="btn-sys-winsxs-clean" class="btn btn-primary btn-xs">Clean Old Updates</button>
+          </div>
+        </div>
+        <div id="winsxs-output" class="tool-output-box ${state.winsxsAnalysis ? "" : "hidden"}">${winsxsHtml}</div>
+      </div>
+
+      <div class="${isPageView ? "tool-card" : "settings-section"}">
+        <div class="tool-card-header">
+          <div>
+            <h4 class="tool-card-title">Hibernation &amp; WSL2 / Docker Virtual Disks</h4>
+            <p class="tool-card-desc">Virtual disks grow over time and do not shrink automatically when containers are removed.</p>
+          </div>
+        </div>
+        <div class="summary-strip" style="padding:8px 11px;">
+          <div class="small-text">
+            Hibernation file (<code>hiberfil.sys</code>):
+            <strong>${hib.present ? escapeHtml(hib.size_human) : "Not active (0 B)"}</strong>
+          </div>
+          ${hib.present ? `<button class="btn btn-soft btn-xs btn-copy-cmd" data-cmd="powercfg /hibernate off">Copy Disable Command</button>` : `<span class="badge badge-good">Off</span>`}
+        </div>
+        <div class="small-text muted">${vhdx.count} virtual disk${vhdx.count === 1 ? "" : "s"} detected (${escapeHtml(vhdx.total_human || "0 B")} total)</div>
+        <div class="review-list">${vhdxRows || `<div class="tool-empty-note">No WSL2 or Docker .vhdx virtual disks detected.</div>`}</div>
+      </div>
     </div>
-    `,
-    [{ text: "Close", cls: "btn-primary", onClick: closeModal }]
-  );
+  `;
+}
+
+function bindWindowsToolsEvents(data, { inModal = false } = {}) {
+  const oldInst = data.old_installers || { items: [] };
 
   document.getElementById("btn-sys-open-rb")?.addEventListener("click", () => api().open_recycle_bin());
   document.getElementById("btn-sys-empty-rb")?.addEventListener("click", async () => {
@@ -1013,7 +1136,10 @@ async function openSystemToolsModal() {
       if (typeof res.history_count === "number") updateHeaderCounts(undefined, res.history_count);
       const lbl = document.getElementById("rb-size-label");
       if (lbl) lbl.textContent = "0 B";
-      if (msgEl) msgEl.textContent = res.already_empty ? "Recycle Bin is already empty." : `Freed ${res.freed_human} from Recycle Bin.`;
+      const summaryMsg = res.already_empty ? "Recycle Bin is already empty." : `Freed ${res.freed_human} from Recycle Bin.`;
+      if (msgEl) msgEl.textContent = summaryMsg;
+      showToast(summaryMsg, "good");
+      state.windowsData = null;
     } else {
       if (msgEl) msgEl.textContent = res.error || "Could not empty Recycle Bin.";
       if (rbBtn) rbBtn.disabled = false;
@@ -1030,13 +1156,14 @@ async function openSystemToolsModal() {
           size_human: b.dataset.human,
           contents_only: false,
           risk_level: "caution",
-          risk_reason: "Old installer package in Downloads (>30 days).",
+          risk_reason: "Old installer package in Downloads.",
           source: "explorer",
         },
         true
       );
       b.textContent = "Queued";
       b.disabled = true;
+      showToast(`Queued ${b.dataset.name} for cleanup`, "info");
     });
   });
 
@@ -1056,7 +1183,7 @@ async function openSystemToolsModal() {
         true
       );
     }
-    closeModal();
+    if (inModal) closeModal();
     openReviewModal();
   });
 
@@ -1064,37 +1191,130 @@ async function openSystemToolsModal() {
     b.addEventListener("click", () => api().open_in_explorer(b.dataset.path));
   });
 
-  const outBox = document.getElementById("winsxs-output");
-  document.getElementById("btn-sys-winsxs-analyze")?.addEventListener("click", async () => {
-    if (!outBox) return;
-    outBox.classList.remove("hidden");
-    outBox.textContent = "Running DISM /AnalyzeComponentStore (this can take up to 1-2 minutes)...";
-    const res = await api().analyze_winsxs();
-    if (!res.ok) {
-      outBox.textContent = res.error || "WinSxS analysis failed.";
-      return;
-    }
-    outBox.innerHTML = `
-      <div><strong>Component Store Size:</strong> ${escapeHtml(res.component_store_size || "Unknown")}</div>
-      <div><strong>Backups &amp; Disabled Features:</strong> ${escapeHtml(res.backups_and_disabled || "0")}</div>
-      <div><strong>Reclaimable Packages:</strong> ${escapeHtml(res.reclaimable_packages || "0")}</div>
-      <div><strong>Cleanup Recommended:</strong> ${res.cleanup_recommended ? "Yes" : "No"}</div>
-    `;
+  document.querySelectorAll(".btn-copy-cmd").forEach((b) => {
+    b.addEventListener("click", () => copyCommandText(b.dataset.cmd || "", b));
   });
 
-  document.getElementById("btn-sys-winsxs-clean")?.addEventListener("click", async () => {
+  const outBox = document.getElementById("winsxs-output");
+  const analyzeBtn = document.getElementById("btn-sys-winsxs-analyze");
+  const cleanBtn = document.getElementById("btn-sys-winsxs-clean");
+
+  analyzeBtn?.addEventListener("click", async () => {
     if (!outBox) return;
+    analyzeBtn.disabled = true;
+    if (cleanBtn) cleanBtn.disabled = true;
     outBox.classList.remove("hidden");
-    outBox.textContent = "Running DISM /StartComponentCleanup (please keep DriveSweep open until it completes)...";
-    const res = await api().run_winsxs_cleanup();
-    if (res.ok) {
-      if (res.drives_after) renderDrives(res.drives_after);
-      if (typeof res.history_count === "number") updateHeaderCounts(undefined, res.history_count);
-      outBox.textContent = "WinSxS component cleanup finished successfully.";
-    } else {
-      outBox.textContent = res.error || "WinSxS cleanup failed.";
+    outBox.innerHTML = `<div class="muted">Running DISM /AnalyzeComponentStore (usually takes 30 to 90 seconds)...</div>`;
+    try {
+      const res = await api().analyze_winsxs();
+      if (!res.ok) {
+        outBox.textContent = res.error || "WinSxS analysis failed.";
+        return;
+      }
+      state.winsxsAnalysis = res;
+      outBox.innerHTML = `
+        <div class="kpi-mini-grid" style="margin-top:0;">
+          <div class="kpi-mini-cell">
+            <div class="kpi-mini-label">Component Store</div>
+            <div class="kpi-mini-val">${escapeHtml(res.component_store_size || "Unknown")}</div>
+          </div>
+          <div class="kpi-mini-cell">
+            <div class="kpi-mini-label">Backups &amp; Disabled</div>
+            <div class="kpi-mini-val">${escapeHtml(res.backups_and_disabled || "0")}</div>
+          </div>
+          <div class="kpi-mini-cell">
+            <div class="kpi-mini-label">Reclaimable</div>
+            <div class="kpi-mini-val">${escapeHtml(res.reclaimable_packages || "0")} packages</div>
+          </div>
+          <div class="kpi-mini-cell">
+            <div class="kpi-mini-label">Cleanup Needed</div>
+            <div class="kpi-mini-val">${res.cleanup_recommended ? `<span class="badge badge-warn">Recommended</span>` : `<span class="badge badge-good">Optimal</span>`}</div>
+          </div>
+        </div>`;
+    } finally {
+      analyzeBtn.disabled = false;
+      if (cleanBtn) cleanBtn.disabled = false;
     }
   });
+
+  cleanBtn?.addEventListener("click", async () => {
+    if (!outBox) return;
+    analyzeBtn && (analyzeBtn.disabled = true);
+    cleanBtn.disabled = true;
+    outBox.classList.remove("hidden");
+    outBox.innerHTML = `<div class="muted">Running DISM /StartComponentCleanup (keep DriveSweep open until Windows finishes)...</div>`;
+    try {
+      const res = await api().run_winsxs_cleanup();
+      if (res.ok) {
+        if (res.drives_after) renderDrives(res.drives_after);
+        if (typeof res.history_count === "number") updateHeaderCounts(undefined, res.history_count);
+        outBox.innerHTML = `<div class="accent-good" style="font-weight:600;">WinSxS component cleanup finished cleanly and was recorded in Cleanup Log.</div>`;
+        showToast("WinSxS component cleanup finished", "good");
+      } else {
+        outBox.textContent = res.error || "WinSxS cleanup failed.";
+      }
+    } finally {
+      analyzeBtn && (analyzeBtn.disabled = false);
+      cleanBtn.disabled = false;
+    }
+  });
+}
+
+function renderWindowsToolsView() {
+  const host = document.getElementById("windows-content");
+  if (!host) return;
+  if (!state.windowsData) {
+    host.innerHTML = `<div class="progress-card"><div class="muted">Inspecting Windows Recycle Bin, Downloads installers, WinSxS, hibernation, and virtual disks...</div></div>`;
+    return;
+  }
+  host.innerHTML = buildWindowsToolsHtml(state.windowsData, true);
+  bindWindowsToolsEvents(state.windowsData, { inModal: false });
+}
+
+async function loadWindowsToolsView(force = false) {
+  const host = document.getElementById("windows-content");
+  if (!host) return;
+  if (force || !state.windowsData) {
+    host.innerHTML = `<div class="progress-card"><div class="muted">Inspecting Windows Recycle Bin, Downloads installers, WinSxS, hibernation, and virtual disks...</div></div>`;
+  }
+  const btn = document.getElementById("btn-windows-refresh");
+  if (btn) btn.disabled = true;
+  try {
+    state.windowsData = await api().inspect_system_space(Number(state.windowsAgeDays || 30));
+    renderWindowsToolsView();
+  } catch (err) {
+    host.innerHTML = `<div class="warning-box">${escapeHtml(String(err))}</div>`;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function openSystemToolsModal() {
+  showModal(
+    "Windows Space & System Tools",
+    `<div class="muted">Checking Recycle Bin, old Download installers, hibernation, and virtual disks...</div>`,
+    [{ text: "Close", cls: "btn-primary", onClick: closeModal }]
+  );
+
+  let data;
+  try {
+    data = await api().inspect_system_space(Number(state.windowsAgeDays || 30));
+    state.windowsData = data;
+  } catch (err) {
+    showModal(
+      "Windows Space & System Tools",
+      `<div class="warning-box">${escapeHtml(String(err))}</div>`,
+      [{ text: "Close", cls: "btn-primary", onClick: closeModal }]
+    );
+    return;
+  }
+
+  showModal(
+    "Windows Space & System Tools",
+    buildWindowsToolsHtml(data, false),
+    [{ text: "Close", cls: "btn-primary", onClick: closeModal }]
+  );
+  bindWindowsToolsEvents(data, { inModal: true });
 }
 
 /* ==================== TAB 1: SMART CACHE SCAN ==================== */
@@ -2633,7 +2853,11 @@ function bindEvents() {
     loadDevArtifacts();
   });
 
-  document.getElementById("btn-system-tools")?.addEventListener("click", openSystemToolsModal);
+  document.getElementById("btn-windows-refresh")?.addEventListener("click", () => loadWindowsToolsView(true));
+  document.getElementById("windows-installer-age")?.addEventListener("change", (e) => {
+    state.windowsAgeDays = Number(e.target.value || 30);
+    loadWindowsToolsView(true);
+  });
   document.getElementById("btn-add-custom-preset")?.addEventListener("click", promptAddCustomPreset);
   const exportMenuWrap = document.getElementById("export-menu-wrap");
   const exportToggle = document.getElementById("btn-export-toggle");
