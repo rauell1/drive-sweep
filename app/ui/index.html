@@ -143,7 +143,13 @@
                 <div class="metric-block">
                   <div class="metric-label">Safe to Clean</div>
                   <div id="smart-rec-metric" class="metric-value accent-good">0 B</div>
-                  <div class="metric-sub">Personal folders protected</div>
+                  <div class="metric-sub">Recommended defaults</div>
+                </div>
+                <div class="metric-divider"></div>
+                <div class="metric-block">
+                  <div class="metric-label">Selected</div>
+                  <div id="smart-selected-metric" class="metric-value">0 B</div>
+                  <div id="smart-selected-sub" class="metric-sub">0 items queued</div>
                 </div>
                 <div class="metric-actions">
                   <div class="pill-group">
@@ -155,13 +161,21 @@
               </div>
 
               <div id="smart-breakdown-bar" class="breakdown-bar"></div>
-              <div id="smart-breakdown-legend" class="breakdown-legend"></div>
+              <div class="hero-footer-bar">
+                <div class="shield-pill">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                  </svg>
+                  <span>Protected: Downloads, OneDrive, Documents, Desktop &amp; System Files</span>
+                </div>
+                <button id="btn-smart-collapse-toggle" class="btn btn-soft btn-xs">Collapse All</button>
+              </div>
             </div>
 
             <div class="chart-card">
               <div class="chart-card-header">
                 <span class="chart-title">Space by Category</span>
-                <span class="muted small-text">Where clutter is stored</span>
+                <span id="smart-cat-hint" class="muted small-text">Click a category to filter</span>
               </div>
               <div id="smart-donut-wrap" class="donut-wrap"></div>
             </div>

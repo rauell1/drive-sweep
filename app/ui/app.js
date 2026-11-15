@@ -15,7 +15,7 @@ const ICON_MOON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" s
 
 const state = {
   theme: "dark",
-  version: "0.2.0",
+  version: "0.2.5",
   dataDir: "",
   installKind: "source",
   autoCheckUpdates: true,
@@ -24,6 +24,7 @@ const state = {
   smartItems: [],
   exclusions: [],
   collapsedGroups: new Set(),
+  activeCategoryFilter: null,
   isAdmin: false,
   osName: "Windows",
   selectedMap: new Map(),
@@ -108,7 +109,7 @@ function renderRiskBadge(riskLevel, riskReason) {
   return `<span class="badge badge-good" ${titleAttr}>Safe</span>`;
 }
 
-function buildSvgDonut(segments, centerTop, centerBottom) {
+function buildSvgDonut(segments, centerTop, centerBottom, activeLabel = null, clickable = false) {
   const total = segments.reduce((acc, s) => acc + Number(s.value || 0), 0);
   if (total <= 0) {
     return `<div class="muted small-text">No data to chart yet.</div>`;
@@ -133,7 +134,7 @@ function buildSvgDonut(segments, centerTop, centerBottom) {
     .slice(0, 6)
     .map(
       (s) => `
-      <div class="donut-list-row">
+      <div class="donut-list-row ${clickable ? "is-clickable" : ""} ${activeLabel === s.label ? "is-active" : ""}" data-cat="${escapeHtml(s.label)}">
         <span class="donut-list-name">
           <span class="legend-dot" style="background:${s.color};"></span>
           <span>${escapeHtml(s.label)}</span>
@@ -187,6 +188,20 @@ function updateSelectionBar() {
 
   document.getElementById("selected-count").textContent = `${count} item${count === 1 ? "" : "s"} selected`;
   document.getElementById("selected-size").textContent = sizeStr;
+
+  const heroSel = document.getElementById("smart-selected-metric");
+  const heroSub = document.getElementById("smart-selected-sub");
+  if (heroSel) heroSel.textContent = sizeStr;
+  if (heroSub) heroSub.textContent = `${count} item${count === 1 ? "" : "s"} queued`;
+
+  document.querySelectorAll(".group-card[data-group]").forEach((card) => {
+    const grp = card.dataset.group;
+    const chip = card.querySelector(".group-selected-chip");
+    if (!chip) return;
+    const grpItems = state.smartItems.filter((it) => it.group === grp);
+    const selCount = grpItems.filter((it) => !isPathExcludedLocal(it.path) && isItemSelected(it.path, !!it.contents_only)).length;
+    chip.textContent = `${selCount}/${grpItems.length} selected`;
+  });
 
   const cleanBtn = document.getElementById("btn-clean-now");
   cleanBtn.textContent = count > 0 ? `Clean ${sizeStr}` : "Clean Selected";
@@ -586,10 +601,19 @@ async function loadSmartScan() {
   }
 }
 
+function toggleCategoryFilter(groupName) {
+  state.activeCategoryFilter = state.activeCategoryFilter === groupName ? null : groupName;
+  if (state.activeCategoryFilter) {
+    state.collapsedGroups.delete(state.activeCategoryFilter);
+  }
+  renderSmartBreakdown(document.getElementById("smart-total-metric")?.textContent || "0 B");
+  renderSmartGroups();
+}
+
 function renderSmartBreakdown(totalHuman) {
   const barEl = document.getElementById("smart-breakdown-bar");
-  const legendEl = document.getElementById("smart-breakdown-legend");
   const donutEl = document.getElementById("smart-donut-wrap");
+  const hintEl = document.getElementById("smart-cat-hint");
 
   const totals = new Map();
   let grandTotal = 0;
@@ -602,7 +626,6 @@ function renderSmartBreakdown(totalHuman) {
 
   if (grandTotal <= 0) {
     barEl.innerHTML = "";
-    legendEl.innerHTML = `<span class="muted">All detected caches are currently empty.</span>`;
     donutEl.innerHTML = `<span class="muted small-text">No caches to visualize.</span>`;
     return;
   }
@@ -612,21 +635,19 @@ function renderSmartBreakdown(totalHuman) {
     .map(([grp, bytes]) => {
       const pct = Math.max(1.5, (bytes / grandTotal) * 100);
       const color = GROUP_COLORS[grp] || "#64748b";
-      return `<div class="breakdown-seg" style="width:${pct}%;background:${color};" title="${escapeHtml(grp)}: ${formatBytes(bytes)}"></div>`;
+      return `<div class="breakdown-seg" data-cat="${escapeHtml(grp)}" style="width:${pct}%;background:${color};" title="${escapeHtml(grp)}: ${formatBytes(bytes)}"></div>`;
     })
     .join("");
 
-  legendEl.innerHTML = sorted
-    .map(([grp, bytes]) => {
-      const color = GROUP_COLORS[grp] || "#64748b";
-      return `
-        <div class="legend-item">
-          <span class="legend-dot" style="background:${color};"></span>
-          <span>${escapeHtml(grp)}</span>
-          <strong>${formatBytes(bytes)}</strong>
-        </div>`;
-    })
-    .join("");
+  barEl.querySelectorAll(".breakdown-seg").forEach((seg) => {
+    seg.addEventListener("click", () => toggleCategoryFilter(seg.dataset.cat));
+  });
+
+  if (hintEl) {
+    hintEl.textContent = state.activeCategoryFilter
+      ? `Filtered: ${state.activeCategoryFilter} (click to clear)`
+      : "Click a category to filter";
+  }
 
   const donutSegs = sorted.map(([grp, bytes]) => ({
     label: grp,
@@ -634,7 +655,25 @@ function renderSmartBreakdown(totalHuman) {
     valueLabel: formatBytes(bytes),
     color: GROUP_COLORS[grp] || "#64748b",
   }));
-  donutEl.innerHTML = buildSvgDonut(donutSegs, totalHuman || formatBytes(grandTotal), "Total Found");
+  donutEl.innerHTML = buildSvgDonut(
+    donutSegs,
+    totalHuman || formatBytes(grandTotal),
+    "Total Found",
+    state.activeCategoryFilter,
+    true
+  );
+
+  donutEl.querySelectorAll(".donut-list-row[data-cat]").forEach((row) => {
+    row.addEventListener("click", () => toggleCategoryFilter(row.dataset.cat));
+  });
+}
+
+function updateCollapseToggleBtn() {
+  const btn = document.getElementById("btn-smart-collapse-toggle");
+  if (!btn) return;
+  const visibleGroups = Array.from(document.querySelectorAll(".group-card[data-group]")).map((el) => el.dataset.group);
+  const allCollapsed = visibleGroups.length > 0 && visibleGroups.every((g) => state.collapsedGroups.has(g));
+  btn.textContent = allCollapsed ? "Expand All" : "Collapse All";
 }
 
 function renderSmartGroups() {
@@ -643,14 +682,16 @@ function renderSmartGroups() {
 
   const filtered = state.smartItems.filter(
     (item) =>
-      !filter ||
-      item.label.toLowerCase().includes(filter) ||
-      item.path.toLowerCase().includes(filter) ||
-      item.group.toLowerCase().includes(filter)
+      (!state.activeCategoryFilter || item.group === state.activeCategoryFilter) &&
+      (!filter ||
+        item.label.toLowerCase().includes(filter) ||
+        item.path.toLowerCase().includes(filter) ||
+        item.group.toLowerCase().includes(filter))
   );
 
   if (filtered.length === 0) {
     container.innerHTML = `<div class="summary-strip">No matching caches found.</div>`;
+    updateCollapseToggleBtn();
     return;
   }
 
@@ -664,9 +705,11 @@ function renderSmartGroups() {
   container.innerHTML = "";
   for (const [groupName, items] of groups.entries()) {
     const groupBytes = items.reduce((acc, it) => acc + Number(it.size_bytes || 0), 0);
+    const selectedCount = items.filter((it) => !isPathExcludedLocal(it.path) && isItemSelected(it.path, !!it.contents_only)).length;
     const color = GROUP_COLORS[groupName] || "#64748b";
     const card = document.createElement("div");
     card.className = `group-card ${state.collapsedGroups.has(groupName) ? "collapsed" : ""}`;
+    card.dataset.group = groupName;
 
     const header = document.createElement("div");
     header.className = "group-header";
@@ -677,7 +720,10 @@ function renderSmartGroups() {
         <span>${escapeHtml(groupName)}</span>
         <span class="ver-chip">${items.length}</span>
       </div>
-      <span class="size-pill">${formatBytes(groupBytes)}</span>
+      <div class="group-header-right">
+        <span class="group-selected-chip">${selectedCount}/${items.length} selected</span>
+        <span class="size-pill">${formatBytes(groupBytes)}</span>
+      </div>
     `;
     header.addEventListener("click", () => {
       if (state.collapsedGroups.has(groupName)) {
@@ -686,6 +732,7 @@ function renderSmartGroups() {
         state.collapsedGroups.add(groupName);
       }
       card.classList.toggle("collapsed");
+      updateCollapseToggleBtn();
     });
 
     const body = document.createElement("div");
@@ -719,7 +766,7 @@ function renderSmartGroups() {
             ${item.is_docker_prune ? "" : `<button class="btn btn-soft btn-xs btn-keep-toggle">${excluded ? "Allow" : "Keep"}</button>`}
             ${item.is_docker_prune ? "" : `<button class="btn btn-soft btn-xs btn-open">Open Folder</button>`}
           </div>
-          <span class="muted small-text">${item.file_count ? `${item.file_count.toLocaleString()} files` : ""}</span>
+          <span class="muted small-text row-file-count">${item.file_count ? `${item.file_count.toLocaleString()} files` : "-"}</span>
           <span class="size-pill">${escapeHtml(item.size_human)}</span>
         </div>
       `;
@@ -794,7 +841,7 @@ async function pollScanStatus() {
   document.getElementById("explorer-workspace").classList.remove("hidden");
   const prefix = st.cached ? "Cached | " : "";
   document.getElementById("explorer-summary-pill").textContent =
-    `${prefix}Indexed ${st.files_scanned.toLocaleString()} files (${st.bytes_human}) in ${st.elapsed_sec}s` +
+    `${prefix}Scanned ${st.files_scanned.toLocaleString()} files (${st.bytes_human}) in ${st.elapsed_sec}s` +
     (st.skipped_count ? ` | ${st.skipped_count} locked entries skipped` : "");
   document.getElementById("btn-explorer-rescan").classList.remove("hidden");
 
@@ -1504,6 +1551,18 @@ function bindEvents() {
 
   document.getElementById("btn-smart-scan").addEventListener("click", loadSmartScan);
   document.getElementById("smart-filter").addEventListener("input", renderSmartGroups);
+  document.getElementById("btn-smart-collapse-toggle").addEventListener("click", () => {
+    const cards = Array.from(document.querySelectorAll(".group-card[data-group]"));
+    const allCollapsed = cards.length > 0 && cards.every((el) => state.collapsedGroups.has(el.dataset.group));
+    for (const el of cards) {
+      if (allCollapsed) {
+        state.collapsedGroups.delete(el.dataset.group);
+      } else {
+        state.collapsedGroups.add(el.dataset.group);
+      }
+    }
+    renderSmartGroups();
+  });
 
   document.getElementById("btn-smart-recommended").addEventListener("click", () => {
     for (const item of state.smartItems) {

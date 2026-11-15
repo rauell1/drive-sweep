@@ -57,7 +57,7 @@ def main() -> None:
         return
     api = DriveSweepAPI()
     window = webview.create_window(
-        title="DriveSweep: Disk & Dev Cache Cleaner",
+        title="DriveSweep - PC Storage & Drive Cleaner",
         url=get_ui_index_path(),
         js_api=api,
         width=1240,
