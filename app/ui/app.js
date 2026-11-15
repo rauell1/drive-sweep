@@ -17,7 +17,7 @@ const ICON_MOON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" s
 const state = {
   theme: "dark",
   language: "en",
-  version: "0.3.1",
+  version: "0.3.2",
   dataDir: "",
   installKind: "source",
   autoCheckUpdates: true,
@@ -25,6 +25,7 @@ const state = {
   reminderFrequency: "weekly",
   reminderThresholdPct: 15,
   lowDiskAlerts: null,
+  lowDiskBannerDismissed: false,
   latestUpdateInfo: null,
   drives: [],
   smartItems: [],
@@ -314,15 +315,10 @@ function renderDrives(drives, pulse = false) {
   cardsEl.innerHTML = state.drives
     .map(
       (d) => `
-      <button class="drive-card ${state.activeDriveRoot === d.path ? "active" : ""}${pulseCls}" data-drive="${escapeHtml(d.path)}">
-        <div class="drive-card-top">
-          <span>Drive ${escapeHtml(d.name)}</span>
-          <span class="muted small-text">${escapeHtml(d.fstype)}</span>
-        </div>
-        <div class="drive-card-sub">${escapeHtml(d.free_human)} free of ${escapeHtml(d.total_human)} (${d.used_percent}% used)</div>
-        <div class="gauge-track">
-          <div class="gauge-fill ${gaugeClass(d.used_percent)}" style="width: ${Math.min(100, d.used_percent)}%"></div>
-        </div>
+      <button class="drive-card ${state.activeDriveRoot === d.path ? "active" : ""}${pulseCls}" data-drive="${escapeHtml(d.path)}" title="Scan Drive ${escapeHtml(d.name)}: ${escapeHtml(d.free_human)} free of ${escapeHtml(d.total_human)} (${d.used_percent}% used)">
+        <span class="drive-pill-dot ${gaugeClass(d.used_percent)}"></span>
+        <span class="drive-pill-name">Drive ${escapeHtml(d.name)}</span>
+        <span class="drive-pill-meta">${escapeHtml(d.free_human)} free</span>
       </button>`
     )
     .join("");
@@ -772,7 +768,7 @@ function renderLowDiskBanner() {
   if (!banner) return;
   const info = state.lowDiskAlerts;
   const alerts = (info && info.alerts) || [];
-  if (!alerts.length) {
+  if (!alerts.length || state.lowDiskBannerDismissed) {
     banner.classList.add("hidden");
     banner.innerHTML = "";
     return;
@@ -780,16 +776,21 @@ function renderLowDiskBanner() {
   const hasCritical = alerts.some((a) => a.severity === "critical");
   banner.classList.toggle("is-critical", hasCritical);
   banner.classList.remove("hidden");
-  const summary = alerts
-    .map((a) => `<strong>Drive ${escapeHtml(a.drive.replace(/\\+$/, ""))}</strong> (${escapeHtml(a.free_human)} free, ${a.free_pct}%)`)
-    .join(" | ");
+  const visible = alerts.slice(0, 2);
+  const extraCount = Math.max(0, alerts.length - visible.length);
+  const summary =
+    visible
+      .map((a) => `<strong>${escapeHtml(a.drive.replace(/\\+$/, ""))}</strong> (${escapeHtml(a.free_human)} free, ${a.free_pct}%)`)
+      .join(" \u00b7 ") + (extraCount > 0 ? ` <span class="muted">(+${extraCount} more)</span>` : "");
   banner.innerHTML = `
-    <div style="font-size:12.5px;">
-      <strong>Low Disk Space Alert:</strong> ${summary}
+    <div style="font-size:12.5px;display:flex;align-items:center;gap:8px;min-width:0;">
+      <span class="risk-dot ${hasCritical ? "risk-dot-critical" : "risk-dot-caution"}"></span>
+      <span><strong>Low Disk Space:</strong> ${summary}</span>
     </div>
-    <div style="display:flex;gap:8px;align-items:center;">
-      <button id="btn-banner-scan" class="btn btn-primary btn-xs">Scan ${escapeHtml(alerts[0].drive)}</button>
+    <div style="display:flex;gap:6px;align-items:center;">
+      <button id="btn-banner-scan" class="btn btn-soft btn-xs">Scan ${escapeHtml(alerts[0].drive.replace(/\\+$/, ""))}</button>
       <button id="btn-banner-tools" class="btn btn-soft btn-xs">Windows Tools</button>
+      <button id="btn-banner-dismiss" class="btn-icon-quiet" title="Dismiss" aria-label="Dismiss">&times;</button>
     </div>
   `;
   document.getElementById("btn-banner-scan")?.addEventListener("click", () => {
@@ -797,6 +798,10 @@ function renderLowDiskBanner() {
     startDriveScan(alerts[0].drive);
   });
   document.getElementById("btn-banner-tools")?.addEventListener("click", openSystemToolsModal);
+  document.getElementById("btn-banner-dismiss")?.addEventListener("click", () => {
+    state.lowDiskBannerDismissed = true;
+    renderLowDiskBanner();
+  });
 }
 
 async function promptAddCustomPreset() {
@@ -1307,14 +1312,14 @@ async function pollScanStatus() {
 
   document.getElementById("scan-progress").classList.add("hidden");
   document.getElementById("explorer-workspace").classList.remove("hidden");
-  const prefix = st.cached ? "Cached | " : "";
+  const prefix = st.cached ? "Cached \u00b7 " : "";
   document.getElementById("explorer-summary-pill").textContent =
-    `${prefix}Scanned ${st.files_scanned.toLocaleString()} files (${st.bytes_human}) in ${st.elapsed_sec}s` +
-    (st.skipped_count ? ` | ${st.skipped_count} locked entries skipped` : "");
+    `${prefix}${st.files_scanned.toLocaleString()} files \u00b7 ${st.bytes_human} \u00b7 ${st.elapsed_sec}s` +
+    (st.skipped_count ? ` \u00b7 ${st.skipped_count} locked skipped` : "");
   const engineBadge = document.getElementById("scan-engine-badge");
   if (engineBadge) {
     engineBadge.classList.remove("hidden");
-    engineBadge.textContent = st.scan_engine === "ntfs_mft" ? "Fast NTFS MFT Scan" : "Standard Scan";
+    engineBadge.textContent = st.scan_engine === "ntfs_mft" ? "NTFS MFT" : "Standard Scan";
   }
   document.getElementById("btn-export-csv")?.classList.remove("hidden");
   document.getElementById("btn-export-json")?.classList.remove("hidden");
@@ -1443,29 +1448,46 @@ async function loadAnalytics() {
   const safe = risk.safe || { size_human: "0 B", file_count: 0, percent: 0 };
 
   document.getElementById("risk-cards-row").innerHTML = `
-    <div class="risk-card">
-      <div class="risk-card-title">
-        <span class="risk-card-label"><span class="risk-dot risk-dot-critical"></span>${escapeHtml(tr("risk_sys_title", "System Files (Locked)"))}</span>
-        <span class="muted">${crit.percent}%</span>
+    <div class="risk-strip-card">
+      <div class="risk-strip-cols">
+        <div class="risk-strip-item" title="Windows and program files locked so they cannot be deleted by mistake.">
+          <div class="risk-card-title">
+            <span class="risk-card-label"><span class="risk-dot risk-dot-critical"></span>${escapeHtml(tr("risk_sys_title", "System Files (Locked)"))}</span>
+            <span class="muted">${crit.percent}%</span>
+          </div>
+          <div class="risk-strip-bottom">
+            <span class="risk-strip-val">${escapeHtml(crit.size_human)}</span>
+            <span class="muted small-text">${crit.file_count.toLocaleString()} locked files</span>
+          </div>
+        </div>
+        <div class="risk-strip-divider"></div>
+        <div class="risk-strip-item" title="Personal, database, app, or project files. DriveSweep asks before cleaning.">
+          <div class="risk-card-title">
+            <span class="risk-card-label"><span class="risk-dot risk-dot-caution"></span>${escapeHtml(tr("risk_imp_title", "Important Files (Review First)"))}</span>
+            <span class="muted">${caut.percent}%</span>
+          </div>
+          <div class="risk-strip-bottom">
+            <span class="risk-strip-val">${escapeHtml(caut.size_human)}</span>
+            <span class="muted small-text">${caut.file_count.toLocaleString()} review-first files</span>
+          </div>
+        </div>
+        <div class="risk-strip-divider"></div>
+        <div class="risk-strip-item" title="Regular files and temporary caches you can safely review or remove.">
+          <div class="risk-card-title">
+            <span class="risk-card-label"><span class="risk-dot risk-dot-safe"></span>${escapeHtml(tr("risk_std_title", "Standard Files"))}</span>
+            <span class="muted">${safe.percent}%</span>
+          </div>
+          <div class="risk-strip-bottom">
+            <span class="risk-strip-val">${escapeHtml(safe.size_human)}</span>
+            <span class="muted small-text">${safe.file_count.toLocaleString()} regular &amp; cache files</span>
+          </div>
+        </div>
       </div>
-      <div class="risk-card-val">${escapeHtml(crit.size_human)}</div>
-      <div class="risk-card-desc">${crit.file_count.toLocaleString()} Windows and program files locked so they cannot be deleted by mistake.</div>
-    </div>
-    <div class="risk-card">
-      <div class="risk-card-title">
-        <span class="risk-card-label"><span class="risk-dot risk-dot-caution"></span>${escapeHtml(tr("risk_imp_title", "Important Files (Review First)"))}</span>
-        <span class="muted">${caut.percent}%</span>
+      <div class="risk-strip-bar">
+        <div style="width:${Math.max(0, Number(crit.percent || 0))}%;background:var(--danger);"></div>
+        <div style="width:${Math.max(0, Number(caut.percent || 0))}%;background:var(--warn);"></div>
+        <div style="width:${Math.max(0, Number(safe.percent || 0))}%;background:var(--good);"></div>
       </div>
-      <div class="risk-card-val">${escapeHtml(caut.size_human)}</div>
-      <div class="risk-card-desc">${caut.file_count.toLocaleString()} personal, database, app, or project files. DriveSweep asks before cleaning.</div>
-    </div>
-    <div class="risk-card">
-      <div class="risk-card-title">
-        <span class="risk-card-label"><span class="risk-dot risk-dot-safe"></span>${escapeHtml(tr("risk_std_title", "Standard Files"))}</span>
-        <span class="muted">${safe.percent}%</span>
-      </div>
-      <div class="risk-card-val">${escapeHtml(safe.size_human)}</div>
-      <div class="risk-card-desc">${safe.file_count.toLocaleString()} regular files and temporary caches you can safely review or remove.</div>
     </div>
   `;
 
@@ -1503,6 +1525,7 @@ async function loadAnalytics() {
     .join("");
 
   // Simple Summary Table
+  const topFolders = data.top_folders || [];
   const tableEl = document.getElementById("top-folders-table-wrap");
   if (topFolders.length === 0) {
     tableEl.innerHTML = `<div class="muted small-text">No folders to summarize.</div>`;

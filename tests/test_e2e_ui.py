@@ -105,7 +105,9 @@ def test_diagnostics_logger_and_api_e2e_workflow(tmp_path: Path, monkeypatch):
     exp = api.scanner.export_scan_report(str(report_csv), fmt="csv")
     assert exp["ok"] and report_csv.exists()
 
-    # UI error telemetry written locally only
+    # UI error telemetry written locally only + Windows Tools inspect signature
+    sys_info = api.inspect_system_space(30)
+    assert "recycle_bin" in sys_info and "old_installers" in sys_info
     assert api.report_ui_error("Synthetic button click test error", "app.js:123", "Error\n at fn")["ok"] is True
     diag = api.get_diagnostics_info()
     assert diag["log_path"] == str(get_log_path())
@@ -180,11 +182,18 @@ const htmlKeys = {json.dumps(html_keys)};
 
 const elementMap = new Map();
 function makeEl(id, tag = "div", attrs = {{}}) {{
+  let _text = "";
+  let _html = "";
   const el = {{
     id: id || "",
     tagName: tag.toUpperCase(),
-    textContent: "",
-    innerHTML: "",
+    get textContent() {{ return _text; }},
+    set textContent(v) {{
+      _text = String(v ?? "");
+      _html = _text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }},
+    get innerHTML() {{ return _html; }},
+    set innerHTML(v) {{ _html = String(v ?? ""); }},
     value: attrs.value || "",
     checked: !!attrs.checked,
     disabled: false,
@@ -285,6 +294,32 @@ sandbox.window.pywebview = {{
         if (prop === "scan_smart_presets") {{
           return {{ items: [], total_human: "0 B", recommended_human: "0 B", count: 0 }};
         }}
+        if (prop === "inspect_system_space") {{
+          return {{
+            recycle_bin: {{ size_human: "10 MB", item_count: 2, size_bytes: 10485760 }},
+            old_installers: {{ count: 1, total_human: "50 MB", items: [] }},
+            hibernation: {{ present: false, size_human: "0 B" }},
+            virtual_disks: {{ count: 0, total_human: "0 B", items: [] }},
+          }};
+        }}
+        if (prop === "get_drive_analytics") {{
+          return {{
+            total_human: "100 GB",
+            risk_summary: {{
+              critical: {{ size_human: "60 GB", file_count: 100, percent: 60 }},
+              caution: {{ size_human: "20 GB", file_count: 20, percent: 20 }},
+              safe: {{ size_human: "20 GB", file_count: 30, percent: 20 }},
+            }},
+            by_category: [],
+            by_age: [],
+            top_folders: [
+              {{ name: "Users", path: "C:\\\\Users", risk_level: "caution", file_count: 10, size_human: "20 GB", percent: 20 }},
+            ],
+          }};
+        }}
+        if (prop === "get_treemap_data") {{
+          return {{ current_path: "C:\\\\", total_human: "100 GB", breadcrumbs: [{{ name: "C:", path: "C:\\\\" }}], items: [] }};
+        }}
         if (prop === "get_reminder_status") {{
           return {{ enabled: false, frequency: "weekly", threshold_pct: 15, task: {{ installed: false }} }};
         }}
@@ -315,6 +350,11 @@ for (const lang of ["en", "es", "fr", "de", "pt"]) {{
   assert(apiCalls.some((c) => c[0] === "scan_smart_presets"), "initApp did not call scan_smart_presets");
   sandbox.switchTab("explorer");
   sandbox.switchExplorerSubView("duplicates");
+  await sandbox.loadAnalytics();
+  assert(elementMap.get("risk-cards-row").innerHTML.includes("risk-strip-card"), "Missing unified risk strip");
+  assert(elementMap.get("top-folders-table-wrap").innerHTML.includes("Users"), "Missing Top Space Users row");
+  await sandbox.openSystemToolsModal();
+  assert(elementMap.get("modal-title").textContent.includes("Windows Space"), "Windows Tools modal failed");
   await sandbox.openUpdatesPrivacyModal(false);
   assert(elementMap.get("modal-title").textContent.length > 0);
   console.log("UI_HARNESS_OK");

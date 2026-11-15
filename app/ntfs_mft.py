@@ -8,11 +8,14 @@ non-NTFS, scanning a subfolder, or encountering unsupported $MFT structures.
 from __future__ import annotations
 
 import ctypes
+import ctypes.wintypes as wintypes
 import os
 import struct
 import threading
 from dataclasses import dataclass
 from typing import Callable
+
+from .logger import get_logger
 
 _FILE_SHARE_ALL = 0x00000007
 _OPEN_EXISTING = 3
@@ -22,6 +25,7 @@ _INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 _FILETIME_EPOCH_DIFF = 116444736000000000
 _REPARSE_ATTR = 0x0400
 _ROOT_MFT_INDEX = 5
+_log = get_logger()
 
 
 @dataclass(frozen=True)
@@ -440,9 +444,38 @@ def try_ntfs_mft_scan(
     """Attempt fast raw NTFS $MFT scan when elevated on Windows; returns None on fallback."""
     vol_path = _is_ntfs_drive_root(root_path)
     if not vol_path:
+        _log.info("NTFS $MFT skipped for %s (not a local NTFS drive root)", root_path)
         return None
 
-    k32 = ctypes.windll.kernel32
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    k32.CreateFileW.restype = wintypes.HANDLE
+    k32.SetFilePointerEx.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_longlong,
+        ctypes.POINTER(ctypes.c_longlong),
+        wintypes.DWORD,
+    ]
+    k32.SetFilePointerEx.restype = wintypes.BOOL
+    k32.ReadFile.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.c_void_p,
+    ]
+    k32.ReadFile.restype = wintypes.BOOL
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    k32.CloseHandle.restype = wintypes.BOOL
+
     handle = k32.CreateFileW(
         vol_path,
         _GENERIC_READ,
@@ -453,6 +486,8 @@ def try_ntfs_mft_scan(
         None,
     )
     if not handle or handle == _INVALID_HANDLE_VALUE:
+        err = ctypes.get_last_error()
+        _log.info("NTFS $MFT handle open failed on %s (winerr=%s); falling back to Standard Scan", vol_path, err)
         return None
 
     try:
@@ -470,14 +505,14 @@ def try_ntfs_mft_scan(
             if not k32.SetFilePointerEx(handle, ctypes.c_longlong(aligned_off), ctypes.byref(new_pos), 0):
                 return b""
             buf = ctypes.create_string_buffer(aligned_len)
-            bytes_read = ctypes.c_ulong(0)
+            bytes_read = wintypes.DWORD(0)
             if not k32.ReadFile(handle, buf, aligned_len, ctypes.byref(bytes_read), None):
                 return b""
             lead = offset - aligned_off
             raw = buf.raw[: bytes_read.value]
             return raw[lead : lead + length]
 
-        return scan_ntfs_mft_with_reader(
+        res = scan_ntfs_mft_with_reader(
             root_path,
             read_at,
             guard=guard,
@@ -486,5 +521,10 @@ def try_ntfs_mft_scan(
             cancel_event=cancel_event,
             progress_cb=progress_cb,
         )
+        if res is None:
+            _log.info("NTFS $MFT parse returned None on %s; falling back to Standard Scan", vol_path)
+        else:
+            _log.info("NTFS $MFT scan succeeded on %s (%d files, %d folders)", vol_path, res[2], res[3])
+        return res
     finally:
         k32.CloseHandle(handle)

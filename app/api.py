@@ -603,7 +603,7 @@ class DriveSweepAPI:
         return self.get_duplicate_status()
 
     def inspect_system_space(self, max_age_days: int = 30) -> dict:
-        return inspect_system_space(max_age_days=max_age_days)
+        return inspect_system_space(max_installer_age_days=int(max_age_days or 30))
 
     def empty_recycle_bin(self, drive_root: str | None = None) -> dict:
         res = empty_recycle_bin(root_path=drive_root)
