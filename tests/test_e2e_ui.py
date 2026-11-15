@@ -320,7 +320,15 @@ sandbox.window.pywebview = {{
           }};
         }}
         if (prop === "get_treemap_data") {{
-          return {{ current_path: "C:\\\\", total_human: "100 GB", breadcrumbs: [{{ name: "C:", path: "C:\\\\" }}], items: [] }};
+          return {{
+            current_path: "C:\\\\",
+            total_human: "100 GB",
+            breadcrumbs: [{{ name: "C:", path: "C:\\\\" }}],
+            items: [{{
+              kind: "dir", name: "Users", path: "C:\\\\Users", size_bytes: 70 * 1024 * 1024 * 1024,
+              size_human: "70.00 GB", percent: 70.0, has_children: true, risk_level: "caution",
+            }}],
+          }};
         }}
         if (prop === "scan_large_spaces") {{
           return {{
@@ -394,6 +402,8 @@ for (const lang of ["en", "es", "fr", "de", "pt"]) {{
   await sandbox.loadAnalytics();
   assert(elementMap.get("risk-cards-row").innerHTML.includes("risk-quiet-bar"), "Missing calm risk summary bar");
   assert(elementMap.get("top-folders-table-wrap").innerHTML.includes("Users"), "Missing Top Space Users row");
+  assert(elementMap.get("treemap-grid").innerHTML.includes("space-seg-bar"), "Missing segmented storage bar");
+  assert(elementMap.get("treemap-grid").innerHTML.includes("space-map-row"), "Missing folder breakdown row");
   await sandbox.openSystemToolsModal();
   assert(elementMap.get("modal-title").textContent.includes("Windows Space"), "Windows Tools modal failed");
   await sandbox.openUpdatesPrivacyModal(false);

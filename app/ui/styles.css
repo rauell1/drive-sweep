@@ -746,76 +746,133 @@ html, body {
 .ack-box { display: flex; align-items: flex-start; gap: 8px; background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 9px; padding: 10px 12px; margin-top: 12px; cursor: pointer; font-weight: 600; font-size: 12.5px; }
 .ack-box input { margin-top: 2px; width: 16px; height: 16px; accent-color: var(--danger); }
 
-/* Interactive Proportional Treemap */
+/* Interactive Folder Space Breakdown */
 .treemap-controls {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 .treemap-canvas {
-  position: relative;
-  width: 100%;
-  height: 290px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  overflow: hidden;
-}
-.treemap-rect {
-  position: absolute;
-  box-sizing: border-box;
-  border: 1.5px solid var(--surface);
-  border-radius: 7px;
-  padding: 7px 9px;
-  cursor: pointer;
-  color: var(--text);
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+.space-seg-bar {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  height: 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
   overflow: hidden;
+  padding: 2px;
+  gap: 2px;
+}
+.space-seg {
+  height: 100%;
+  border: none;
+  padding: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  min-width: 6px;
+  transition: filter 0.14s ease, opacity 0.14s ease;
+}
+.space-seg:hover {
+  filter: brightness(1.12);
+}
+.space-map-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 235px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.space-map-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1.35fr) minmax(80px, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
   text-align: left;
+  cursor: pointer;
   transition: background 0.14s ease, border-color 0.14s ease;
 }
-.treemap-rect:hover {
-  border-color: var(--accent);
-  z-index: 2;
+.space-map-row:hover:not(.is-summary) {
+  background: var(--surface-2);
+  border-color: var(--border);
 }
-.treemap-rect.risk-safe {
-  background: rgba(59, 130, 246, 0.13);
+.space-map-row.is-summary {
+  cursor: default;
+  opacity: 0.8;
 }
-.treemap-rect.risk-safe:hover {
-  background: rgba(59, 130, 246, 0.21);
+.space-map-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
-.treemap-rect.risk-caution {
-  background: rgba(100, 116, 139, 0.14);
+.space-map-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
 }
-.treemap-rect.risk-caution:hover {
-  background: rgba(100, 116, 139, 0.22);
-}
-.treemap-rect.risk-critical {
-  background: rgba(148, 163, 184, 0.12);
-}
-.treemap-rect.risk-critical:hover {
-  background: rgba(148, 163, 184, 0.20);
-}
-.treemap-rect-name {
+.space-map-name {
   font-weight: 600;
-  font-size: 12px;
-  line-height: 1.25;
+  font-size: 12.5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.treemap-rect-size {
-  font-size: 11px;
-  font-weight: 500;
+.space-map-lock {
+  font-size: 10px;
+  font-weight: 600;
   color: var(--muted);
-  white-space: nowrap;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 6px;
+  flex-shrink: 0;
+}
+.space-map-bar-wrap {
+  width: 100%;
+  height: 6px;
+  background: var(--surface-2);
+  border-radius: 999px;
   overflow: hidden;
-  text-overflow: ellipsis;
+}
+.space-map-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  min-width: 4px;
+  transition: width 0.2s ease;
+}
+.space-map-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.space-map-right strong {
+  font-weight: 600;
+}
+.space-map-chev {
+  color: var(--muted);
+  font-weight: 600;
 }
 
 /* Low-Disk Banner */

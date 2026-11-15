@@ -16,7 +16,7 @@ Choose **Option A** (standard Windows installer, recommended for most users) or 
 ### Option A: Windows Installer (Recommended)
 
 1. Open the **[GitHub Releases](https://github.com/rauell1/drive-sweep/releases)** page.
-2. Under the latest release (**Assets** section at the bottom), click **`DriveSweep-Setup-0.3.6.exe`** (or the newest version listed) to download it.
+2. Under the latest release (**Assets** section at the bottom), click **`DriveSweep-Setup-0.3.7.exe`** (or the newest version listed) to download it.
 3. Open your `Downloads` folder and double-click the downloaded `DriveSweep-Setup-...exe` file.
 4. **If Windows shows a "Windows protected your PC" (SmartScreen) blue popup:**
    - This appears on new open-source Windows apps until code signing is complete. You can verify the file checksum against `SHA256SUMS.txt` on the Releases page if you wish.
@@ -45,7 +45,7 @@ Choose **Option A** (standard Windows installer, recommended for most users) or 
 1. Click **Drive Scanner** on the left sidebar, then click any drive (`Drive C:`, `Drive D:`, etc.) or **Scan Custom Folder...** to analyze a specific folder. When running as Administrator on a local NTFS drive root, DriveSweep automatically uses fast NTFS Master File Table (MFT) scanning and falls back seamlessly to standard multi-threaded scanning otherwise.
 2. Export full scan summaries anytime via **Export CSV** or **Export JSON**.
 3. Explore the 6 tabs:
-   - **Visual Summary:** Features an interactive proportional **Disk Map (Treemap)** with click-to-zoom folder drill-down and breadcrumbs, **What Takes Up Space**, **How Old Your Files Are**, and **Top Space Users**, plus safety cards (**System Files**, **Important Files**, **Standard Files**).
+   - **Visual Summary:** Features an interactive **Folder Space Breakdown** (segmented storage bar + proportional folder rows with click-to-explore drill-down and breadcrumbs), **What Takes Up Space**, **How Old Your Files Are**, and **Top Space Users**, plus calm safety indicators (**System Files**, **Important Files**, **Standard Files**).
    - **Folders:** Browse folders from largest to smallest, check items to clean, or click **Keep** to protect a folder permanently.
    - **Find Any File:** Search by file name, extension (such as `.zip` or `.mp4`), minimum size in MB, or age (for example, files untouched for over 90 days).
    - **Biggest Files:** Quickly lists the largest individual files on the selected drive.

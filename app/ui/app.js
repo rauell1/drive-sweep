@@ -17,7 +17,7 @@ const ICON_MOON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" s
 const state = {
   theme: "dark",
   language: "en",
-  version: "0.3.6",
+  version: "0.3.7",
   activeTab: "smart",
   dataDir: "",
   installKind: "source",
@@ -1375,37 +1375,16 @@ async function pollScanStatus() {
   await Promise.all([loadAnalytics(), loadBrowseFolder(), loadAllFiles(), loadLargestFiles(), loadDevArtifacts()]);
 }
 
-function computeProportionalRects(items, x, y, w, h, out = []) {
-  if (!items.length || w <= 0.1 || h <= 0.1) return out;
-  if (items.length === 1) {
-    out.push({ item: items[0], x, y, w, h });
-    return out;
-  }
-  const total = items.reduce((s, it) => s + Math.max(1, Number(it.size_bytes || 0)), 0);
-  let running = 0;
-  let splitIdx = 0;
-  const half = total / 2;
-  for (let i = 0; i < items.length - 1; i++) {
-    running += Math.max(1, Number(items[i].size_bytes || 0));
-    splitIdx = i + 1;
-    if (running >= half) break;
-  }
-  const left = items.slice(0, splitIdx);
-  const right = items.slice(splitIdx);
-  const leftSum = left.reduce((s, it) => s + Math.max(1, Number(it.size_bytes || 0)), 0);
-  const ratio = Math.max(0.08, Math.min(0.92, leftSum / total));
-
-  if (w >= h) {
-    const wLeft = w * ratio;
-    computeProportionalRects(left, x, y, wLeft, h, out);
-    computeProportionalRects(right, x + wLeft, y, w - wLeft, h, out);
-  } else {
-    const hTop = h * ratio;
-    computeProportionalRects(left, x, y, w, hTop, out);
-    computeProportionalRects(right, x, y + hTop, w, h - hTop, out);
-  }
-  return out;
-}
+const SPACE_PALETTE = [
+  "#3b82f6",
+  "#8b5cf6",
+  "#14b8a6",
+  "#f59e0b",
+  "#ec4899",
+  "#06b6d4",
+  "#6366f1",
+  "#10b981",
+];
 
 async function loadTreemap(targetPath) {
   const data = await api().get_treemap_data(targetPath || state.treemapPath || state.browseState.path);
@@ -1442,36 +1421,112 @@ async function loadTreemap(targetPath) {
     loadBrowseFolder();
   });
 
-  const items = (data.items || []).filter((it) => Number(it.size_bytes || 0) > 0);
-  if (!items.length) {
+  const allItems = (data.items || []).filter((it) => Number(it.size_bytes || 0) > 0);
+  if (!allItems.length) {
     canvasEl.innerHTML = `<div class="muted small-text" style="padding:18px;">No sized items in this folder.</div>`;
     return;
   }
 
-  const rects = computeProportionalRects(items, 0, 0, 100, 100);
-  canvasEl.innerHTML = rects
-    .map(({ item, x, y, w, h }) => {
-      const tiny = w < 10 || h < 14;
-      const drill = item.kind === "dir" && item.has_children;
+  const totalBytes = Math.max(1, allItems.reduce((s, it) => s + Number(it.size_bytes || 0), 0));
+  const maxRows = 7;
+  const shown = allItems.slice(0, maxRows);
+  const rest = allItems.slice(maxRows);
+  const restBytes = rest.reduce((s, it) => s + Number(it.size_bytes || 0), 0);
+  const restPct = Math.round((restBytes / totalBytes) * 1000) / 10;
+
+  // Segmented pill bar: show major slices clearly and group tiny slivers cleanly
+  const segItems = [];
+  let minorBytes = restBytes;
+  shown.forEach((it, idx) => {
+    const pct = (Number(it.size_bytes || 0) / totalBytes) * 100;
+    if (pct >= 1.0 || idx === 0) {
+      segItems.push({
+        item: it,
+        color: SPACE_PALETTE[idx % SPACE_PALETTE.length],
+        pct: Math.max(pct, 1.2),
+      });
+    } else {
+      minorBytes += Number(it.size_bytes || 0);
+    }
+  });
+
+  const minorPct = (minorBytes / totalBytes) * 100;
+  const segHtml = [
+    ...segItems.map((seg) => {
+      const drill = seg.item.kind === "dir" && seg.item.has_children;
       return `
-        <button class="treemap-rect risk-${escapeHtml(item.risk_level || "safe")}"
+        <button class="space-seg" type="button"
+          data-kind="${escapeHtml(seg.item.kind)}"
+          data-path="${escapeHtml(seg.item.path)}"
+          data-drill="${drill ? "1" : "0"}"
+          title="${escapeHtml(seg.item.name)} | ${escapeHtml(seg.item.size_human)} (${seg.item.percent}%)"
+          style="flex:${seg.pct.toFixed(2)} 1 0%;background:${seg.color};"></button>
+      `;
+    }),
+    minorBytes > 0
+      ? `<div class="space-seg" style="flex:${Math.max(minorPct, 1.2).toFixed(2)} 1 0%;background:#64748b;opacity:0.55;cursor:default;" title="Other smaller items | ${escapeHtml(formatBytes(minorBytes))}"></div>`
+      : "",
+  ].join("");
+
+  const rowsHtml = shown
+    .map((item, idx) => {
+      const color = SPACE_PALETTE[idx % SPACE_PALETTE.length];
+      const drill = item.kind === "dir" && item.has_children;
+      const pctNum = Math.min(100, Math.max(0, Number(item.percent || 0)));
+      const iconHtml = item.kind === "dir" ? ICON_FOLDER : ICON_FILE;
+      const lockBadge = item.risk_level === "critical" ? `<span class="space-map-lock">System</span>` : "";
+      return `
+        <button class="space-map-row" type="button"
           data-kind="${escapeHtml(item.kind)}"
           data-path="${escapeHtml(item.path)}"
           data-drill="${drill ? "1" : "0"}"
-          title="${escapeHtml(item.name)} | ${escapeHtml(item.size_human)} (${item.percent}%)"
-          style="left:${x.toFixed(2)}%;top:${y.toFixed(2)}%;width:${w.toFixed(2)}%;height:${h.toFixed(2)}%;">
-          ${tiny ? "" : `<div class="treemap-rect-name">${escapeHtml(item.name)}</div><div class="treemap-rect-size">${escapeHtml(item.size_human)} (${item.percent}%)</div>`}
+          title="${escapeHtml(item.path)}">
+          <div class="space-map-label">
+            <span class="space-map-dot" style="background:${color};"></span>
+            ${iconHtml}
+            <span class="space-map-name">${escapeHtml(item.name)}</span>
+            ${lockBadge}
+          </div>
+          <div class="space-map-bar-wrap">
+            <div class="space-map-bar-fill" style="width:${Math.max(2, pctNum)}%;background:${color};"></div>
+          </div>
+          <div class="space-map-right">
+            <strong>${escapeHtml(item.size_human)}</strong>
+            <span class="muted">${pctNum}%</span>
+            ${drill ? `<span class="space-map-chev">&#8250;</span>` : ""}
+          </div>
         </button>
       `;
     })
     .join("");
 
-  canvasEl.querySelectorAll(".treemap-rect").forEach((rect) => {
-    rect.addEventListener("click", () => {
-      if (rect.dataset.drill === "1") {
-        loadTreemap(rect.dataset.path);
+  const summaryHtml = rest.length > 0
+    ? `<div class="space-map-row is-summary">
+         <div class="space-map-label">
+           <span class="space-map-dot" style="background:#64748b;"></span>
+           <span class="space-map-name">${rest.length} smaller item${rest.length === 1 ? "" : "s"}</span>
+         </div>
+         <div class="space-map-bar-wrap">
+           <div class="space-map-bar-fill" style="width:${Math.max(2, restPct)}%;background:#64748b;opacity:0.6;"></div>
+         </div>
+         <div class="space-map-right">
+           <strong>${escapeHtml(formatBytes(restBytes))}</strong>
+           <span class="muted">${restPct}%</span>
+         </div>
+       </div>`
+    : "";
+
+  canvasEl.innerHTML = `
+    <div class="space-seg-bar">${segHtml}</div>
+    <div class="space-map-list">${rowsHtml}${summaryHtml}</div>
+  `;
+
+  canvasEl.querySelectorAll(".space-seg[data-path], .space-map-row[data-path]").forEach((el) => {
+    el.addEventListener("click", () => {
+      if (el.dataset.drill === "1") {
+        loadTreemap(el.dataset.path);
       } else {
-        state.browseState.path = rect.dataset.path;
+        state.browseState.path = el.dataset.path;
         state.browseState.offset = 0;
         switchExplorerSubView("browse");
         loadBrowseFolder();
