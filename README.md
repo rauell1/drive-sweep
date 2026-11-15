@@ -36,5 +36,18 @@ Produces:
 - `dist\SHA256SUMS.txt` (SHA-256 checksums)
 - `dist\DriveSweep-Setup-0.2.0.exe` (when Inno Setup `ISCC.exe` is installed, using [DriveSweep.iss](file:///D:/coding/drive-sweep/installer/DriveSweep.iss))
 
+## Downloads
+Prebuilt Windows executables and checksums are available on the [GitHub Releases](https://github.com/rauell1/drive-sweep/releases) page.
+
+## Code Signing Policy
+Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+
+### Project Team & Roles
+- **Authors / Maintainers / Approvers:** [Roy Otieno (@rauell1)](https://github.com/rauell1)
+- All source code changes are committed to the public repository and built cleanly through GitHub Actions workflows in [.github/workflows/ci-release.yml](https://github.com/rauell1/drive-sweep/blob/main/.github/workflows/ci-release.yml).
+
+## Privacy Policy
+DriveSweep runs completely offline on your local computer. It does not collect, transmit, sell, or share any personal data, file listings, or telemetry with any external server. Settings (`settings.json`), exclusion paths, and local cleanup logs (`history.jsonl`) are stored strictly in `%LOCALAPPDATA%\DriveSweep` (or `~/.config/DriveSweep`) on your device.
+
 ## Windows Verification & SmartScreen Signing
-Unsigned desktop builds show the Windows SmartScreen "Unknown Publisher" prompt until code-signed with an Authenticode certificate. This repository includes a ready GitHub Actions workflow in `.github/workflows/ci-release.yml` with optional **Azure Trusted Signing** integration (configure `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT`, and `AZURE_SIGNING_PROFILE` secrets to sign tagged releases automatically).
+Unsigned desktop builds show the Windows SmartScreen "Unknown Publisher" prompt until code-signed with an Authenticode certificate. Tagged builds in `.github/workflows/ci-release.yml` support **SignPath Foundation** and **Azure Trusted Signing** so release executables and installers can be verified automatically.
