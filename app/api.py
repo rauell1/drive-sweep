@@ -392,18 +392,37 @@ class DriveSweepAPI:
             if os.path.normcase(os.path.normpath(d["path"])) in contents_only_paths and not d.get("partial")
         ]
         if deleted_full_paths or cleared_contents_paths:
-            self.scanner.remove_deleted_paths(deleted_full_paths, cleared_contents_paths)
+            try:
+                self.scanner.remove_deleted_paths(deleted_full_paths, cleared_contents_paths)
+            except Exception:
+                get_logger().exception("Failed to prune deleted paths from scanner index")
 
-        append_history({
-            "mode": result.mode,
-            "freed_bytes": result.freed_bytes,
-            "freed_human": format_bytes(result.freed_bytes),
-            "deleted_count": result.deleted_count,
-            "failed_count": len(result.failed),
-            "cancelled": bool(result.cancelled),
-            "items": [d["path"] for d in result.deleted],
-            "failed": result.failed,
-        })
+        logged_items = [d["path"] for d in result.deleted]
+        if docker_result and docker_result.get("ok"):
+            logged_items.append("Docker builder cache")
+        action_label = "Cleanup (Partial)" if result.cancelled else "Cleanup"
+        try:
+            append_history({
+                "action": action_label,
+                "mode": result.mode,
+                "freed_bytes": result.freed_bytes,
+                "freed_human": format_bytes(result.freed_bytes),
+                "deleted_count": result.deleted_count,
+                "failed_count": len(result.failed),
+                "cancelled": bool(result.cancelled),
+                "items": logged_items,
+                "failed": result.failed,
+            })
+            get_logger().info(
+                "%s (%s): %s freed, %d cleaned, %d failed",
+                action_label,
+                result.mode,
+                format_bytes(result.freed_bytes),
+                result.deleted_count,
+                len(result.failed),
+            )
+        except Exception:
+            get_logger().exception("Failed to append cleanup history")
 
         drives_after = list_drives()
         return {
@@ -484,6 +503,7 @@ class DriveSweepAPI:
                     self._cleanup_state["freed_human"] = payload["freed_human"]
                     self._cleanup_state["result"] = payload
             except Exception as exc:
+                get_logger().exception("Cleanup worker failed")
                 with self._cleanup_lock:
                     self._cleanup_state["status"] = "error"
                     self._cleanup_state["error"] = str(exc)
@@ -618,6 +638,26 @@ class DriveSweepAPI:
 
     def empty_recycle_bin(self, drive_root: str | None = None) -> dict:
         res = empty_recycle_bin(root_path=drive_root)
+        if res.get("ok") and not res.get("already_empty"):
+            try:
+                append_history({
+                    "action": "Empty Recycle Bin",
+                    "mode": "permanent",
+                    "freed_bytes": int(res.get("freed_bytes", 0) or 0),
+                    "freed_human": str(res.get("freed_human", "0 B")),
+                    "deleted_count": max(1, int(res.get("items_removed", 0) or 0)),
+                    "failed_count": 0,
+                    "items": [drive_root or "Windows Recycle Bin"],
+                    "failed": [],
+                })
+                get_logger().info(
+                    "Empty Recycle Bin: %s freed (%d items)",
+                    res.get("freed_human", "0 B"),
+                    int(res.get("items_removed", 0) or 0),
+                )
+            except Exception:
+                get_logger().exception("Failed to log Recycle Bin cleanup history")
+        res["history_count"] = len(get_history(limit=200))
         res["drives_after"] = list_drives()
         return res
 
@@ -629,6 +669,22 @@ class DriveSweepAPI:
 
     def run_winsxs_cleanup(self) -> dict:
         res = run_winsxs_cleanup()
+        if res.get("ok"):
+            try:
+                append_history({
+                    "action": "WinSxS Cleanup (DISM)",
+                    "mode": "permanent",
+                    "freed_bytes": 0,
+                    "freed_human": "System Store",
+                    "deleted_count": 1,
+                    "failed_count": 0,
+                    "items": ["WinSxS Component Store (DISM /StartComponentCleanup)"],
+                    "failed": [],
+                })
+                get_logger().info("WinSxS DISM component cleanup completed")
+            except Exception:
+                get_logger().exception("Failed to log WinSxS cleanup history")
+        res["history_count"] = len(get_history(limit=200))
         res["drives_after"] = list_drives()
         return res
 

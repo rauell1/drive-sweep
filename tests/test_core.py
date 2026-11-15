@@ -528,6 +528,31 @@ def test_async_cleanup_progress_and_cancel(tmp_path: Path, monkeypatch):
     assert not f1.exists()
     assert not f2.exists()
 
+    hist = api.get_history(10)
+    assert len(hist) >= 1
+    assert hist[0]["action"] == "Cleanup"
+    assert hist[0]["deleted_count"] == 2
+
+    # Windows Tools cleanups (Empty Recycle Bin + WinSxS DISM) must also record to Cleanup Log
+    import app.api as api_mod
+
+    monkeypatch.setattr(
+        api_mod,
+        "empty_recycle_bin",
+        lambda root_path=None: {"ok": True, "already_empty": False, "freed_bytes": 5120, "freed_human": "5.00 KB", "items_removed": 3},
+    )
+    rb_res = api.empty_recycle_bin()
+    assert rb_res["ok"] is True
+    assert rb_res["history_count"] >= 2
+
+    monkeypatch.setattr(api_mod, "run_winsxs_cleanup", lambda: {"ok": True})
+    wx_res = api.run_winsxs_cleanup()
+    assert wx_res["ok"] is True
+    assert wx_res["history_count"] >= 3
+    actions = [h.get("action") for h in api.get_history(10)]
+    assert "WinSxS Cleanup (DISM)" in actions
+    assert "Empty Recycle Bin" in actions
+
     # Pre-cancelled event stops delete_targets before deleting queued paths
     f3 = tmp_path / "three.tmp"
     f3.write_bytes(b"z" * 1024)

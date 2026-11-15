@@ -276,17 +276,20 @@ def set_reminder_settings(
 def append_history(entry: dict) -> dict:
     record = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "action": str(entry.get("action") or "Cleanup"),
         "mode": entry.get("mode", "recycle"),
         "freed_bytes": int(entry.get("freed_bytes", 0)),
         "freed_human": str(entry.get("freed_human", "0 B")),
         "deleted_count": int(entry.get("deleted_count", 0)),
         "failed_count": int(entry.get("failed_count", 0)),
-        "items": entry.get("items", [])[:50],
-        "failed": entry.get("failed", [])[:20],
+        "cancelled": bool(entry.get("cancelled", False)),
+        "items": list(entry.get("items", []))[:50],
+        "failed": list(entry.get("failed", []))[:20],
     }
     path = _history_path()
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(record) + "\n")
+        fh.flush()
     return record
 
 

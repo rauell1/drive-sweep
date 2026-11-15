@@ -17,7 +17,7 @@ const ICON_MOON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" s
 const state = {
   theme: "dark",
   language: "en",
-  version: "0.3.7",
+  version: "0.3.8",
   activeTab: "smart",
   dataDir: "",
   installKind: "source",
@@ -445,14 +445,21 @@ async function openHistoryModal() {
   const rows = entries
     .map((h) => {
       const dateLabel = h.timestamp ? new Date(h.timestamp).toLocaleString() : "Unknown";
+      const actionLabel = h.action || "Cleanup";
+      const itemList = Array.isArray(h.items) ? h.items : [];
+      const itemPreview = itemList.length
+        ? `<div class="item-subpath" style="margin-top:3px;" title="${escapeHtml(itemList.join("\n"))}">${escapeHtml(itemList.slice(0, 3).join(", "))}${itemList.length > 3 ? ` (+${itemList.length - 3} more)` : ""}</div>`
+        : "";
       return `
         <div class="review-row">
           <div style="flex:1;min-width:0;">
             <div>
               <strong>${escapeHtml(h.freed_human)}</strong> reclaimed
+              <span class="badge badge-info">${escapeHtml(actionLabel)}</span>
               <span class="badge ${h.mode === "permanent" ? "badge-danger" : "badge-good"}">${h.mode === "permanent" ? "Permanent" : "Recycle Bin"}</span>
             </div>
             <div class="muted small-text">${escapeHtml(dateLabel)} | ${h.deleted_count} cleaned${h.failed_count ? ` | ${h.failed_count} failed` : ""}</div>
+            ${itemPreview}
           </div>
         </div>`;
     })
@@ -979,6 +986,7 @@ async function openSystemToolsModal() {
     const res = await api().empty_recycle_bin(null);
     if (res.ok) {
       if (res.drives_after) renderDrives(res.drives_after);
+      if (typeof res.history_count === "number") updateHeaderCounts(undefined, res.history_count);
       const lbl = document.getElementById("rb-size-label");
       if (lbl) lbl.textContent = "0 B";
       if (msgEl) msgEl.textContent = res.already_empty ? "Recycle Bin is already empty." : `Freed ${res.freed_human} from Recycle Bin.`;
@@ -1057,6 +1065,7 @@ async function openSystemToolsModal() {
     const res = await api().run_winsxs_cleanup();
     if (res.ok) {
       if (res.drives_after) renderDrives(res.drives_after);
+      if (typeof res.history_count === "number") updateHeaderCounts(undefined, res.history_count);
       outBox.textContent = "WinSxS component cleanup finished successfully.";
     } else {
       outBox.textContent = res.error || "WinSxS cleanup failed.";
