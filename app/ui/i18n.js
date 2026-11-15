@@ -87,6 +87,10 @@
     dup_keep_newest: "Keep Original",
     dup_extra_copy: "Extra Copy",
     open_recycle_bin: "Open Recycle Bin",
+    restore_recycle_bin: "Restore from Recycle Bin",
+    health_healthy: "Healthy",
+    health_attention: "Attention",
+    health_low_space: "Low Space",
     view_log_file: "Open Diagnostics Log",
   };
 
@@ -170,6 +174,10 @@
     dup_keep_newest: "Conservar original",
     dup_extra_copy: "Copia extra",
     open_recycle_bin: "Abrir Papelera",
+    restore_recycle_bin: "Restaurar de Papelera",
+    health_healthy: "Saludable",
+    health_attention: "Atencion",
+    health_low_space: "Poco espacio",
     view_log_file: "Abrir registro de diagnostico",
   };
 
@@ -253,6 +261,10 @@
     dup_keep_newest: "Original garde",
     dup_extra_copy: "Copie en double",
     open_recycle_bin: "Ouvrir Corbeille",
+    restore_recycle_bin: "Restaurer (Corbeille)",
+    health_healthy: "Sain",
+    health_attention: "Attention",
+    health_low_space: "Espace faible",
     view_log_file: "Ouvrir journal de diagnostic",
   };
 
@@ -336,6 +348,10 @@
     dup_keep_newest: "Original behalten",
     dup_extra_copy: "Duplikat",
     open_recycle_bin: "Papierkorb offnen",
+    restore_recycle_bin: "Aus Papierkorb retten",
+    health_healthy: "Gesund",
+    health_attention: "Prufen",
+    health_low_space: "Wenig Platz",
     view_log_file: "Diagnoseprotokoll offnen",
   };
 
@@ -419,6 +435,10 @@
     dup_keep_newest: "Original mantido",
     dup_extra_copy: "Copia extra",
     open_recycle_bin: "Abrir Lixeira",
+    restore_recycle_bin: "Restaurar da Lixeira",
+    health_healthy: "Saudavel",
+    health_attention: "Atencao",
+    health_low_space: "Pouco espaco",
     view_log_file: "Abrir log de diagnostico",
   };
 

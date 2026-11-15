@@ -236,6 +236,7 @@ const requiredIds = [
   "smart-selected-sub","smart-count-sub","smart-breakdown-bar","smart-donut-wrap",
   "smart-cat-hint","smart-groups","nav-smart-badge","btn-smart-recommended","btn-smart-all",
   "btn-smart-none","btn-smart-collapse-toggle","btn-theme-toggle","theme-icon",
+  "drive-health-pill","drive-health-dot","drive-health-badge","drive-health-text","btn-hero-restore-rb",
   "btn-refresh-drives","sidebar-drives","btn-exclusions","btn-history",
   "btn-updates-privacy","btn-system-tools","exclusions-count","history-count","app-version",
   "update-nav-badge","priv-title","priv-sub","btn-elevate","btn-pick-folder","btn-cancel-scan",
@@ -303,8 +304,8 @@ sandbox.window.pywebview = {{
             recycle_bin: {{ size_human: "10 MB", item_count: 2, size_bytes: 10485760 }},
             recycle_bin_drives: [{{ drive: "C:\\\\", size_human: "10 MB", item_count: 2 }}],
             old_installers: {{ count: 1, total_human: "50 MB", items: [] }},
-            hibernation: {{ present: false, size_human: "0 B" }},
-            virtual_disks: {{ count: 0, total_human: "0 B", items: [] }},
+            hibernation: {{ present: true, size_human: "4.00 GB", size_bytes: 4294967296 }},
+            virtual_disks: {{ count: 1, total_human: "6.00 GB", items: [{{ name: "ext4.vhdx", parent: "Ubuntu", path: "C:\\\\wsl\\\\ext4.vhdx", size_bytes: 6442450944, size_human: "6.00 GB" }}] }},
           }};
         }}
         if (prop === "get_drive_analytics") {{
@@ -403,6 +404,7 @@ for (const lang of ["en", "es", "fr", "de", "pt"]) {{
   await sandbox.loadLargeSpaces(true);
   assert(apiCalls.some((c) => c[0] === "scan_large_spaces"), "Large tab should call scan_large_spaces");
   assert(elementMap.get("large-tbody").children.length === 1, "Large files tbody should populate");
+  assert(elementMap.get("large-tbody").children[0].innerHTML.includes("item-human-hint"), "Plain-English hint should render on rows");
   assert(!elementMap.get("large-tbody").children[0].innerHTML.includes(" checked "), "Large items must never be checked by default");
   assert(elementMap.get("dock-bar").classList.contains("hidden"), "Dock should remain hidden on Large tab when nothing is manually checked");
   sandbox.switchTab("explorer");
@@ -420,6 +422,8 @@ for (const lang of ["en", "es", "fr", "de", "pt"]) {{
   await new Promise((r) => setTimeout(r, 20));
   assert(elementMap.get("windows-content").innerHTML.includes("windows-tools-grid"), "Spacious Windows Tools tab failed");
   assert(elementMap.get("windows-content").innerHTML.includes("windows-summary-strip"), "Windows summary strip missing");
+  assert(elementMap.get("windows-content").innerHTML.includes("btn-compact-vhdx"), "Missing 1-click Shrink Disk button");
+  assert(elementMap.get("windows-content").innerHTML.includes("btn-sys-hiber-toggle"), "Missing 1-click Hibernation toggle button");
   await sandbox.openSystemToolsModal();
   assert(elementMap.get("modal-title").textContent.includes("Windows Space"), "Windows Tools modal failed");
   await sandbox.openUpdatesPrivacyModal(false);

@@ -13,6 +13,7 @@ from app.logger import setup_logging
 from app.safety import is_admin, relaunch_as_admin
 from app.scheduler import evaluate_low_disk_alerts, show_low_disk_notification
 from app.storage import load_settings
+from app.system_tools import apply_windows11_frame_styling
 from app.updater import cleanup_stale_updates
 
 
@@ -84,6 +85,14 @@ def main() -> None:
         background_color="#0f1419",
     )
     api.set_window(window)
+
+    def _on_shown() -> None:
+        settings = load_settings()
+        apply_windows11_frame_styling(dark_mode=(settings.get("theme") == "dark"))
+
+    if hasattr(window, "events") and hasattr(window.events, "shown"):
+        window.events.shown += _on_shown
+
     debug_mode = os.environ.get("DRIVESWEEP_DEBUG") == "1"
     icon_path = get_icon_path()
     # pywebview supports icon= on GTK/QT/WinForms depending on version; pass safely

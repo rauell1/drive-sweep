@@ -399,7 +399,7 @@ def launch_downloaded_update(file_path: str, install_kind: str | None = None) ->
         if "setup" in name_lower and name_lower.endswith(".exe"):
             resolved_setup = target.resolve()
             setup_args = (
-                "/SILENT /SUPPRESSMSGBOXES /NORESTART "
+                "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART "
                 "/CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS "
                 "/NORESTARTAPPLICATIONS /AUTOSTART=1"
             )

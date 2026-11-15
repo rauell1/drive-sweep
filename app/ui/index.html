@@ -20,7 +20,7 @@
           </svg>
         </div>
         <div class="brand-meta">
-          <div class="brand-name">DriveSweep <span id="app-version" class="ver-chip">v0.4.0</span></div>
+          <div class="brand-name">DriveSweep <span id="app-version" class="ver-chip">v0.5.0</span></div>
           <div class="brand-tag" data-i18n="app_subtitle">Storage Analyzer</div>
         </div>
         <button id="btn-theme-toggle" class="theme-toggle-btn" title="Switch Light / Dark theme" aria-label="Toggle Light or Dark Mode">
@@ -205,13 +205,23 @@
 
               <div id="smart-breakdown-bar" class="breakdown-bar"></div>
               <div class="hero-footer-bar">
-                <div class="shield-pill">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-                  </svg>
-                  <span>Protected: Downloads, OneDrive, Documents, Desktop &amp; System Files</span>
+                <div class="hero-trust-left">
+                  <div class="shield-pill">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                    </svg>
+                    <span>Protected: Downloads, OneDrive, Documents, Desktop &amp; System Files</span>
+                  </div>
+                  <div id="drive-health-pill" class="drive-health-pill is-healthy">
+                    <span id="drive-health-dot" class="risk-dot risk-dot-safe"></span>
+                    <strong id="drive-health-badge" data-i18n="health_healthy">Healthy</strong>
+                    <span id="drive-health-text" class="muted">Checking drives...</span>
+                  </div>
                 </div>
-                <button id="btn-smart-collapse-toggle" class="btn btn-soft btn-xs">Collapse All</button>
+                <div class="hero-footer-actions">
+                  <button id="btn-hero-restore-rb" class="btn btn-ghost btn-xs" type="button" title="Open Windows Recycle Bin to restore deleted items" data-i18n="restore_recycle_bin">Restore from Recycle Bin</button>
+                  <button id="btn-smart-collapse-toggle" class="btn btn-soft btn-xs">Collapse All</button>
+                </div>
               </div>
             </div>
 

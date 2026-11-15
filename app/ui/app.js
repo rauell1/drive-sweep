@@ -17,7 +17,7 @@ const ICON_MOON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" s
 const state = {
   theme: "dark",
   language: "en",
-  version: "0.4.0",
+  version: "0.5.0",
   activeTab: "smart",
   dataDir: "",
   installKind: "source",
@@ -428,6 +428,63 @@ function renderDrives(drives, pulse = false) {
       startDriveScan(btn.dataset.drive);
     });
   });
+
+  updateDriveHealthPill();
+}
+
+function updateDriveHealthPill() {
+  const pill = document.getElementById("drive-health-pill");
+  const dot = document.getElementById("drive-health-dot");
+  const badge = document.getElementById("drive-health-badge");
+  const text = document.getElementById("drive-health-text");
+  if (!pill || !dot || !badge || !text) return;
+
+  const drives = Array.isArray(state.drives) ? state.drives : [];
+  if (!drives.length) {
+    pill.classList.remove("is-attention", "is-critical");
+    pill.classList.add("is-healthy");
+    dot.classList.remove("risk-dot-caution", "risk-dot-critical");
+    dot.classList.add("risk-dot-safe");
+    badge.textContent = tr("health_healthy", "Healthy");
+    text.textContent = "Checking drives...";
+    return;
+  }
+
+  let totalFreeBytes = 0;
+  let worstUsedPct = 0;
+  for (const d of drives) {
+    totalFreeBytes += Number(d.free_bytes || 0);
+    const usedPct = Number(d.used_percent || 0);
+    if (usedPct > worstUsedPct) worstUsedPct = usedPct;
+  }
+
+  const reclaimBytes = (state.smartItems || []).reduce((acc, it) => acc + Number(it.size_bytes || 0), 0);
+  let level = "healthy";
+  if (worstUsedPct >= 90) {
+    level = "critical";
+  } else if (worstUsedPct >= 80 || reclaimBytes >= 5 * 1024 * 1024 * 1024) {
+    level = "attention";
+  }
+
+  pill.classList.remove("is-healthy", "is-attention", "is-critical");
+  dot.classList.remove("risk-dot-safe", "risk-dot-caution", "risk-dot-critical");
+
+  if (level === "critical") {
+    pill.classList.add("is-critical");
+    dot.classList.add("risk-dot-critical");
+    badge.textContent = tr("health_low_space", "Low Space");
+  } else if (level === "attention") {
+    pill.classList.add("is-attention");
+    dot.classList.add("risk-dot-caution");
+    badge.textContent = tr("health_attention", "Attention");
+  } else {
+    pill.classList.add("is-healthy");
+    dot.classList.add("risk-dot-safe");
+    badge.textContent = tr("health_healthy", "Healthy");
+  }
+
+  const freeLabel = `${formatBytes(totalFreeBytes)} total free across ${drives.length} drive${drives.length === 1 ? "" : "s"}`;
+  text.textContent = reclaimBytes > 0 ? `${freeLabel} | ${formatBytes(reclaimBytes)} safe caches found` : freeLabel;
 }
 
 function updateHeaderCounts(exclusions, historyCount) {
@@ -534,13 +591,15 @@ async function openHistoryModal() {
       const itemPreview = itemList.length
         ? `<div class="item-subpath" style="margin-top:3px;" title="${escapeHtml(itemList.join("\n"))}">${escapeHtml(itemList.slice(0, 3).join(", "))}${itemList.length > 3 ? ` (+${itemList.length - 3} more)` : ""}</div>`
         : "";
+      const modeClass = h.mode === "permanent" ? "badge-danger" : h.mode === "system" ? "badge-info" : "badge-good";
+      const modeLabel = h.mode === "permanent" ? "Permanent" : h.mode === "system" ? "System Tool" : "Recycle Bin";
       return `
         <div class="review-row">
           <div style="flex:1;min-width:0;">
             <div>
               <strong>${escapeHtml(h.freed_human)}</strong> reclaimed
               <span class="badge badge-info">${escapeHtml(actionLabel)}</span>
-              <span class="badge ${h.mode === "permanent" ? "badge-danger" : "badge-good"}">${h.mode === "permanent" ? "Permanent" : "Recycle Bin"}</span>
+              <span class="badge ${modeClass}">${modeLabel}</span>
             </div>
             <div class="muted small-text">${escapeHtml(dateLabel)} | ${h.deleted_count} cleaned${h.failed_count ? ` | ${h.failed_count} failed` : ""}</div>
             ${itemPreview}
@@ -848,6 +907,7 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
     if (activeTabBtn) switchTab(activeTabBtn.dataset.tab);
     updateSelectionBar();
     renderSmartGroups();
+    updateDriveHealthPill();
     if (state.dupResult) renderDuplicateResults();
   });
   document.getElementById("btn-save-reminder")?.addEventListener("click", async () => {
@@ -1004,8 +1064,9 @@ function buildWindowsToolsHtml(data, isPageView = true) {
           </div>
           <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
             <strong>${escapeHtml(v.size_human)}</strong>
+            <button class="btn btn-primary btn-xs btn-compact-vhdx" data-path="${escapeHtml(v.path)}" data-name="${escapeHtml(v.name)}">Shrink Disk</button>
             <button class="btn btn-soft btn-xs btn-open-vhdx" data-path="${escapeHtml(v.path)}">Reveal</button>
-            <button class="btn btn-soft btn-xs btn-copy-cmd" data-cmd="${escapeHtml(compactCmd)}">Copy Compact</button>
+            <button class="btn btn-ghost btn-xs btn-copy-cmd" data-cmd="${escapeHtml(compactCmd)}">Copy Cmd</button>
           </div>
         </div>
         <div class="space-map-bar-wrap">
@@ -1112,10 +1173,11 @@ function buildWindowsToolsHtml(data, isPageView = true) {
             Hibernation file (<code>hiberfil.sys</code>):
             <strong>${hib.present ? escapeHtml(hib.size_human) : "Not active (0 B)"}</strong>
           </div>
-          ${hib.present ? `<button class="btn btn-soft btn-xs btn-copy-cmd" data-cmd="powercfg /hibernate off">Copy Disable Command</button>` : `<span class="badge badge-good">Off</span>`}
+          ${hib.present ? `<button id="btn-sys-hiber-toggle" class="btn btn-primary btn-xs" data-enable="0">Disable Hibernation (Free ${escapeHtml(hib.size_human)})</button>` : `<div style="display:flex;align-items:center;gap:8px;"><span class="badge badge-good">Off</span><button id="btn-sys-hiber-toggle" class="btn btn-soft btn-xs" data-enable="1">Enable Hibernation</button></div>`}
         </div>
         <div class="small-text muted">${vhdx.count} virtual disk${vhdx.count === 1 ? "" : "s"} detected (${escapeHtml(vhdx.total_human || "0 B")} total)</div>
         <div class="review-list">${vhdxRows || `<div class="tool-empty-note">No WSL2 or Docker .vhdx virtual disks detected.</div>`}</div>
+        <div id="sys-hiber-vhdx-output" class="tool-output-box hidden"></div>
       </div>
     </div>
   `;
@@ -1193,6 +1255,95 @@ function bindWindowsToolsEvents(data, { inModal = false } = {}) {
 
   document.querySelectorAll(".btn-copy-cmd").forEach((b) => {
     b.addEventListener("click", () => copyCommandText(b.dataset.cmd || "", b));
+  });
+
+  const hibOut = document.getElementById("sys-hiber-vhdx-output");
+  const hibBtn = document.getElementById("btn-sys-hiber-toggle");
+  hibBtn?.addEventListener("click", async () => {
+    const enable = hibBtn.dataset.enable === "1";
+    if (!data.is_admin) {
+      showToast("Administrator rights required to change Windows hibernation", "warn");
+      if (hibOut) {
+        hibOut.classList.remove("hidden");
+        hibOut.textContent = "Restart DriveSweep as Administrator to toggle Windows hibernation.";
+      }
+      return;
+    }
+    hibBtn.disabled = true;
+    const prevLabel = hibBtn.textContent;
+    hibBtn.textContent = enable ? "Enabling..." : "Disabling...";
+    if (hibOut) {
+      hibOut.classList.remove("hidden");
+      hibOut.innerHTML = `<span class="muted">Running powercfg /hibernate ${enable ? "on" : "off"}...</span>`;
+    }
+    try {
+      const res = await api().set_hibernation_enabled(enable);
+      if (!res.ok) {
+        if (hibOut) hibOut.textContent = res.error || "Could not update hibernation setting.";
+        showToast(res.error || "Hibernation change failed", "danger");
+        hibBtn.disabled = false;
+        hibBtn.textContent = prevLabel;
+        return;
+      }
+      if (res.drives_after) renderDrives(res.drives_after);
+      if (typeof res.history_count === "number") updateHeaderCounts(undefined, res.history_count);
+      showToast(res.message || "Updated Windows hibernation", "good");
+      state.windowsData = null;
+      if (inModal) {
+        await openSystemToolsModal();
+      } else {
+        await loadWindowsToolsView(true);
+      }
+    } catch (err) {
+      if (hibOut) hibOut.textContent = String(err);
+      hibBtn.disabled = false;
+      hibBtn.textContent = prevLabel;
+    }
+  });
+
+  document.querySelectorAll(".btn-compact-vhdx").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const vhdxPath = btn.dataset.path || "";
+      const vhdxName = btn.dataset.name || "virtual disk";
+      if (!data.is_admin) {
+        showToast("Administrator rights required to compact virtual disks", "warn");
+        if (hibOut) {
+          hibOut.classList.remove("hidden");
+          hibOut.textContent = "Restart DriveSweep as Administrator to compact virtual disks automatically.";
+        }
+        return;
+      }
+      const allShrinkBtns = Array.from(document.querySelectorAll(".btn-compact-vhdx"));
+      allShrinkBtns.forEach((b) => (b.disabled = true));
+      btn.textContent = "Shrinking...";
+      if (hibOut) {
+        hibOut.classList.remove("hidden");
+        hibOut.innerHTML = `<span class="muted">Stopping WSL/Docker backend and compacting ${escapeHtml(vhdxName)}...</span>`;
+      }
+      try {
+        const res = await api().compact_virtual_disk(vhdxPath);
+        if (!res.ok) {
+          if (hibOut) hibOut.textContent = res.error || "Virtual disk compaction failed.";
+          showToast(res.error || "Could not shrink virtual disk", "danger");
+          allShrinkBtns.forEach((b) => (b.disabled = false));
+          btn.textContent = "Shrink Disk";
+          return;
+        }
+        if (res.drives_after) renderDrives(res.drives_after);
+        if (typeof res.history_count === "number") updateHeaderCounts(undefined, res.history_count);
+        showToast(res.message || `Compacted ${vhdxName}`, "good");
+        state.windowsData = null;
+        if (inModal) {
+          await openSystemToolsModal();
+        } else {
+          await loadWindowsToolsView(true);
+        }
+      } catch (err) {
+        if (hibOut) hibOut.textContent = String(err);
+        allShrinkBtns.forEach((b) => (b.disabled = false));
+        btn.textContent = "Shrink Disk";
+      }
+    });
   });
 
   const outBox = document.getElementById("winsxs-output");
@@ -1349,6 +1500,7 @@ async function loadSmartScan() {
 
     renderSmartBreakdown(res.total_human);
     renderSmartGroups();
+    updateDriveHealthPill();
   } catch (err) {
     document.getElementById("smart-count-sub").textContent = `Scan failed: ${String(err)}`;
   } finally {
@@ -1941,6 +2093,7 @@ async function loadBrowseFolder() {
             }
             ${extraBadges}
           </div>
+          ${item.risk_reason ? `<div class="item-human-hint">${escapeHtml(item.risk_reason)}</div>` : ""}
           <div class="inline-bar-track"><div class="inline-bar-fill" style="width:${pct}%"></div></div>
         </div>
       </td>
@@ -2101,6 +2254,7 @@ function renderLargeSpacesTable() {
           <strong>${escapeHtml(item.name)}</strong>
           ${excluded ? `<span class="badge badge-info">Always Keep</span>` : ""}
         </div>
+        ${item.risk_reason ? `<div class="item-human-hint">${escapeHtml(item.risk_reason)}</div>` : ""}
         <div class="item-subpath" title="${escapeHtml(item.path)}">${escapeHtml(item.path)}${escapeHtml(fileCountHint)}</div>
         <div class="inline-bar-track"><div class="inline-bar-fill" style="width:${pct}%"></div></div>
       </td>
@@ -2181,6 +2335,7 @@ function renderExplorerFolderRows(tbody, items) {
           <strong>${escapeHtml(item.name)}</strong>
           ${excluded ? `<span class="badge badge-info">Always Keep</span>` : ""}
         </div>
+        ${item.risk_reason ? `<div class="item-human-hint">${escapeHtml(item.risk_reason)}</div>` : ""}
         <div class="item-subpath">${escapeHtml(item.path)}${escapeHtml(fileCountHint)}</div>
         <div class="inline-bar-track"><div class="inline-bar-fill" style="width:${pct}%"></div></div>
       </td>
@@ -2246,6 +2401,7 @@ async function loadDevArtifacts() {
           <span class="muted">in ${escapeHtml(item.parent_name)}</span>
           ${excluded ? `<span class="badge badge-info">Always Keep</span>` : ""}
         </div>
+        ${item.risk_reason ? `<div class="item-human-hint">${escapeHtml(item.risk_reason)}</div>` : ""}
         <div class="item-subpath">${escapeHtml(item.path)}</div>
         <div class="inline-bar-track"><div class="inline-bar-fill" style="width:${pct}%"></div></div>
       </td>
@@ -2305,6 +2461,7 @@ function renderFileRows(tbody, items) {
           <strong>${escapeHtml(item.name)}</strong>
           ${excluded ? `<span class="badge badge-info">Always Keep</span>` : ""}
         </div>
+        ${item.risk_reason ? `<div class="item-human-hint">${escapeHtml(item.risk_reason)}</div>` : ""}
         <div class="item-subpath">${escapeHtml(item.dir_path || item.path)}</div>
         <div class="inline-bar-track"><div class="inline-bar-fill" style="width:${pct}%"></div></div>
       </td>
@@ -2407,6 +2564,7 @@ function openReviewModal() {
             <strong>${escapeHtml(it.label)}</strong>
             ${renderRiskBadge(it.risk_level || "safe", it.risk_reason)}
           </div>
+          ${it.risk_reason ? `<div class="item-human-hint">${escapeHtml(it.risk_reason)}</div>` : ""}
           <div class="item-subpath">${escapeHtml(it.path)}</div>
         </div>
         <span class="size-pill">${escapeHtml(it.size_human || formatBytes(it.size_bytes))}</span>
@@ -2750,6 +2908,10 @@ function bindEvents() {
   });
 
   document.getElementById("btn-smart-scan").addEventListener("click", loadSmartScan);
+  document.getElementById("btn-hero-restore-rb")?.addEventListener("click", async () => {
+    await api().open_recycle_bin();
+    showToast("Opened Windows Recycle Bin to review or restore items", "info");
+  });
   document.getElementById("smart-filter").addEventListener("input", renderSmartGroups);
   document.getElementById("btn-large-rescan")?.addEventListener("click", () => loadLargeSpaces(true));
   document.getElementById("large-filter")?.addEventListener("input", renderLargeSpacesTable);

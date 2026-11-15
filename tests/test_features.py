@@ -19,7 +19,7 @@ from app.ntfs_mft import (
     try_ntfs_mft_scan,
 )
 from app.presets import scan_large_spaces, scan_smart_presets
-from app.safety import ScanGuard, get_known_folder_path
+from app.safety import ScanGuard, classify_path_risk, explain_path_human, get_known_folder_path
 from app.scanner import DEV_BLOAT_NAMES, DirNode, DriveScanner
 from app.scheduler import build_schtasks_create_command, evaluate_low_disk_alerts
 from app.storage import (
@@ -32,10 +32,13 @@ from app.storage import (
     set_reminder_settings,
 )
 from app.system_tools import (
+    apply_windows11_frame_styling,
+    compact_virtual_disk,
     find_old_download_installers,
     find_wsl_docker_vhdx,
     get_recycle_bin_info,
     parse_dism_analyze_output,
+    set_hibernation_enabled,
 )
 
 
@@ -563,3 +566,98 @@ def test_ntfs_fragmented_mft_attribute_list_and_4kn_stride():
     assert files_scanned == 1
     assert total_bytes == 8192
     assert nodes["X:\\CacheDir"].files[0][0] == "big.bin"
+
+
+def test_explain_path_human_and_classification():
+    vhdx = classify_path_risk("C:\\Users\\demo\\AppData\\Local\\Docker\\wsl\\disk\\docker_data.vhdx", is_dir=False)
+    assert vhdx["risk_level"] == "caution"
+    assert "Shrink Disk" in vhdx["risk_reason"]
+
+    nm = classify_path_risk("D:\\Projects\\web\\node_modules", is_dir=True, age_days=45, is_dev_bloat=True)
+    assert nm["risk_level"] == "safe"
+    assert "JavaScript packages" in nm["risk_reason"]
+
+    venv = explain_path_human("D:\\Projects\\api\\.venv", is_dir=True, is_dev_bloat=True)
+    assert "Python virtual environment" in venv
+
+    hf = explain_path_human("C:\\Users\\demo\\.cache\\huggingface\\hub\\models--llama", is_dir=True)
+    assert "Hugging Face AI models" in hf
+
+    shader = explain_path_human("C:\\Users\\demo\\AppData\\Local\\NVIDIA\\DXCache", is_dir=True)
+    assert "shader cache" in shader.lower()
+
+    dl_iso = classify_path_risk("D:\\Users\\demo\\Downloads\\ubuntu-24.04.iso", is_dir=False)
+    assert dl_iso["risk_level"] == "caution"
+    assert "disk image" in dl_iso["risk_reason"].lower()
+
+    sys_crit = classify_path_risk("C:\\Windows\\System32\\kernel32.dll", is_dir=False)
+    assert sys_crit["risk_level"] == "critical"
+
+
+def test_one_click_windows_workflows_and_dwm_helper(tmp_path: Path, monkeypatch):
+    vhdx = tmp_path / "ext4.vhdx"
+    vhdx.write_bytes(b"VHDX" * 2048)  # 8192 bytes
+
+    # Non-admin guard
+    monkeypatch.setattr("app.system_tools.is_admin", lambda: False)
+    denied_disk = compact_virtual_disk(str(vhdx))
+    assert denied_disk["ok"] is False and denied_disk["needs_admin"] is True
+    denied_hib = set_hibernation_enabled(False)
+    assert denied_hib["ok"] is False and denied_hib["needs_admin"] is True
+
+    # Admin + fallback to diskpart when Optimize-VHD fails
+    monkeypatch.setattr("app.system_tools.is_admin", lambda: True)
+    recorded_cmds: list[list[str]] = []
+
+    class _Proc:
+        def __init__(self, rc: int, stdout: str = "", stderr: str = ""):
+            self.returncode = rc
+            self.stdout = stdout
+            self.stderr = stderr
+
+    def fake_run(cmd, **_kwargs):
+        recorded_cmds.append(list(cmd))
+        exe = str(cmd[0]).lower()
+        if "wsl" in exe:
+            return _Proc(0)
+        if "powershell" in exe:
+            return _Proc(1, stderr="Optimize-VHD not recognized")
+        if "diskpart" in exe:
+            # Verify script file exists during invocation, and simulate vhdx shrink
+            script_file = Path(cmd[2])
+            assert script_file.exists()
+            text = script_file.read_text(encoding="utf-8")
+            assert "compact vdisk" in text
+            vhdx.write_bytes(b"VHDX" * 512)  # shrunk from 8192 -> 2048 bytes
+            return _Proc(0, stdout="DiskPart successfully compacted the virtual disk file.")
+        if "powercfg" in exe:
+            return _Proc(0)
+        return _Proc(0)
+
+    monkeypatch.setattr("app.system_tools.subprocess.run", fake_run)
+    res_disk = compact_virtual_disk(str(vhdx))
+    assert res_disk["ok"] is True
+    assert res_disk["method"] == "diskpart"
+    assert res_disk["before_bytes"] == 8192
+    assert res_disk["after_bytes"] == 2048
+    assert res_disk["freed_bytes"] == 6144
+    assert any("wsl.exe" in c[0] for c in recorded_cmds)
+    assert any("diskpart.exe" in c[0] for c in recorded_cmds)
+
+    # Hibernation toggle mock
+    hib_calls = [0]
+
+    def fake_hib_info(system_drive=None):
+        hib_calls[0] += 1
+        if hib_calls[0] == 1:
+            return {"present": True, "path": "C:\\hiberfil.sys", "size_bytes": 4_000_000, "size_human": "3.81 MB"}
+        return {"present": False, "path": "C:\\hiberfil.sys", "size_bytes": 0, "size_human": "0 B"}
+
+    monkeypatch.setattr("app.system_tools.find_hibernation_info", fake_hib_info)
+    res_hib = set_hibernation_enabled(False)
+    assert res_hib["ok"] is True
+    assert res_hib["freed_bytes"] == 4_000_000
+    assert res_hib["enabled"] is False
+
+    # DWM frame helper returns bool cleanly even without a matching window
+    assert isinstance(apply_windows11_frame_styling(dark_mode=True, window_title="NonExistentDriveSweepTestWindow"), bool)

@@ -52,10 +52,13 @@ from app.storage import (
 )
 from app.system_tools import (
     analyze_winsxs,
+    apply_windows11_frame_styling,
+    compact_virtual_disk,
     empty_recycle_bin,
     inspect_system_space,
     open_recycle_bin_folder,
     run_winsxs_cleanup,
+    set_hibernation_enabled,
 )
 from app.updater import (
     check_for_updates as updater_check,
@@ -137,7 +140,9 @@ class DriveSweepAPI:
         }
 
     def set_theme(self, theme: str) -> dict:
-        return set_theme(theme)
+        saved = set_theme(theme)
+        apply_windows11_frame_styling(dark_mode=(saved.get("theme") == "dark"))
+        return saved
 
     def set_language(self, language: str) -> dict:
         return set_language(language)
@@ -684,6 +689,48 @@ class DriveSweepAPI:
                 get_logger().info("WinSxS DISM component cleanup completed")
             except Exception:
                 get_logger().exception("Failed to log WinSxS cleanup history")
+        res["history_count"] = len(get_history(limit=200))
+        res["drives_after"] = list_drives()
+        return res
+
+    def set_hibernation_enabled(self, enabled: bool = False) -> dict:
+        res = set_hibernation_enabled(bool(enabled))
+        if res.get("ok") and not bool(enabled) and int(res.get("freed_bytes", 0) or 0) > 0:
+            try:
+                append_history({
+                    "action": "Hibernation Disabled",
+                    "mode": "system",
+                    "freed_bytes": int(res.get("freed_bytes", 0) or 0),
+                    "freed_human": str(res.get("freed_human", "0 B")),
+                    "deleted_count": 1,
+                    "failed_count": 0,
+                    "items": [str((res.get("hibernation") or {}).get("path") or "hiberfil.sys")],
+                    "failed": [],
+                })
+                get_logger().info("Hibernation disabled: %s freed", res.get("freed_human", "0 B"))
+            except Exception:
+                get_logger().exception("Failed to log hibernation toggle history")
+        res["history_count"] = len(get_history(limit=200))
+        res["drives_after"] = list_drives()
+        return res
+
+    def compact_virtual_disk(self, vhdx_path: str) -> dict:
+        res = compact_virtual_disk(vhdx_path)
+        if res.get("ok") and int(res.get("freed_bytes", 0) or 0) > 0:
+            try:
+                append_history({
+                    "action": "Virtual Disk Shrink",
+                    "mode": "system",
+                    "freed_bytes": int(res.get("freed_bytes", 0) or 0),
+                    "freed_human": str(res.get("freed_human", "0 B")),
+                    "deleted_count": 1,
+                    "failed_count": 0,
+                    "items": [str(res.get("path") or vhdx_path)],
+                    "failed": [],
+                })
+                get_logger().info("Virtual disk compacted (%s): %s freed", res.get("method", "unknown"), res.get("freed_human", "0 B"))
+            except Exception:
+                get_logger().exception("Failed to log virtual disk compaction history")
         res["history_count"] = len(get_history(limit=200))
         res["drives_after"] = list_drives()
         return res

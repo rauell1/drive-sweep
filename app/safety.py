@@ -441,6 +441,121 @@ CAUTION_EXTENSIONS = {
 }
 
 
+def explain_path_human(
+    raw_path: str | Path,
+    *,
+    is_dir: bool = False,
+    age_days: int | None = None,
+    is_dev_bloat: bool = False,
+    base_level: str = "safe",
+    base_reason: str = "",
+) -> str:
+    """Return a concise, plain-English explanation of what a file or folder is and whether removing it is safe."""
+    if base_level == "critical":
+        return base_reason or "Critical OS or system folder/file. Locked to protect your system."
+
+    p = _normalize(raw_path)
+    full_lower = str(p).lower().replace("/", "\\")
+    name_lower = p.name.lower()
+    ext = "" if is_dir else p.suffix.lower()
+    in_downloads = "\\downloads\\" in full_lower or full_lower.endswith("\\downloads")
+    parts_lower = [part.lower() for part in p.parts]
+
+    # Virtual disks (never auto-delete; shrink via Windows Tools instead)
+    if ext in {".vhdx", ".vhd", ".vmdk", ".vdi"}:
+        if "docker" in full_lower or "wsl" in full_lower:
+            return "Linux or Docker virtual disk. Do not delete directly; use Windows Tools > Shrink Disk to reclaim unused space."
+        return "Virtual machine disk image. Contains a full virtual computer; only delete if you no longer use that VM."
+
+    # Repository / credential guards
+    if name_lower in CAUTION_DIR_NAMES or any(part in CAUTION_DIR_NAMES for part in parts_lower):
+        if name_lower == ".git" or ".git" in parts_lower:
+            return "Git version history folder. Only delete if you do not need local commit history or branches."
+        return "Sensitive configuration or credentials folder (.ssh, .aws, etc.). Keep unless you no longer need these keys."
+
+    # Developer dependency & build caches
+    if is_dir or is_dev_bloat:
+        if name_lower == "node_modules":
+            age_note = f" Inactive for {age_days} days." if age_days is not None and age_days >= 30 else ""
+            return f"JavaScript packages for a project.{age_note} Safe to delete if inactive; restore anytime with npm or pnpm install."
+        if name_lower in {".venv", "venv"}:
+            return "Python virtual environment. Safe to delete if inactive; recreate anytime from requirements or pyproject."
+        if name_lower in {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", ".nox"}:
+            return "Python bytecode or test cache. Safe to delete; Python recreates it automatically."
+        if name_lower in {".next", ".nuxt", ".turbo", ".parcel-cache", ".angular", ".svelte-kit"}:
+            return "Web framework build cache. Safe to delete; rebuilt automatically on your next build."
+        if name_lower in {".gradle", "target"}:
+            return "Compiled build cache folder. Safe to delete if inactive; rebuilt on your next project build."
+        if is_dev_bloat:
+            if age_days is not None and age_days < 30:
+                return f"Active project dependency folder (modified {age_days} day(s) ago). Recreated by your package manager if removed."
+            return "Project dependency or build cache folder. Safe to delete if inactive; your build tool can reinstall it."
+
+    # Global package & AI model caches
+    if "\\huggingface\\hub" in full_lower or full_lower.endswith("\\huggingface\\hub") or "\\huggingface\\" in full_lower:
+        return "Downloaded Hugging Face AI models. Safe to delete; models re-download automatically when needed."
+    if "\\.ollama\\" in full_lower or "\\ollama\\models" in full_lower:
+        return "Downloaded Ollama local AI models. Safe to delete if you no longer run these local models."
+    if "\\pip\\cache" in full_lower or "\\uv\\cache" in full_lower or "\\uv\\archive" in full_lower:
+        return "Cached Python package downloads. Safe to delete; pip or uv will re-download only when needed."
+    if "\\npm-cache" in full_lower or "\\pnpm\\store" in full_lower or "\\yarn\\cache" in full_lower:
+        return "Cached JavaScript packages. Safe to delete; your package manager re-fetches packages as needed."
+    if "\\.cargo\\registry" in full_lower or "\\.cargo\\git" in full_lower:
+        return "Cached Rust crates. Safe to delete; Cargo re-downloads dependencies on your next build."
+    if "\\.nuget\\packages" in full_lower:
+        return "Cached .NET NuGet packages. Safe to delete; Visual Studio or dotnet restore re-downloads them if needed."
+
+    # GPU & game caches
+    if any(tok in full_lower for tok in ("\\nv_cache", "\\dxcache", "\\glcache", "\\d3dscache", "\\shadercache", "\\amd\\dxcache")):
+        return "Compiled graphics shader cache. Safe to delete; Windows and games rebuild shaders automatically."
+    if "\\steamapps\\downloading" in full_lower or "\\steamapps\\temp" in full_lower:
+        return "Incomplete Steam download cache. Safe to delete when Steam is closed."
+    if "\\steamapps\\common" in full_lower:
+        return "Installed Steam game files. Uninstall via Steam first, or delete if the game was already removed."
+
+    # Windows update & crash logs
+    if "\\windows.old" in full_lower or name_lower == "windows.old":
+        return "Previous Windows version backup. Safe to remove if your current Windows update is working well."
+    if "\\softwaredistribution\\download" in full_lower:
+        return "Downloaded Windows Update installers. Safe to delete; Windows re-downloads any pending updates."
+    if ext == ".dmp" or any(tok in full_lower for tok in ("\\crashdumps", "\\minidump", "\\reportarchive", "\\reportqueue")):
+        return "Diagnostic crash dump or error report. Safe to delete unless troubleshooting a recent crash."
+
+    # Browser & desktop app cache folders
+    if is_dir and any(tok in name_lower for tok in ("cache", "gpucache", "code cache", "cachestorage")):
+        return "Temporary browser or app cache. Safe to delete; the app regenerates it automatically."
+
+    # File-type friendly hints (especially inside Downloads / user spaces)
+    if not is_dir:
+        if ext in {".iso", ".img"}:
+            if in_downloads:
+                return "Downloaded disk image or OS installer. Safe to delete if you no longer need the installer."
+            return "Disk image file. Usually an installer or backup; check if you still need it before deleting."
+        if ext in {".msi", ".msix", ".msixbundle", ".exe"}:
+            if in_downloads:
+                return "Downloaded setup installer. Safe to delete if you have already installed this app."
+            return "Windows program or installer file. Keep if part of an installed app; delete old downloaded setups."
+        if ext in {".zip", ".7z", ".rar", ".tar", ".gz", ".tgz", ".bz2", ".xz"}:
+            if in_downloads:
+                return "Downloaded archive file. Safe to delete if you have already extracted or moved its contents."
+            return "Compressed archive file. Check whether you already extracted or backed up what is inside."
+        if ext in {".mp4", ".mkv", ".mov", ".avi", ".webm", ".wmv", ".flv"}:
+            return "Video or screen recording file. Review before deleting to make sure you do not want to keep it."
+        if ext in {".pst", ".ost"}:
+            return "Outlook email archive file. Deleting removes offline cached mail for that profile."
+        if ext in {".db", ".sqlite", ".sqlite3", ".mdb"}:
+            return "Application database file. Review carefully; deleting may reset local app history or saved data."
+        if ext in {".log", ".tmp", ".temp", ".bak", ".old"}:
+            return "Temporary, backup, or log file. Safe to remove once related programs are closed."
+        if ext in {".pdf", ".docx", ".xlsx", ".pptx", ".doc", ".xls"}:
+            return "Personal document or spreadsheet. Keep unless you are sure it is no longer needed."
+
+    if in_downloads:
+        return "File or folder inside Downloads. Review first; safe to remove if you already used or saved it elsewhere."
+
+    return base_reason or "Standard file or regenerable folder."
+
+
 def classify_path_risk(
     raw_path: str | Path,
     *,
@@ -457,35 +572,33 @@ def classify_path_risk(
         }
 
     name_lower = p.name.lower()
+    base_level = "safe"
+    base_reason = "Standard file or regenerable folder."
+
     if is_personal_guarded_path(p):
-        return {
-            "risk_level": "caution",
-            "risk_reason": "Personal user folder/file (Downloads, OneDrive, Documents, etc.). Confirm before deleting.",
-        }
-
-    if name_lower in CAUTION_DIR_NAMES or any(part.lower() in CAUTION_DIR_NAMES for part in p.parts):
-        return {
-            "risk_level": "caution",
-            "risk_reason": "Contains repository history or credentials (.git, .ssh, etc.).",
-        }
-
-    if not is_dir:
+        base_level = "caution"
+        base_reason = "Personal user folder/file (Downloads, OneDrive, Documents, etc.). Confirm before deleting."
+    elif name_lower in CAUTION_DIR_NAMES or any(part.lower() in CAUTION_DIR_NAMES for part in p.parts):
+        base_level = "caution"
+        base_reason = "Contains repository history or credentials (.git, .ssh, etc.)."
+    elif not is_dir and (p.suffix.lower() in CAUTION_EXTENSIONS or name_lower.startswith(".env")):
         ext = p.suffix.lower()
-        if ext in CAUTION_EXTENSIONS or name_lower.startswith(".env"):
-            return {
-                "risk_level": "caution",
-                "risk_reason": f"Sensitive, executable, database, or virtual disk file ({ext or name_lower}).",
-            }
-
-    if is_dev_bloat and age_days is not None and age_days < 30:
-        return {
-            "risk_level": "caution",
-            "risk_reason": f"Active project dependency folder (modified {age_days} day(s) ago).",
-        }
+        base_level = "caution"
+        base_reason = f"Sensitive, executable, database, or virtual disk file ({ext or name_lower})."
+    elif is_dev_bloat and age_days is not None and age_days < 30:
+        base_level = "caution"
+        base_reason = f"Active project dependency folder (modified {age_days} day(s) ago)."
 
     return {
-        "risk_level": "safe",
-        "risk_reason": "Standard file or regenerable folder.",
+        "risk_level": base_level,
+        "risk_reason": explain_path_human(
+            p,
+            is_dir=is_dir,
+            age_days=age_days,
+            is_dev_bloat=is_dev_bloat,
+            base_level=base_level,
+            base_reason=base_reason,
+        ),
     }
 
 

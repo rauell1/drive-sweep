@@ -489,7 +489,7 @@ def test_sanitized_subprocess_env_strips_pyi_markers(tmp_path: Path, monkeypatch
     assert "/AUTOSTART=1" in setup_calls[0][1]
     assert "/FORCECLOSEAPPLICATIONS" in setup_calls[0][1]
     assert "/NORESTARTAPPLICATIONS" in setup_calls[0][1]
-    assert "/SILENT" in setup_calls[0][1]
+    assert "/VERYSILENT" in setup_calls[0][1]
 
     # If user cancels UAC (rc <= 32), updater reports cleanly without exiting
     monkeypatch.setattr(updater, "_launch_windows_setup", lambda *_args: (False, 5))

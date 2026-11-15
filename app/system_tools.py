@@ -7,6 +7,7 @@ import os
 import re
 import string
 import subprocess
+import tempfile
 import time
 from ctypes import wintypes
 from pathlib import Path
@@ -388,3 +389,232 @@ def run_winsxs_cleanup() -> dict:
         return {"ok": False, "error": "DISM cleanup timed out after 10 minutes."}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
+
+
+def set_hibernation_enabled(enabled: bool, *, system_drive: str | None = None) -> dict:
+    """Enable or disable Windows hibernation (hiberfil.sys) directly via powercfg.exe."""
+    if os.name != "nt":
+        return {"ok": False, "status": "error", "error": "Hibernation management is only supported on Windows."}
+    if not is_admin():
+        return {
+            "ok": False,
+            "status": "error",
+            "needs_admin": True,
+            "requires_admin": True,
+            "error": "Administrator privileges are required to toggle Windows hibernation.",
+        }
+
+    hib_before = find_hibernation_info(system_drive=system_drive)
+    before_bytes = int(hib_before.get("size_bytes", 0) or 0)
+    arg = "on" if enabled else "off"
+    try:
+        proc = subprocess.run(
+            ["powercfg.exe", "/hibernate", arg],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=sanitized_subprocess_env(),
+            creationflags=_CREATE_NO_WINDOW,
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "status": "error", "error": "powercfg.exe timed out."}
+    except Exception as exc:
+        return {"ok": False, "status": "error", "error": str(exc)}
+
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or f"powercfg.exe exited with code {proc.returncode}").strip()
+        return {"ok": False, "status": "error", "error": err}
+
+    hib_after = find_hibernation_info(system_drive=system_drive)
+    after_bytes = int(hib_after.get("size_bytes", 0) or 0)
+    freed_bytes = max(0, before_bytes - after_bytes)
+    freed_human = format_bytes(freed_bytes)
+    msg = (
+        f"Windows hibernation enabled ({hib_after.get('size_human', 'active')})."
+        if enabled
+        else (
+            f"Windows hibernation disabled and reclaimed {freed_human}."
+            if freed_bytes > 0
+            else "Windows hibernation disabled."
+        )
+    )
+    return {
+        "ok": True,
+        "status": "ok",
+        "enabled": bool(enabled),
+        "before_bytes": before_bytes,
+        "after_bytes": after_bytes,
+        "freed_bytes": freed_bytes,
+        "freed_human": freed_human,
+        "hibernation": hib_after,
+        "message": msg,
+    }
+
+
+def compact_virtual_disk(vhdx_path: str) -> dict:
+    """Compact a WSL2 or Docker .vhdx/.vhd virtual disk via Optimize-VHD with diskpart fallback."""
+    raw = str(vhdx_path or "").strip()
+    if not raw or not raw.lower().endswith((".vhdx", ".vhd")):
+        return {"ok": False, "status": "error", "error": "Please select a valid .vhdx or .vhd virtual disk file."}
+
+    target = Path(raw)
+    if not target.exists() or not target.is_file():
+        return {"ok": False, "status": "error", "error": f"Virtual disk file does not exist: {raw}"}
+
+    if os.name != "nt":
+        return {"ok": False, "status": "error", "error": "Virtual disk compaction is only supported on Windows."}
+    if not is_admin():
+        return {
+            "ok": False,
+            "status": "error",
+            "needs_admin": True,
+            "requires_admin": True,
+            "error": "Administrator privileges are required to compact virtual disks.",
+        }
+
+    before_bytes = int(target.stat().st_size)
+    clean_env = sanitized_subprocess_env()
+
+    # Gracefully stop WSL/Docker Linux backends first so virtual disks are not locked
+    try:
+        subprocess.run(
+            ["wsl.exe", "--shutdown"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=clean_env,
+            creationflags=_CREATE_NO_WINDOW,
+        )
+    except Exception:
+        pass
+
+    method_used = "Optimize-VHD"
+    ps_escaped = str(target).replace("'", "''")
+    try:
+        ps_proc = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                f"Optimize-VHD -Path '{ps_escaped}' -Mode Full",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=600,
+            env=clean_env,
+            creationflags=_CREATE_NO_WINDOW,
+        )
+        ps_ok = ps_proc.returncode == 0
+        ps_err = (ps_proc.stderr or ps_proc.stdout or "").strip()
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "status": "error", "error": "Virtual disk compaction timed out after 10 minutes."}
+    except Exception as exc:
+        ps_ok = False
+        ps_err = str(exc)
+
+    if not ps_ok:
+        # Fallback to built-in diskpart.exe (present on Windows Home & Pro without Hyper-V RSAT)
+        method_used = "diskpart"
+        safe_path = str(target).replace('"', "")
+        script_text = (
+            f'select vdisk file="{safe_path}"\n'
+            "attach vdisk readonly\n"
+            "compact vdisk\n"
+            "detach vdisk\n"
+            "exit\n"
+        )
+        tmp_path: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                suffix=".txt",
+                prefix="ds_compact_",
+                delete=False,
+                encoding="utf-8",
+            ) as tf:
+                tf.write(script_text)
+                tmp_path = tf.name
+
+            dp_proc = subprocess.run(
+                ["diskpart.exe", "/s", tmp_path],
+                capture_output=True,
+                text=True,
+                timeout=600,
+                env=clean_env,
+                creationflags=_CREATE_NO_WINDOW,
+            )
+            if dp_proc.returncode != 0:
+                dp_err = (dp_proc.stderr or dp_proc.stdout or ps_err or f"diskpart exited with code {dp_proc.returncode}").strip()
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "error": f"Could not compact {target.name} (close Docker Desktop or any running WSL distro first). Details: {dp_err}",
+                }
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "status": "error", "error": "diskpart virtual disk compaction timed out."}
+        except Exception as exc:
+            return {"ok": False, "status": "error", "error": str(exc)}
+        finally:
+            if tmp_path:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+
+    after_bytes = int(target.stat().st_size) if target.exists() else before_bytes
+    freed_bytes = max(0, before_bytes - after_bytes)
+    freed_human = format_bytes(freed_bytes)
+    msg = (
+        f"Compacted {target.name} and reclaimed {freed_human}."
+        if freed_bytes > 0
+        else f"{target.name} compacted cleanly (already at optimal size)."
+    )
+    return {
+        "ok": True,
+        "status": "ok",
+        "path": str(target),
+        "name": target.name,
+        "before_bytes": before_bytes,
+        "before_human": format_bytes(before_bytes),
+        "after_bytes": after_bytes,
+        "after_human": format_bytes(after_bytes),
+        "freed_bytes": freed_bytes,
+        "freed_human": freed_human,
+        "method": method_used,
+        "message": msg,
+    }
+
+
+def apply_windows11_frame_styling(
+    dark_mode: bool = False,
+    window_title: str = "DriveSweep - PC Storage & Drive Cleaner",
+) -> bool:
+    """Sync native Windows 11/10 DWM dark/light titlebar and Mica backdrop when supported."""
+    if os.name != "nt":
+        return False
+    try:
+        user32 = ctypes.windll.user32
+        dwmapi = ctypes.windll.dwmapi
+        hwnd = user32.FindWindowW(None, window_title)
+        if not hwnd:
+            fg = user32.GetForegroundWindow()
+            if fg:
+                pid = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(fg, ctypes.byref(pid))
+                if pid.value == os.getpid():
+                    hwnd = fg
+        if not hwnd:
+            return False
+
+        dark_val = ctypes.c_int(1 if dark_mode else 0)
+        hr_dark = int(dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(dark_val), ctypes.sizeof(dark_val)))
+        # Best-effort Windows 11 Mica backdrop (DWMSBT_MAINWINDOW = 2); safely no-ops on older builds
+        try:
+            mica_val = ctypes.c_int(2)
+            dwmapi.DwmSetWindowAttribute(hwnd, 38, ctypes.byref(mica_val), ctypes.sizeof(mica_val))
+        except Exception:
+            pass
+        return hr_dark == 0
+    except Exception:
+        return False
