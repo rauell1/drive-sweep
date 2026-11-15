@@ -1,4 +1,4 @@
-"""Smart AI, Dev & App Cache Presets (Windows, macOS, and Linux)."""
+"""Universal Smart Cleanup Presets for Windows, macOS, and Linux."""
 
 from __future__ import annotations
 
@@ -91,8 +91,12 @@ def _measure_path(raw_path: str) -> tuple[int, int]:
                     try:
                         if entry.is_symlink():
                             continue
+                        st = entry.stat(follow_symlinks=False)
+                        attrs = getattr(st, "st_file_attributes", 0)
+                        if os.name == "nt" and (attrs & 0x400):
+                            continue
                         if entry.is_file(follow_symlinks=False):
-                            total_bytes += entry.stat(follow_symlinks=False).st_size
+                            total_bytes += st.st_size
                             file_count += 1
                         elif entry.is_dir(follow_symlinks=False):
                             stack.append(entry.path)
@@ -105,22 +109,30 @@ def _measure_path(raw_path: str) -> tuple[int, int]:
 
 def _safe_add(
     items: list[SmartPresetCandidate],
+    seen_paths: set[str],
     cid: str,
     group: str,
     label: str,
     target: Path,
     *,
     contents_only: bool = True,
-    note: str = "Safe regenerable cache.",
+    note: str = "Safe temporary files that apps can rebuild if needed.",
     default_checked: bool = True,
     process_hint: str | None = None,
 ) -> None:
-    if not target.exists():
+    try:
+        if not target.exists():
+            return
+    except OSError:
+        return
+    norm_key = os.path.normcase(os.path.abspath(str(target)))
+    if norm_key in seen_paths:
         return
     if is_personal_guarded_path(target):
         return
     if is_os_protected_path(target, allow_temp_contents=contents_only):
         return
+    seen_paths.add(norm_key)
     items.append(
         SmartPresetCandidate(
             id=cid,
@@ -135,203 +147,566 @@ def _safe_add(
     )
 
 
+def _discover_dynamic_app_caches(
+    local_app: Path,
+    roaming_app: Path,
+    add_fn,
+) -> None:
+    """Automatically find standard temp/cache folders inside apps installed on this PC."""
+    skip_dirs = {
+        "microsoft",
+        "packages",
+        "temp",
+        "programs",
+        "google",
+        "mozilla",
+        "bravesoftware",
+        "opera software",
+        "claude-data",
+        "claude",
+        "code",
+        "cursor",
+        "notion",
+        "discord",
+        "slack",
+        "spotify",
+        "zoom",
+        "canva",
+        "githubdesktop",
+        "drivesweep",
+    }
+    cache_subnames = (
+        ("Cache", "Temporary Cache"),
+        ("Code Cache", "App Speed Cache"),
+        ("GPUCache", "Graphics Cache"),
+        ("logs", "Diagnostic Logs"),
+        (os.path.join("Crashpad", "reports"), "Crash Reports"),
+    )
+
+    for scope_name, root in (("local", local_app), ("roaming", roaming_app)):
+        if not root.exists():
+            continue
+        try:
+            entries = list(root.iterdir())
+        except OSError:
+            continue
+        for app_dir in entries:
+            if not app_dir.is_dir():
+                continue
+            low = app_dir.name.lower()
+            if low in skip_dirs or low.startswith("."):
+                continue
+            if low.endswith("-updater"):
+                add_fn(
+                    f"dyn-{scope_name}-upd-{low}",
+                    "Desktop Apps",
+                    f"{app_dir.name} Leftover Installers",
+                    app_dir,
+                    contents_only=False,
+                    note="Old update installer files downloaded automatically in the background.",
+                )
+                continue
+            for sub_rel, sub_label in cache_subnames:
+                cand = app_dir / sub_rel
+                try:
+                    exists = cand.exists()
+                except OSError:
+                    continue
+                if exists:
+                    add_fn(
+                        f"dyn-{scope_name}-{low}-{sub_label.lower().replace(' ', '-')}",
+                        "Desktop Apps",
+                        f"{app_dir.name} ({sub_label})",
+                        cand,
+                        note=f"Temporary files for {app_dir.name}. Your logins and saved work stay safe.",
+                        process_hint=app_dir.name,
+                    )
+
+
 def _discover_windows_candidates() -> list[SmartPresetCandidate]:
     home = Path.home()
     local_app = Path(os.environ.get("LOCALAPPDATA", home / "AppData" / "Local"))
     roaming_app = Path(os.environ.get("APPDATA", home / "AppData" / "Roaming"))
     temp_dir = Path(os.environ.get("TEMP", local_app / "Temp"))
-    win_temp = Path(os.environ.get("WINDIR", "C:\\Windows")) / "Temp"
+    windir = Path(os.environ.get("WINDIR", "C:\\Windows"))
+    win_temp = windir / "Temp"
+    program_data = Path(os.environ.get("ProgramData", "C:\\ProgramData"))
 
     items: list[SmartPresetCandidate] = []
-    add = lambda *a, **kw: _safe_add(items, *a, **kw)  # noqa: E731
+    seen_paths: set[str] = set()
+    add = lambda *a, **kw: _safe_add(items, seen_paths, *a, **kw)  # noqa: E731
 
-    # 1. Package Managers & ML/CLI Caches
-    add("uv-cache", "Package Managers & ML", "Python uv Cache", local_app / "uv" / "cache",
-        note="Downloaded Python wheels & uv cache; re-downloads automatically if needed.")
-    add("pip-cache", "Package Managers & ML", "Python pip Cache", local_app / "pip" / "cache",
-        note="Cached pip wheel downloads.")
-    add("bun-cache", "Package Managers & ML", "Bun Package Cache", home / ".bun" / "install" / "cache",
-        note="Cached Bun npm packages.")
-    add("npm-local-cache", "Package Managers & ML", "npm Cache (AppData Local)", local_app / "npm-cache",
-        note="Cached npm tarballs.")
-    add("npm-home-cache", "Package Managers & ML", "npm Cache (Home)", home / "npm-cache",
-        note="Cached npm tarballs.")
-    add("npm-underscore-cache", "Package Managers & ML", "npm _cacache", home / ".npm" / "_cacache",
-        note="Standard npm content-addressable cache.")
-    add("hf-cache", "Package Managers & ML", "HuggingFace Model Cache", home / ".cache" / "huggingface",
-        note="Cached HuggingFace models/datasets (can be many GB; re-downloads on demand).",
-        default_checked=False)
-    add("torch-cache", "Package Managers & ML", "PyTorch Hub Cache", home / ".cache" / "torch",
-        note="Cached PyTorch weights & hub files.", default_checked=False)
-    add("codex-runtimes", "AI Coding Tools", "OpenAI Codex Runtimes Cache", home / ".cache" / "codex-runtimes",
-        note="Cached Codex CLI runtimes.", process_hint="codex")
-    add("playwright-browsers", "Package Managers & ML", "Playwright Browser Binaries", local_app / "ms-playwright",
-        note="Downloaded test browsers (re-install with playwright install).", default_checked=False)
-    add("gradle-caches", "Package Managers & ML", "Gradle Caches", home / ".gradle" / "caches",
-        note="Cached Java/Android Gradle dependencies.", default_checked=False)
+    # 1. Windows & System Temp (useful on every Windows PC)
+    add(
+        "user-temp",
+        "Windows & Temp",
+        "User Temporary Files",
+        temp_dir,
+        note="Temporary files created by apps. Files currently in use are skipped automatically.",
+    )
+    add(
+        "win-temp",
+        "Windows & Temp",
+        "Windows System Temporary Files",
+        win_temp,
+        note="System-wide temporary files in Windows\\Temp.",
+    )
+    add(
+        "win-update-cache",
+        "Windows & Temp",
+        "Windows Update Download Cache",
+        windir / "SoftwareDistribution" / "Download",
+        note="Old Windows Update installer downloads. Windows re-downloads anything needed later.",
+    )
+    add(
+        "win-delivery-opt",
+        "Windows & Temp",
+        "Windows Update Delivery Cache",
+        windir
+        / "ServiceProfiles"
+        / "NetworkService"
+        / "AppData"
+        / "Local"
+        / "Microsoft"
+        / "Windows"
+        / "DeliveryOptimization"
+        / "Cache",
+        note="Cached Windows Update files shared on your network.",
+    )
+    add(
+        "win-crash-dumps",
+        "Windows & Temp",
+        "App Crash Dump Files",
+        local_app / "CrashDumps",
+        note="Diagnostic snapshots saved when an app crashes.",
+    )
+    add(
+        "win-wer-user",
+        "Windows & Temp",
+        "User Error Reports",
+        local_app / "Microsoft" / "Windows" / "WER" / "ReportArchive",
+        note="Old Windows Error Reporting files.",
+    )
+    add(
+        "win-wer-system-archive",
+        "Windows & Temp",
+        "System Error Report Archive",
+        program_data / "Microsoft" / "Windows" / "WER" / "ReportArchive",
+        note="System crash and error report archive.",
+    )
+    add(
+        "win-wer-system-queue",
+        "Windows & Temp",
+        "Pending System Error Reports",
+        program_data / "Microsoft" / "Windows" / "WER" / "ReportQueue",
+        note="Queued Windows error report files.",
+    )
+    add(
+        "win-inet-cache",
+        "Windows & Temp",
+        "Windows Web Temporary Files",
+        local_app / "Microsoft" / "Windows" / "INetCache",
+        note="Temporary web cache used by Windows components.",
+    )
+    add(
+        "dx-shader-cache",
+        "Windows & Temp",
+        "DirectX Graphics Cache",
+        local_app / "D3DSCache",
+        note="Graphics shader cache rebuilt automatically by games and apps.",
+    )
+    add(
+        "nvidia-dx-cache",
+        "Windows & Temp",
+        "NVIDIA Graphics Shader Cache",
+        local_app / "NVIDIA" / "DXCache",
+        note="NVIDIA graphics cache rebuilt automatically when needed.",
+    )
+    add(
+        "nvidia-gl-cache",
+        "Windows & Temp",
+        "NVIDIA OpenGL Cache",
+        local_app / "NVIDIA" / "GLCache",
+        note="NVIDIA OpenGL cache rebuilt automatically when needed.",
+    )
+    add(
+        "amd-dx-cache",
+        "Windows & Temp",
+        "AMD Graphics Shader Cache",
+        local_app / "AMD" / "DxCache",
+        note="AMD graphics cache rebuilt automatically when needed.",
+    )
+    add(
+        "intel-shader-cache",
+        "Windows & Temp",
+        "Intel Graphics Cache",
+        local_app / "Intel" / "ShaderCache",
+        note="Intel graphics cache rebuilt automatically when needed.",
+    )
 
-    # 2. Claude Desktop & Claude Code
+    uwp_packages = local_app / "Packages"
+    if uwp_packages.exists():
+        try:
+            for pkg in uwp_packages.iterdir():
+                if not pkg.is_dir():
+                    continue
+                short_name = pkg.name.split("_")[0]
+                for sub_rel, sub_label in (("TempState", "Temp Files"), (os.path.join("AC", "INetCache"), "Web Cache")):
+                    cand = pkg / sub_rel
+                    if cand.exists():
+                        add(
+                            f"uwp-{pkg.name}-{sub_label.lower().replace(' ', '-')}",
+                            "Windows & Temp",
+                            f"Microsoft Store: {short_name} ({sub_label})",
+                            cand,
+                            note=f"Temporary files for the {short_name} Store app.",
+                        )
+        except OSError:
+            pass
+
+    # 2. Web Browsers (Chrome, Edge, Brave, Firefox, Opera)
+    chromium_browsers = [
+        ("chrome", "Google Chrome", local_app / "Google" / "Chrome" / "User Data", "chrome"),
+        ("edge", "Microsoft Edge", local_app / "Microsoft" / "Edge" / "User Data", "msedge"),
+        ("brave", "Brave Browser", local_app / "BraveSoftware" / "Brave-Browser" / "User Data", "brave"),
+    ]
+    for slug, bname, ud_path, proc in chromium_browsers:
+        if not ud_path.exists():
+            continue
+        try:
+            for prof in ud_path.iterdir():
+                if prof.is_dir() and (prof.name == "Default" or prof.name.startswith("Profile ")):
+                    for sub, label in (
+                        ("Cache", "Temporary Web Files"),
+                        ("Code Cache", "Page Speed Cache"),
+                        ("GPUCache", "Graphics Cache"),
+                        (os.path.join("Service Worker", "CacheStorage"), "Offline Site Cache"),
+                        ("Shared Dictionary", "Compression Cache"),
+                    ):
+                        add(
+                            f"{slug}-{prof.name}-{label.lower().replace(' ', '-')}",
+                            "Web Browsers",
+                            f"{bname} ({prof.name}) - {label}",
+                            prof / sub,
+                            note="Temporary browser files only. Saved passwords, bookmarks, and history stay untouched.",
+                            process_hint=proc,
+                        )
+        except OSError:
+            pass
+        for extra, label in (
+            ("OptGuideOnDeviceModel", "On-Device AI Models"),
+            ("OptGuideOnDeviceClassifierModel", "Content Classifier Models"),
+            ("screen_ai", "Screen Reader AI Cache"),
+            ("Snapshots", "Old Version Backups"),
+            ("component_crx_cache", "Component Update Downloads"),
+        ):
+            add(
+                f"{slug}-{extra.lower()}",
+                "Web Browsers",
+                f"{bname} ({label})",
+                ud_path / extra,
+                note="Cached browser updates or downloaded components.",
+                process_hint=proc,
+            )
+    add(
+        "google-updater",
+        "Web Browsers",
+        "Google Update Leftover Files",
+        local_app / "Google" / "GoogleUpdater",
+        note="Old Chrome and Google updater downloads.",
+    )
+
+    ff_profiles = local_app / "Mozilla" / "Firefox" / "Profiles"
+    if ff_profiles.exists():
+        for prof in ff_profiles.iterdir():
+            if prof.is_dir():
+                add(
+                    f"firefox-{prof.name}-cache",
+                    "Web Browsers",
+                    f"Firefox ({prof.name}) Temporary Web Files",
+                    prof / "cache2",
+                    note="Temporary browser files only. Bookmarks, passwords, and tabs stay untouched.",
+                    process_hint="firefox",
+                )
+
+    for opera_name in ("Opera Stable", "Opera GX Stable"):
+        opera_dir = local_app / "Opera Software" / opera_name
+        add(
+            f"opera-{opera_name.lower().replace(' ', '-')}",
+            "Web Browsers",
+            f"{opera_name} Temporary Web Files",
+            opera_dir / "Cache",
+            note="Temporary browser files only. Saved logins and bookmarks stay untouched.",
+            process_hint="opera",
+        )
+
+    # 3. Everyday Desktop Apps (Teams, Discord, Spotify, Slack, Zoom, Office, Outlook, Steam, Notion, Canva)
+    add(
+        "teams-new-cache",
+        "Desktop Apps",
+        "Microsoft Teams Cache",
+        local_app / "Packages" / "MSTeams_8wekyb3d8bbwe" / "LocalCache" / "Microsoft" / "MSTeams" / "EBWebView" / "Default" / "Cache",
+        note="Temporary Teams cache. Chats and account login stay safe.",
+        process_hint="ms-teams",
+    )
+    add(
+        "teams-classic-cache",
+        "Desktop Apps",
+        "Microsoft Teams (Classic) Cache",
+        roaming_app / "Microsoft" / "Teams" / "Cache",
+        note="Temporary Teams cache.",
+        process_hint="Teams",
+    )
+    for sub in ("Cache", "Code Cache", "GPUCache"):
+        add(
+            f"discord-{sub.lower().replace(' ', '-')}",
+            "Desktop Apps",
+            f"Discord ({sub})",
+            roaming_app / "discord" / sub,
+            note="Temporary Discord media and app cache. Chats and login stay safe.",
+            process_hint="Discord",
+        )
+        add(
+            f"slack-{sub.lower().replace(' ', '-')}",
+            "Desktop Apps",
+            f"Slack ({sub})",
+            roaming_app / "Slack" / sub,
+            note="Temporary Slack cache. Workspaces stay logged in.",
+            process_hint="slack",
+        )
+        add(
+            f"canva-{sub.lower().replace(' ', '-')}",
+            "Desktop Apps",
+            f"Canva ({sub})",
+            roaming_app / "Canva" / sub,
+            note="Temporary Canva design preview cache.",
+            process_hint="Canva",
+        )
+    add(
+        "spotify-storage",
+        "Desktop Apps",
+        "Spotify Temporary Song Cache",
+        local_app / "Spotify" / "Storage",
+        note="Cached audio previews downloaded while streaming (excludes your playlists).",
+        default_checked=False,
+        process_hint="Spotify",
+    )
+    add(
+        "spotify-data",
+        "Desktop Apps",
+        "Spotify Browser Cache",
+        local_app / "Spotify" / "Data",
+        note="Cached album art and interface files.",
+        process_hint="Spotify",
+    )
+    add(
+        "zoom-downloads",
+        "Desktop Apps",
+        "Zoom Update Installers",
+        roaming_app / "Zoom" / "ZoomDownload",
+        note="Temporary installer files downloaded by Zoom.",
+    )
+    add(
+        "office-cache",
+        "Desktop Apps",
+        "Microsoft Office Document Cache",
+        local_app / "Microsoft" / "Office" / "16.0" / "OfficeFileCache",
+        note="Local temporary upload/download cache for Word, Excel, and PowerPoint.",
+    )
+    add(
+        "outlook-cache",
+        "Desktop Apps",
+        "Outlook App Web Cache",
+        local_app / "Microsoft" / "Olk" / "ebwebview" / "Default" / "Cache",
+        note="Temporary Outlook display cache. Emails stay safe on your server.",
+        process_hint="olk",
+    )
+    add(
+        "outlook-code-cache",
+        "Desktop Apps",
+        "Outlook App Speed Cache",
+        local_app / "Microsoft" / "Olk" / "ebwebview" / "Default" / "Code Cache",
+        note="Temporary Outlook script cache.",
+        process_hint="olk",
+    )
+    add(
+        "steam-htmlcache",
+        "Desktop Apps",
+        "Steam Store Browser Cache",
+        local_app / "Steam" / "htmlcache" / "Cache",
+        note="Temporary Steam store page cache. Installed games are untouched.",
+        process_hint="steam",
+    )
+    add(
+        "epic-webcache",
+        "Desktop Apps",
+        "Epic Games Launcher Web Cache",
+        local_app / "EpicGamesLauncher" / "Saved" / "webcache",
+        note="Temporary Epic Store cache. Installed games are untouched.",
+        process_hint="EpicGamesLauncher",
+    )
+
+    notion_base = roaming_app / "Notion" / "Partitions" / "notion"
+    if notion_base.exists():
+        for sub in ("Service Worker", "Cache", "Code Cache", "GPUCache", "DawnWebGPUCache", "DawnGraphiteCache", "Shared Dictionary"):
+            add(
+                f"notion-{sub.lower().replace(' ', '-')}",
+                "Desktop Apps",
+                f"Notion ({sub})",
+                notion_base / sub,
+                note="Temporary Notion cache. Your workspace and login stay safe.",
+                process_hint="Notion",
+            )
+
+    bt_base = roaming_app / "BitTorrent Web" / "btweb.exe.WebView2" / "EBWebView" / "Default"
+    add("bt-cache", "Desktop Apps", "BitTorrent Web Cache", bt_base / "Cache", note="Temporary browser view cache.")
+    add("bt-code-cache", "Desktop Apps", "BitTorrent Web Speed Cache", bt_base / "Code Cache", note="Temporary browser script cache.")
+
+    # Dynamically catch any other installed apps on this user's machine!
+    _discover_dynamic_app_caches(local_app, roaming_app, add)
+
+    # 4. AI Coding Tools (if installed on this PC)
     claude_data = local_app / "Claude-Data"
     if claude_data.exists():
         for profile in claude_data.iterdir():
             if not profile.is_dir():
                 continue
             tag = profile.name
-            add(f"claude-vm-{tag}", "AI Coding Tools", f"Claude Desktop VM Bundles ({tag})", profile / "vm_bundles",
-                note="Claude Desktop VM bundle downloads (often multi-GB). Quit Claude first.",
-                process_hint="Claude")
-            add(f"claude-cache-{tag}", "AI Coding Tools", f"Claude Desktop Cache ({tag})", profile / "Cache",
-                note="Electron cache; preserves logins & chats.", process_hint="Claude")
-            add(f"claude-code-cache-{tag}", "AI Coding Tools", f"Claude Desktop Code Cache ({tag})", profile / "Code Cache",
-                note="V8 JS code cache.", process_hint="Claude")
-            add(f"claude-logs-{tag}", "AI Coding Tools", f"Claude Desktop Logs ({tag})", profile / "logs",
-                note="Diagnostic log files.", process_hint="Claude")
+            add(
+                f"claude-vm-{tag}",
+                "AI & Coding Tools",
+                f"Claude Desktop VM Files ({tag})",
+                profile / "vm_bundles",
+                note="Downloaded Claude virtual machine bundles (often large). Close Claude first.",
+                process_hint="Claude",
+            )
+            add(
+                f"claude-cache-{tag}",
+                "AI & Coding Tools",
+                f"Claude Desktop Cache ({tag})",
+                profile / "Cache",
+                note="Temporary Claude app cache. Your chats and login stay safe.",
+                process_hint="Claude",
+            )
+            add(
+                f"claude-code-cache-{tag}",
+                "AI & Coding Tools",
+                f"Claude Desktop Speed Cache ({tag})",
+                profile / "Code Cache",
+                note="Temporary app script cache.",
+                process_hint="Claude",
+            )
+            add(
+                f"claude-logs-{tag}",
+                "AI & Coding Tools",
+                f"Claude Desktop Logs ({tag})",
+                profile / "logs",
+                note="Diagnostic log files.",
+                process_hint="Claude",
+            )
 
     claude_roaming = roaming_app / "Claude"
     if claude_roaming.exists():
         for sub in ("Cache", "Code Cache", "GPUCache", "logs"):
-            add(f"claude-roaming-{sub.lower().replace(' ', '-')}", "AI Coding Tools",
-                f"Claude App {sub}", claude_roaming / sub,
-                note="Electron cache/logs; preserves settings.", process_hint="Claude")
+            add(
+                f"claude-roaming-{sub.lower().replace(' ', '-')}",
+                "AI & Coding Tools",
+                f"Claude App ({sub})",
+                claude_roaming / sub,
+                note="Temporary Claude app cache/logs. Settings stay safe.",
+                process_hint="Claude",
+            )
 
     claude_cli = home / ".claude"
     if claude_cli.exists():
-        add("claude-cli-cache", "AI Coding Tools", "Claude Code CLI Cache", claude_cli / "cache",
-            note="Claude Code cache folder (preserves settings, plugins & projects).")
-        add("claude-cli-debug", "AI Coding Tools", "Claude Code Debug Logs", claude_cli / "debug",
-            note="Claude Code debug logs.")
-        add("claude-cli-snapshots", "AI Coding Tools", "Claude Code Shell Snapshots", claude_cli / "shell-snapshots",
-            note="Old shell environment snapshots created by Claude Code.", default_checked=False)
-        add("claude-cli-file-history", "AI Coding Tools", "Claude Code File History", claude_cli / "file-history",
-            note="Checkpoint backups of files edited by Claude Code (uncheck if you want undo history).",
-            default_checked=False)
+        add(
+            "claude-cli-cache",
+            "AI & Coding Tools",
+            "Claude Code CLI Cache",
+            claude_cli / "cache",
+            note="Temporary Claude Code cache (settings, plugins, and projects stay safe).",
+        )
+        add(
+            "claude-cli-debug",
+            "AI & Coding Tools",
+            "Claude Code Debug Logs",
+            claude_cli / "debug",
+            note="Old diagnostic debug logs.",
+        )
+        add(
+            "claude-cli-snapshots",
+            "AI & Coding Tools",
+            "Claude Code Terminal Snapshots",
+            claude_cli / "shell-snapshots",
+            note="Old terminal environment snapshots.",
+            default_checked=False,
+        )
+        add(
+            "claude-cli-file-history",
+            "AI & Coding Tools",
+            "Claude Code Edit Backups",
+            claude_cli / "file-history",
+            note="Backup checkpoints from past Claude Code edits (keep unchecked if you need undo).",
+            default_checked=False,
+        )
 
-    # 3. Editors (VS Code, Cursor)
+    add(
+        "codex-runtimes",
+        "AI & Coding Tools",
+        "OpenAI Codex Runtime Cache",
+        home / ".cache" / "codex-runtimes",
+        note="Downloaded Codex runtime files.",
+        process_hint="codex",
+    )
+
+    # 5. Developer Editors & Package Caches (if installed on this PC)
     vscode = roaming_app / "Code"
-    add("vscode-vsix", "Editors & Dev Tools", "VS Code Cached Extension Installers", vscode / "CachedExtensionVSIXs",
-        note="Old downloaded VSIX extension packages (installed extensions stay intact).")
-    add("vscode-cache", "Editors & Dev Tools", "VS Code Cache", vscode / "Cache",
-        note="VS Code renderer cache.", process_hint="Code")
-    add("vscode-cached-data", "Editors & Dev Tools", "VS Code CachedData", vscode / "CachedData",
-        note="V8 code cache.", process_hint="Code")
-    vs_web = vscode / "WebStorage"
-    if vs_web.exists():
-        for idx, cs in enumerate(vs_web.glob("*/CacheStorage")):
-            add(f"vscode-web-{idx}", "Editors & Dev Tools", f"VS Code WebStorage Cache ({cs.parent.name})", cs,
-                note="Extension webview cache.", process_hint="Code")
+    add(
+        "vscode-vsix",
+        "Dev Editors & Packages",
+        "VS Code Old Extension Installers",
+        vscode / "CachedExtensionVSIXs",
+        note="Old downloaded extension installers. Installed extensions stay intact.",
+    )
+    add("vscode-cache", "Dev Editors & Packages", "VS Code Temporary Cache", vscode / "Cache", note="Temporary editor cache.", process_hint="Code")
+    add("vscode-cached-data", "Dev Editors & Packages", "VS Code Speed Cache", vscode / "CachedData", note="Rebuilt automatically on launch.", process_hint="Code")
 
     cursor = roaming_app / "Cursor"
     if cursor.exists():
-        add("cursor-vsix", "Editors & Dev Tools", "Cursor Cached Extension Installers", cursor / "CachedExtensionVSIXs",
-            note="Old downloaded VSIX packages.")
-        add("cursor-cache", "Editors & Dev Tools", "Cursor Cache", cursor / "Cache",
-            note="Cursor Electron cache.", process_hint="Cursor")
-        add("cursor-cached-data", "Editors & Dev Tools", "Cursor CachedData", cursor / "CachedData",
-            note="Cursor V8 code cache.", process_hint="Cursor")
-
-    # 4. Notion, GitHub Desktop, Canva, Zoom, BitTorrent, OpenWA, App Updaters
-    notion_base = roaming_app / "Notion" / "Partitions" / "notion"
-    if notion_base.exists():
-        for sub in ("Service Worker", "Cache", "Code Cache", "GPUCache", "DawnWebGPUCache", "DawnGraphiteCache", "Shared Dictionary"):
-            add(f"notion-{sub.lower().replace(' ', '-')}", "Apps & Updaters", f"Notion {sub}", notion_base / sub,
-                note="Notion Electron cache; workspace & login stay intact.", process_hint="Notion")
+        add(
+            "cursor-vsix",
+            "Dev Editors & Packages",
+            "Cursor Old Extension Installers",
+            cursor / "CachedExtensionVSIXs",
+            note="Old downloaded extension installers.",
+        )
+        add("cursor-cache", "Dev Editors & Packages", "Cursor Temporary Cache", cursor / "Cache", note="Temporary editor cache.", process_hint="Cursor")
+        add("cursor-cached-data", "Dev Editors & Packages", "Cursor Speed Cache", cursor / "CachedData", note="Rebuilt automatically on launch.", process_hint="Cursor")
 
     gh_desktop = local_app / "GitHubDesktop"
-    add("gh-packages", "Editors & Dev Tools", "GitHub Desktop Update Packages", gh_desktop / "packages",
-        note="Old Squirrel update installers.")
+    add("gh-packages", "Dev Editors & Packages", "GitHub Desktop Old Updates", gh_desktop / "packages", note="Old downloaded app update files.")
     if gh_desktop.exists():
         app_dirs = sorted([d for d in gh_desktop.iterdir() if d.is_dir() and d.name.startswith("app-")], key=lambda p: p.name, reverse=True)
         for old_app in app_dirs[1:]:
-            add(f"gh-old-{old_app.name}", "Editors & Dev Tools", f"GitHub Desktop Old Version ({old_app.name})",
-                old_app, contents_only=False, note="Superseded GitHub Desktop version folder.")
+            add(
+                f"gh-old-{old_app.name}",
+                "Dev Editors & Packages",
+                f"GitHub Desktop Old Version ({old_app.name})",
+                old_app,
+                contents_only=False,
+                note="Older GitHub Desktop version replaced by a newer update.",
+            )
 
-    canva = roaming_app / "Canva"
-    for sub in ("Cache", "Code Cache", "GPUCache"):
-        add(f"canva-{sub.lower().replace(' ', '-')}", "Apps & Updaters", f"Canva {sub}", canva / sub,
-            note="Canva desktop cache.", process_hint="Canva")
-
-    add("zoom-downloads", "Apps & Updaters", "Zoom Update Downloads", roaming_app / "Zoom" / "ZoomDownload",
-        note="Zoom installer/update temp downloads.")
-
-    bt_base = roaming_app / "BitTorrent Web" / "btweb.exe.WebView2" / "EBWebView" / "Default"
-    add("bt-cache", "Apps & Updaters", "BitTorrent Web Cache", bt_base / "Cache", note="WebView2 cache.")
-    add("bt-code-cache", "Apps & Updaters", "BitTorrent Web Code Cache", bt_base / "Code Cache", note="WebView2 code cache.")
-
-    if local_app.exists():
-        for entry in local_app.iterdir():
-            if entry.is_dir() and entry.name.lower().endswith("-updater"):
-                add(f"updater-{entry.name}", "Apps & Updaters", f"App Updater Leftovers ({entry.name})",
-                    entry, contents_only=False, note="Electron/app auto-updater downloaded installers.")
-
-    openwa_sessions = local_app / "Docker" / "OpenWA" / "data" / "sessions"
-    if openwa_sessions.exists():
-        for sess in openwa_sessions.iterdir():
-            if not sess.is_dir():
-                continue
-            d = sess / "Default"
-            for sub in ("Cache", "Code Cache", "Service Worker"):
-                add(f"openwa-{sess.name}-{sub.lower().replace(' ', '-')}", "Apps & Updaters",
-                    f"OpenWA ({sess.name}) {sub}", d / sub, note="Browser cache inside OpenWA session.")
-
-    # 5. Browsers & Office/Outlook
-    chrome_ud = local_app / "Google" / "Chrome" / "User Data"
-    if chrome_ud.exists():
-        for prof in chrome_ud.iterdir():
-            if prof.is_dir() and (prof.name == "Default" or prof.name.startswith("Profile ")):
-                for sub, label in (
-                    ("Cache", "Cache"),
-                    ("Code Cache", "Code Cache"),
-                    ("GPUCache", "GPUCache"),
-                    (os.path.join("Service Worker", "CacheStorage"), "Service Worker Cache"),
-                    ("File System", "File System Cache"),
-                    ("Shared Dictionary", "Shared Dictionary"),
-                ):
-                    add(f"chrome-{prof.name}-{label.lower().replace(' ', '-')}", "Browsers",
-                        f"Chrome ({prof.name}) {label}", prof / sub,
-                        note="Browser cache only; logins, bookmarks & history stay untouched.", process_hint="chrome")
-        for extra, label in (
-            ("OptGuideOnDeviceModel", "On-Device AI Model"),
-            ("OptGuideOnDeviceClassifierModel", "On-Device Classifier Model"),
-            ("screen_ai", "Screen AI"),
-            ("Snapshots", "Version Snapshots"),
-            ("component_crx_cache", "Component CRX Cache"),
-        ):
-            add(f"chrome-{extra.lower()}", "Browsers", f"Chrome {label}", chrome_ud / extra,
-                note="Cached Chrome browser components/models.", process_hint="chrome")
-    add("google-updater", "Browsers", "GoogleUpdater Cache", local_app / "Google" / "GoogleUpdater",
-        note="Old Chrome/Google updater downloads.")
-
-    edge_ud = local_app / "Microsoft" / "Edge" / "User Data"
-    if edge_ud.exists():
-        for prof in edge_ud.iterdir():
-            if prof.is_dir() and (prof.name == "Default" or prof.name.startswith("Profile ")):
-                for sub, label in (
-                    ("Cache", "Cache"),
-                    ("Code Cache", "Code Cache"),
-                    ("GPUCache", "GPUCache"),
-                    (os.path.join("Service Worker", "CacheStorage"), "Service Worker Cache"),
-                ):
-                    add(f"edge-{prof.name}-{label.lower().replace(' ', '-')}", "Browsers",
-                        f"Edge ({prof.name}) {label}", prof / sub,
-                        note="Browser cache only; logins & favorites stay untouched.", process_hint="msedge")
-        add("edge-snapshots", "Browsers", "Edge Version Snapshots", edge_ud / "Snapshots",
-            note="Old Edge upgrade snapshots.", process_hint="msedge")
-
-    add("office-cache", "Apps & Updaters", "Office File Cache",
-        local_app / "Microsoft" / "Office" / "16.0" / "OfficeFileCache",
-        note="Local Microsoft Office document upload/download cache.")
-    add("outlook-cache", "Apps & Updaters", "New Outlook WebView Cache",
-        local_app / "Microsoft" / "Olk" / "ebwebview" / "Default" / "Cache",
-        note="New Outlook WebView cache.", process_hint="olk")
-    add("outlook-code-cache", "Apps & Updaters", "New Outlook WebView Code Cache",
-        local_app / "Microsoft" / "Olk" / "ebwebview" / "Default" / "Code Cache",
-        note="New Outlook WebView JS cache.", process_hint="olk")
-
-    # 6. Temp Directories
-    add("user-temp", "System & Temp", "User Temp Directory", temp_dir,
-        note="Temporary files in %TEMP%; active locked files are skipped automatically.")
-    add("win-temp", "System & Temp", "Windows Temp Directory", win_temp,
-        note="System temporary files in C:\\Windows\\Temp (run as Administrator for full access).")
+    add("uv-cache", "Dev Editors & Packages", "Python uv Download Cache", local_app / "uv" / "cache", note="Downloaded Python packages that re-download automatically if needed.")
+    add("pip-cache", "Dev Editors & Packages", "Python pip Download Cache", local_app / "pip" / "cache", note="Saved Python package installers.")
+    add("bun-cache", "Dev Editors & Packages", "Bun Package Cache", home / ".bun" / "install" / "cache", note="Saved Bun package downloads.")
+    add("npm-local-cache", "Dev Editors & Packages", "Node npm Cache (Local)", local_app / "npm-cache", note="Saved npm package downloads.")
+    add("npm-home-cache", "Dev Editors & Packages", "Node npm Cache (Home)", home / "npm-cache", note="Saved npm package downloads.")
+    add("npm-underscore-cache", "Dev Editors & Packages", "Node npm Cache (_cacache)", home / ".npm" / "_cacache", note="Saved npm package downloads.")
+    add("hf-cache", "Dev Editors & Packages", "HuggingFace AI Model Cache", home / ".cache" / "huggingface", note="Large downloaded AI models (re-download on demand if removed).", default_checked=False)
+    add("torch-cache", "Dev Editors & Packages", "PyTorch AI Model Cache", home / ".cache" / "torch", note="Cached PyTorch model downloads.", default_checked=False)
+    add("playwright-browsers", "Dev Editors & Packages", "Playwright Test Browsers", local_app / "ms-playwright", note="Downloaded test browsers.", default_checked=False)
+    add("gradle-caches", "Dev Editors & Packages", "Gradle Build Cache", home / ".gradle" / "caches", note="Cached Java and Android build libraries.", default_checked=False)
 
     return items
 
@@ -344,73 +719,50 @@ def _discover_unix_candidates() -> list[SmartPresetCandidate]:
     config_root = home / "Library" / "Application Support" if is_mac else Path(os.environ.get("XDG_CONFIG_HOME", home / ".config"))
 
     items: list[SmartPresetCandidate] = []
-    add = lambda *a, **kw: _safe_add(items, *a, **kw)  # noqa: E731
+    seen_paths: set[str] = set()
+    add = lambda *a, **kw: _safe_add(items, seen_paths, *a, **kw)  # noqa: E731
 
-    # Package Managers & ML
-    add("uv-cache", "Package Managers & ML", "Python uv Cache", cache_root / "uv", note="Downloaded Python wheels & uv cache.")
-    add("pip-cache", "Package Managers & ML", "Python pip Cache", cache_root / "pip", note="Cached pip downloads.")
-    add("bun-cache", "Package Managers & ML", "Bun Package Cache", home / ".bun" / "install" / "cache", note="Cached Bun packages.")
-    add("npm-cache", "Package Managers & ML", "npm _cacache", home / ".npm" / "_cacache", note="Standard npm cache.")
-    add("hf-cache", "Package Managers & ML", "HuggingFace Model Cache", home / ".cache" / "huggingface",
-        note="Cached HuggingFace models/datasets.", default_checked=False)
-    add("torch-cache", "Package Managers & ML", "PyTorch Hub Cache", home / ".cache" / "torch",
-        note="Cached PyTorch weights.", default_checked=False)
-    add("gradle-caches", "Package Managers & ML", "Gradle Caches", home / ".gradle" / "caches",
-        note="Cached Gradle dependencies.", default_checked=False)
-    add("playwright-browsers", "Package Managers & ML", "Playwright Browser Binaries",
-        cache_root / "ms-playwright", note="Playwright test browsers.", default_checked=False)
+    add("uv-cache", "Dev Editors & Packages", "Python uv Download Cache", cache_root / "uv", note="Saved Python package downloads.")
+    add("pip-cache", "Dev Editors & Packages", "Python pip Download Cache", cache_root / "pip", note="Saved pip package downloads.")
+    add("bun-cache", "Dev Editors & Packages", "Bun Package Cache", home / ".bun" / "install" / "cache", note="Saved Bun package downloads.")
+    add("npm-cache", "Dev Editors & Packages", "Node npm Cache", home / ".npm" / "_cacache", note="Saved npm package downloads.")
+    add("hf-cache", "Dev Editors & Packages", "HuggingFace AI Model Cache", home / ".cache" / "huggingface", note="Large downloaded AI models.", default_checked=False)
+    add("torch-cache", "Dev Editors & Packages", "PyTorch AI Model Cache", home / ".cache" / "torch", note="Cached PyTorch model downloads.", default_checked=False)
+    add("gradle-caches", "Dev Editors & Packages", "Gradle Build Cache", home / ".gradle" / "caches", note="Cached Java and Android build libraries.", default_checked=False)
+    add("playwright-browsers", "Dev Editors & Packages", "Playwright Test Browsers", cache_root / "ms-playwright", note="Downloaded test browsers.", default_checked=False)
 
-    # AI Coding Tools
-    add("codex-runtimes", "AI Coding Tools", "OpenAI Codex Runtimes", home / ".cache" / "codex-runtimes",
-        note="Cached Codex CLI runtimes.", process_hint="codex")
+    add("codex-runtimes", "AI & Coding Tools", "OpenAI Codex Runtime Cache", home / ".cache" / "codex-runtimes", note="Downloaded Codex runtime files.", process_hint="codex")
     claude_cli = home / ".claude"
     if claude_cli.exists():
-        add("claude-cli-cache", "AI Coding Tools", "Claude Code CLI Cache", claude_cli / "cache",
-            note="Claude Code cache folder.")
-        add("claude-cli-debug", "AI Coding Tools", "Claude Code Debug Logs", claude_cli / "debug",
-            note="Claude Code debug logs.")
-        add("claude-cli-snapshots", "AI Coding Tools", "Claude Code Shell Snapshots", claude_cli / "shell-snapshots",
-            note="Old shell environment snapshots.", default_checked=False)
-        add("claude-cli-history", "AI Coding Tools", "Claude Code File History", claude_cli / "file-history",
-            note="Checkpoint backups of edited files.", default_checked=False)
+        add("claude-cli-cache", "AI & Coding Tools", "Claude Code CLI Cache", claude_cli / "cache", note="Temporary Claude Code cache.")
+        add("claude-cli-debug", "AI & Coding Tools", "Claude Code Debug Logs", claude_cli / "debug", note="Old diagnostic debug logs.")
+        add("claude-cli-snapshots", "AI & Coding Tools", "Claude Code Terminal Snapshots", claude_cli / "shell-snapshots", note="Old terminal snapshots.", default_checked=False)
+        add("claude-cli-history", "AI & Coding Tools", "Claude Code Edit Backups", claude_cli / "file-history", note="Backup checkpoints from past edits.", default_checked=False)
 
     for sub in ("Cache", "Code Cache", "GPUCache", "vm_bundles", "logs"):
-        add(f"claude-app-{sub.lower().replace(' ', '-')}", "AI Coding Tools", f"Claude Desktop {sub}",
-            config_root / "Claude" / sub, note="Claude Desktop cache/logs.", process_hint="Claude")
+        add(f"claude-app-{sub.lower().replace(' ', '-')}", "AI & Coding Tools", f"Claude Desktop ({sub})", config_root / "Claude" / sub, note="Temporary Claude Desktop files.", process_hint="Claude")
 
-    # Editors
     for app_dir, label, proc in (("Code", "VS Code", "code"), ("Cursor", "Cursor", "cursor")):
         base = config_root / app_dir
-        add(f"{app_dir.lower()}-cache", "Editors & Dev Tools", f"{label} Cache", base / "Cache",
-            note=f"{label} renderer cache.", process_hint=proc)
-        add(f"{app_dir.lower()}-cached-data", "Editors & Dev Tools", f"{label} CachedData", base / "CachedData",
-            note=f"{label} V8 code cache.", process_hint=proc)
-        add(f"{app_dir.lower()}-vsix", "Editors & Dev Tools", f"{label} Cached VSIXs", base / "CachedExtensionVSIXs",
-            note="Old extension installer packages.")
+        add(f"{app_dir.lower()}-cache", "Dev Editors & Packages", f"{label} Temporary Cache", base / "Cache", note=f"Temporary {label} cache.", process_hint=proc)
+        add(f"{app_dir.lower()}-cached-data", "Dev Editors & Packages", f"{label} Speed Cache", base / "CachedData", note=f"Rebuilt automatically on launch.", process_hint=proc)
+        add(f"{app_dir.lower()}-vsix", "Dev Editors & Packages", f"{label} Old Extension Installers", base / "CachedExtensionVSIXs", note="Old downloaded extension installers.")
 
     if is_mac:
-        add("homebrew-cache", "Package Managers & ML", "Homebrew Cache", cache_root / "Homebrew",
-            note="Downloaded Homebrew bottles & archives.")
-        add("xcode-derived", "Editors & Dev Tools", "Xcode DerivedData",
-            home / "Library" / "Developer" / "Xcode" / "DerivedData",
-            note="Xcode build intermediates & indexes.", default_checked=False)
-        add("chrome-cache", "Browsers", "Google Chrome Cache", cache_root / "Google" / "Chrome",
-            note="Chrome browser caches.", process_hint="Google Chrome")
-        add("mac-logs", "System & Temp", "User App Logs", home / "Library" / "Logs",
-            note="Application diagnostic logs.")
+        add("homebrew-cache", "Dev Editors & Packages", "Homebrew Download Cache", cache_root / "Homebrew", note="Saved Homebrew package archives.")
+        add("xcode-derived", "Dev Editors & Packages", "Xcode Build Cache", home / "Library" / "Developer" / "Xcode" / "DerivedData", note="Xcode build intermediates and indexes.", default_checked=False)
+        add("chrome-cache", "Web Browsers", "Google Chrome Temporary Cache", cache_root / "Google" / "Chrome", note="Temporary browser files.", process_hint="Google Chrome")
+        add("mac-logs", "Windows & Temp", "App Diagnostic Logs", home / "Library" / "Logs", note="Old application log files.")
     else:
-        add("chrome-cache", "Browsers", "Google Chrome Cache", cache_root / "google-chrome",
-            note="Chrome browser caches.", process_hint="chrome")
-        add("chromium-cache", "Browsers", "Chromium Cache", cache_root / "chromium",
-            note="Chromium browser caches.", process_hint="chromium")
-        add("thumbnails", "System & Temp", "Desktop Thumbnail Cache", cache_root / "thumbnails",
-            note="Cached file manager thumbnails.")
+        add("chrome-cache", "Web Browsers", "Google Chrome Temporary Cache", cache_root / "google-chrome", note="Temporary browser files.", process_hint="chrome")
+        add("chromium-cache", "Web Browsers", "Chromium Temporary Cache", cache_root / "chromium", note="Temporary browser files.", process_hint="chromium")
+        add("thumbnails", "Windows & Temp", "Image Thumbnail Cache", cache_root / "thumbnails", note="Cached file manager thumbnail previews.")
 
     return items
 
 
 def scan_smart_presets(exclusions: list[str] | None = None) -> dict:
-    """Scan all smart presets on the system and return measured sizes, warnings, & exclusions."""
+    """Scan all smart presets on the current user's system and return sizes, warnings, & exclusions."""
     candidates = _discover_windows_candidates() if os.name == "nt" else _discover_unix_candidates()
     running_names = _get_running_process_names()
     ex_list = exclusions if exclusions is not None else get_exclusions()
@@ -432,7 +784,7 @@ def scan_smart_presets(exclusions: list[str] | None = None) -> dict:
             excluded = is_path_excluded(item.path, ex_list)
             risk_level = "safe" if item.default_checked else "caution"
             risk_reason = (
-                "Regenerable cache or temporary files."
+                "Safe temporary files that can be rebuilt automatically."
                 if risk_level == "safe"
                 else item.safety_note
             )
@@ -461,18 +813,18 @@ def scan_smart_presets(exclusions: list[str] | None = None) -> dict:
         results.append(
             SmartPresetResult(
                 id="docker-builder-prune",
-                group="Editors & Dev Tools",
-                label="Docker Build Cache (docker builder prune)",
+                group="Dev Editors & Packages",
+                label="Docker Build Cache",
                 path="docker:builder",
                 contents_only=False,
                 size_bytes=0,
                 size_human="Docker CLI",
                 file_count=0,
-                safety_note="Runs `docker builder prune -f` to reclaim unused Docker build cache layers.",
+                safety_note="Clears unused Docker build cache layers (running containers and saved images stay safe).",
                 default_checked=False,
                 excluded=False,
                 risk_level="caution",
-                risk_reason="Removes cached Docker image build layers (future builds may re-run steps).",
+                risk_reason="Removes cached Docker image build layers (future builds may take longer once).",
                 running_app=None,
                 is_docker_prune=True,
             )

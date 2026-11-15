@@ -385,3 +385,35 @@ def test_updater_semver_sha256_and_url_verification(tmp_path: Path, monkeypatch)
     )
     assert bad_res["ok"] is False
     assert "verification failed" in bad_res["error"].lower()
+
+
+def test_universal_windows_cache_safety_and_dynamic_discovery(tmp_path: Path):
+    import app.presets as presets
+
+    assert safety.is_os_protected_path(r"C:\Windows\SoftwareDistribution\Download", allow_temp_contents=True) is False
+    assert safety.is_os_protected_path(r"C:\Windows\SoftwareDistribution\Download", allow_temp_contents=False) is True
+    assert safety.is_os_protected_path(r"C:\Windows\System32", allow_temp_contents=True) is True
+
+    local_app = tmp_path / "Local"
+    roaming_app = tmp_path / "Roaming"
+    (local_app / "SampleApp" / "Cache").mkdir(parents=True)
+    (local_app / "SampleApp" / "Cache" / "blob.bin").write_bytes(b"a" * 2048)
+    (local_app / "OtherApp-updater" / "pending").mkdir(parents=True)
+    (local_app / "OtherApp-updater" / "pending" / "setup.exe").write_bytes(b"b" * 1024)
+    # Protected / system vendor folders must never be auto-discovered dynamically
+    (local_app / "Microsoft" / "Cache").mkdir(parents=True)
+    (local_app / "Microsoft" / "Cache" / "keep.bin").write_bytes(b"c" * 2048)
+
+    found: list[tuple[str, str, Path]] = []
+
+    def fake_add(cid: str, group: str, _label: str, path: Path, *_args, **_kwargs):
+        found.append((cid, group, path))
+
+    presets._discover_dynamic_app_caches(local_app, roaming_app, fake_add)
+    paths_str = [str(p) for _, _, p in found]
+    groups = {g for _, g, _ in found}
+
+    assert str(local_app / "SampleApp" / "Cache") in paths_str
+    assert str(local_app / "OtherApp-updater") in paths_str
+    assert str(local_app / "Microsoft" / "Cache") not in paths_str
+    assert "Desktop Apps" in groups

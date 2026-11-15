@@ -36,7 +36,7 @@
               <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"/>
             </svg>
           </span>
-          <span class="nav-label">Smart Cleanup</span>
+          <span class="nav-label">Quick Clean</span>
           <span id="nav-smart-badge" class="nav-badge">0 B</span>
         </button>
 
@@ -48,7 +48,7 @@
               <path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3"/>
             </svg>
           </span>
-          <span class="nav-label">Drive Explorer</span>
+          <span class="nav-label">Drive Scanner</span>
         </button>
       </nav>
 
@@ -110,9 +110,9 @@
       <!-- Top Context Header -->
       <header class="view-header">
         <div>
-          <h1 id="view-title" class="view-title">Smart AI &amp; Dev Cleanup</h1>
+          <h1 id="view-title" class="view-title">Quick Safe Cleanup</h1>
           <p id="view-subtitle" class="view-subtitle">
-            Reclaim space from AI tools, package managers, browsers, and temp caches without touching personal files.
+            Clean temporary files, browser caches, and leftover installers without touching your personal folders.
           </p>
         </div>
         <div id="header-toolbar" class="header-toolbar">
@@ -120,7 +120,7 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
             </svg>
-            <input id="smart-filter" type="search" placeholder="Filter caches (claude, uv, chrome)..." />
+            <input id="smart-filter" type="search" placeholder="Search apps or folders (chrome, temp, steam)..." />
           </div>
           <button id="btn-smart-scan" class="btn btn-primary">Re-scan</button>
         </div>
@@ -135,15 +135,15 @@
             <div class="hero-card">
               <div class="hero-metrics">
                 <div class="metric-block">
-                  <div class="metric-label">Total Reclaimable</div>
+                  <div class="metric-label">Total Found</div>
                   <div id="smart-total-metric" class="metric-value">0 B</div>
-                  <div id="smart-count-sub" class="metric-sub">Scanning locations...</div>
+                  <div id="smart-count-sub" class="metric-sub">Scanning this PC...</div>
                 </div>
                 <div class="metric-divider"></div>
                 <div class="metric-block">
-                  <div class="metric-label">Recommended Safe</div>
+                  <div class="metric-label">Safe to Clean</div>
                   <div id="smart-rec-metric" class="metric-value accent-good">0 B</div>
-                  <div class="metric-sub">Downloads &amp; OneDrive protected</div>
+                  <div class="metric-sub">Personal folders protected</div>
                 </div>
                 <div class="metric-actions">
                   <div class="pill-group">
@@ -160,8 +160,8 @@
 
             <div class="chart-card">
               <div class="chart-card-header">
-                <span class="chart-title">Cache Distribution</span>
-                <span class="muted small-text">By category</span>
+                <span class="chart-title">Space by Category</span>
+                <span class="muted small-text">Where clutter is stored</span>
               </div>
               <div id="smart-donut-wrap" class="donut-wrap"></div>
             </div>
@@ -211,11 +211,11 @@
           <div id="explorer-workspace" class="explorer-workspace hidden">
             <div class="subtabs-header">
               <div class="segmented-tabs">
-                <button class="subtab-btn active" data-subview="overview">Overview &amp; Charts</button>
-                <button class="subtab-btn" data-subview="browse">Folder Tree</button>
-                <button class="subtab-btn" data-subview="allfiles">All Files</button>
-                <button class="subtab-btn" data-subview="largest">Largest Files</button>
-                <button class="subtab-btn" data-subview="devbloat">Dev Bloat</button>
+                <button class="subtab-btn active" data-subview="overview">Visual Summary</button>
+                <button class="subtab-btn" data-subview="browse">Folders</button>
+                <button class="subtab-btn" data-subview="allfiles">Find Any File</button>
+                <button class="subtab-btn" data-subview="largest">Biggest Files</button>
+                <button class="subtab-btn" data-subview="devbloat">Project Caches</button>
               </div>
               <div class="summary-chip-wrap">
                 <div id="explorer-summary-pill" class="summary-chip"></div>
@@ -230,16 +230,16 @@
               <div class="charts-grid">
                 <div class="chart-card">
                   <div class="chart-card-header">
-                    <span class="chart-title">Folder Space Map</span>
-                    <span class="muted small-text">Click a block to open folder</span>
+                    <span class="chart-title">Largest Folders</span>
+                    <span class="muted small-text">Click a box to open that folder</span>
                   </div>
                   <div id="treemap-grid" class="treemap-grid"></div>
                 </div>
 
                 <div class="chart-card">
                   <div class="chart-card-header">
-                    <span class="chart-title">File Types Breakdown</span>
-                    <span class="muted small-text">Size &amp; file counts</span>
+                    <span class="chart-title">What Takes Up Space</span>
+                    <span class="muted small-text">Grouped by file type</span>
                   </div>
                   <div id="category-chart-wrap" class="category-chart-wrap"></div>
                 </div>
@@ -248,16 +248,16 @@
               <div class="charts-grid second-row">
                 <div class="chart-card">
                   <div class="chart-card-header">
-                    <span class="chart-title">File Age Distribution</span>
-                    <span class="muted small-text">Helps spot untouched stale data</span>
+                    <span class="chart-title">How Old Your Files Are</span>
+                    <span class="muted small-text">Spot old untouched files</span>
                   </div>
                   <div id="age-chart-wrap" class="bar-chart-wrap"></div>
                 </div>
 
                 <div class="chart-card">
                   <div class="chart-card-header">
-                    <span class="chart-title">Top Space Consumers</span>
-                    <span class="muted small-text">Simple summary table</span>
+                    <span class="chart-title">Top Space Users</span>
+                    <span class="muted small-text">Click any row to open</span>
                   </div>
                   <div id="top-folders-table-wrap"></div>
                 </div>
@@ -358,13 +358,13 @@
               </div>
             </div>
 
-            <!-- Subview: Dev Bloat -->
+            <!-- Subview: Project Caches -->
             <div id="subview-devbloat" class="subview">
               <div class="browser-bar">
                 <div class="browser-filters">
-                  <label class="muted small-text" for="devbloat-age">Project inactivity:</label>
+                  <label class="muted small-text" for="devbloat-age">Unused for:</label>
                   <select id="devbloat-age" class="select">
-                    <option value="0">All Dev Artifacts</option>
+                    <option value="0">All Project Caches</option>
                     <option value="30">Untouched &gt; 30 days</option>
                     <option value="90">Untouched &gt; 90 days</option>
                     <option value="180">Untouched &gt; 180 days</option>
@@ -378,7 +378,7 @@
                   <thead>
                     <tr>
                       <th class="col-check">Clean</th>
-                      <th>Artifact Folder &amp; Location</th>
+                      <th>Cache Folder &amp; Location</th>
                       <th class="col-risk">Safety</th>
                       <th class="col-date">Last Activity</th>
                       <th class="col-count">Files</th>
@@ -402,18 +402,18 @@
             <span id="selected-count" class="dock-count">0 items selected</span>
           </div>
           <span id="dedup-note" class="dedup-pill hidden"></span>
-          <button id="btn-review-queue" class="btn btn-soft btn-sm" disabled>Review Queue</button>
+          <button id="btn-review-queue" class="btn btn-soft btn-sm" disabled>Review Selected</button>
         </div>
 
         <div class="dock-right">
           <div class="mode-segmented" role="radiogroup" aria-label="Deletion Mode">
-            <label class="seg-opt">
+            <label class="seg-opt" title="Safe and undoable from your Windows Recycle Bin">
               <input type="radio" name="delete-mode" value="recycle" checked />
-              <span>Recycle Bin</span>
+              <span>Recycle Bin (Safe)</span>
             </label>
-            <label class="seg-opt seg-danger">
+            <label class="seg-opt seg-danger" title="Erases files permanently without moving to Recycle Bin">
               <input type="radio" name="delete-mode" value="permanent" />
-              <span>Permanent</span>
+              <span>Delete Forever</span>
             </label>
           </div>
           <button id="btn-clean-now" class="btn btn-cta" disabled>Clean Selected</button>

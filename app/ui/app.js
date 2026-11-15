@@ -1,10 +1,10 @@
 const GROUP_COLORS = {
-  "AI Coding Tools": "#8b5cf6",
-  "Package Managers & ML": "#3b82f6",
-  "Editors & Dev Tools": "#06b6d4",
-  "Browsers": "#f59e0b",
-  "Apps & Updaters": "#ec4899",
-  "System & Temp": "#10b981",
+  "Windows & Temp": "#10b981",
+  "Web Browsers": "#f59e0b",
+  "Desktop Apps": "#ec4899",
+  "AI & Coding Tools": "#8b5cf6",
+  "Dev Editors & Packages": "#3b82f6",
+  "Other App Caches": "#06b6d4",
 };
 
 const ICON_FOLDER = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`;
@@ -230,12 +230,12 @@ function switchTab(tabName) {
   const toolbarEl = document.getElementById("header-toolbar");
 
   if (tabName === "smart") {
-    titleEl.textContent = "Smart AI & Dev Cleanup";
-    subEl.textContent = "Reclaim space from AI tools, package managers, browsers, and temp caches without touching personal files.";
+    titleEl.textContent = "Quick Safe Cleanup";
+    subEl.textContent = "Clean temporary files, browser caches, and leftover installers without touching your personal folders.";
     toolbarEl.classList.remove("hidden");
   } else {
-    titleEl.textContent = "Full-Drive Explorer";
-    subEl.textContent = "Scan any drive or folder, inspect charts and safety ratings, and pick items to keep or remove.";
+    titleEl.textContent = "Drive Scanner";
+    subEl.textContent = "Scan any drive or folder to see what takes up space, check safety levels, and choose what to keep or delete.";
     toolbarEl.classList.add("hidden");
   }
 }
@@ -559,7 +559,7 @@ async function loadSmartScan() {
 
     document.getElementById("smart-total-metric").textContent = res.total_human;
     document.getElementById("smart-rec-metric").textContent = res.recommended_human;
-    document.getElementById("smart-count-sub").textContent = `${res.count} cache locations found`;
+    document.getElementById("smart-count-sub").textContent = `${res.count} cleanup items found`;
     document.getElementById("nav-smart-badge").textContent = res.total_human;
 
     renderSmartBreakdown(res.total_human);
@@ -617,7 +617,7 @@ function renderSmartBreakdown(totalHuman) {
     valueLabel: formatBytes(bytes),
     color: GROUP_COLORS[grp] || "#64748b",
   }));
-  donutEl.innerHTML = buildSvgDonut(donutSegs, totalHuman || formatBytes(grandTotal), "Total Caches");
+  donutEl.innerHTML = buildSvgDonut(donutSegs, totalHuman || formatBytes(grandTotal), "Total Found");
 }
 
 function renderSmartGroups() {
@@ -700,7 +700,7 @@ function renderSmartGroups() {
         <div class="preset-right">
           <div class="row-hover-actions">
             ${item.is_docker_prune ? "" : `<button class="btn btn-soft btn-xs btn-keep-toggle">${excluded ? "Allow" : "Keep"}</button>`}
-            ${item.is_docker_prune ? "" : `<button class="btn btn-soft btn-xs btn-open">Reveal</button>`}
+            ${item.is_docker_prune ? "" : `<button class="btn btn-soft btn-xs btn-open">Open Folder</button>`}
           </div>
           <span class="muted small-text">${item.file_count ? `${item.file_count.toLocaleString()} files` : ""}</span>
           <span class="size-pill">${escapeHtml(item.size_human)}</span>
@@ -796,27 +796,27 @@ async function loadAnalytics() {
   document.getElementById("risk-cards-row").innerHTML = `
     <div class="risk-card">
       <div class="risk-card-title">
-        <span class="risk-card-label"><span class="risk-dot risk-dot-critical"></span>Critical (System Protected)</span>
+        <span class="risk-card-label"><span class="risk-dot risk-dot-critical"></span>System Files (Locked)</span>
         <span class="muted">${crit.percent}%</span>
       </div>
       <div class="risk-card-val">${escapeHtml(crit.size_human)}</div>
-      <div class="risk-card-desc">${crit.file_count.toLocaleString()} OS/system files locked against accidental deletion.</div>
+      <div class="risk-card-desc">${crit.file_count.toLocaleString()} Windows and program files locked so they cannot be deleted by mistake.</div>
     </div>
     <div class="risk-card">
       <div class="risk-card-title">
-        <span class="risk-card-label"><span class="risk-dot risk-dot-caution"></span>Caution (Ask Before Deleting)</span>
+        <span class="risk-card-label"><span class="risk-dot risk-dot-caution"></span>Important Files (Review First)</span>
         <span class="muted">${caut.percent}%</span>
       </div>
       <div class="risk-card-val">${escapeHtml(caut.size_human)}</div>
-      <div class="risk-card-desc">${caut.file_count.toLocaleString()} personal, database, repo, or executable files.</div>
+      <div class="risk-card-desc">${caut.file_count.toLocaleString()} personal, database, app, or project files. DriveSweep asks before cleaning.</div>
     </div>
     <div class="risk-card">
       <div class="risk-card-title">
-        <span class="risk-card-label"><span class="risk-dot risk-dot-safe"></span>Safe / Standard Files</span>
+        <span class="risk-card-label"><span class="risk-dot risk-dot-safe"></span>Standard Files</span>
         <span class="muted">${safe.percent}%</span>
       </div>
       <div class="risk-card-val">${escapeHtml(safe.size_human)}</div>
-      <div class="risk-card-desc">${safe.file_count.toLocaleString()} standard user or regenerable files.</div>
+      <div class="risk-card-desc">${safe.file_count.toLocaleString()} regular files and temporary caches you can safely review or remove.</div>
     </div>
   `;
 
@@ -860,7 +860,7 @@ async function loadAnalytics() {
   document.getElementById("category-chart-wrap").innerHTML = buildSvgDonut(
     catSegs,
     data.total_human || "0 B",
-    "Indexed"
+    "Total"
   );
 
   // Age Bar Chart
@@ -947,7 +947,7 @@ async function loadBrowseFolder() {
 
     const extraBadges = [
       excluded ? `<span class="badge badge-info">Always Keep</span>` : "",
-      item.is_dev_bloat ? `<span class="badge badge-info">Dev Bloat</span>` : "",
+      item.is_dev_bloat ? `<span class="badge badge-info">Project Cache</span>` : "",
     ]
       .filter(Boolean)
       .join(" ");
@@ -977,7 +977,7 @@ async function loadBrowseFolder() {
       <td class="col-actions">
         <div class="row-actions">
           ${item.is_protected ? "" : `<button class="btn btn-soft btn-xs btn-keep-toggle">${excluded ? "Allow" : "Keep"}</button>`}
-          <button class="btn btn-soft btn-xs btn-open">Reveal</button>
+          <button class="btn btn-soft btn-xs btn-open">Open Folder</button>
         </div>
       </td>
     `;
@@ -1047,7 +1047,7 @@ async function loadDevArtifacts() {
   const items = await api().get_dev_artifacts(200, state.devBloatMinAgeDays);
   const totalBytes = items.reduce((acc, i) => acc + Number(i.size_bytes || 0), 0);
   document.getElementById("devbloat-meta").textContent =
-    `${items.length} artifact folder(s) | ${formatBytes(totalBytes)}`;
+    `${items.length} project cache folder(s) | ${formatBytes(totalBytes)}`;
 
   const maxBytes = Math.max(1, ...items.map((it) => Number(it.size_bytes || 0)));
   const tbody = document.getElementById("devbloat-tbody");
@@ -1081,7 +1081,7 @@ async function loadDevArtifacts() {
       <td class="col-actions">
         <div class="row-actions">
           <button class="btn btn-soft btn-xs btn-keep-toggle">${excluded ? "Allow" : "Keep"}</button>
-          <button class="btn btn-soft btn-xs btn-open">Reveal</button>
+          <button class="btn btn-soft btn-xs btn-open">Open Folder</button>
         </div>
       </td>
     `;
@@ -1139,7 +1139,7 @@ function renderFileRows(tbody, items) {
       <td class="col-actions">
         <div class="row-actions">
           ${item.is_protected ? "" : `<button class="btn btn-soft btn-xs btn-keep-toggle">${excluded ? "Allow" : "Keep"}</button>`}
-          <button class="btn btn-soft btn-xs btn-open">Reveal</button>
+          <button class="btn btn-soft btn-xs btn-open">Open Folder</button>
         </div>
       </td>
     `;

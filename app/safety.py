@@ -118,13 +118,31 @@ def is_os_protected_path(raw_path: str | Path, *, allow_temp_contents: bool = Fa
 
     if os.name == "nt":
         windir = Path(os.environ.get("WINDIR", "C:\\Windows"))
-        win_temp = _normalize(windir / "Temp")
+        program_data = Path(os.environ.get("ProgramData", os.path.join(os.environ.get("SystemDrive", "C:") + "\\", "ProgramData")))
+        safe_system_caches = (
+            _normalize(windir / "Temp"),
+            _normalize(windir / "SoftwareDistribution" / "Download"),
+            _normalize(
+                windir
+                / "ServiceProfiles"
+                / "NetworkService"
+                / "AppData"
+                / "Local"
+                / "Microsoft"
+                / "Windows"
+                / "DeliveryOptimization"
+                / "Cache"
+            ),
+            _normalize(program_data / "Microsoft" / "Windows" / "WER" / "ReportArchive"),
+            _normalize(program_data / "Microsoft" / "Windows" / "WER" / "ReportQueue"),
+        )
 
-        # Allow cleaning items *inside* C:\Windows\Temp (or the Temp container when contents_only=True)
-        if allow_temp_contents and p == win_temp:
-            return False
-        if _is_same_or_child(p, win_temp) and p != win_temp:
-            return False
+        # Allow cleaning items *inside* safe Windows cache/temp folders (or the folder when contents_only=True)
+        for cache_root in safe_system_caches:
+            if allow_temp_contents and p == cache_root:
+                return False
+            if _is_same_or_child(p, cache_root) and p != cache_root:
+                return False
 
         # Protected drive-root system entries on any drive
         name_lower = p.name.lower()
