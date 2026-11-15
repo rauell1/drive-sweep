@@ -450,3 +450,116 @@ def test_large_spaces_and_redirected_downloads_selection(tmp_path: Path, monkeyp
     assert Path(old_info["items"][0]["path"]) == old_msi
     # Known folder lookup helper resolves valid Path or None without crashing
     assert isinstance(get_known_folder_path("downloads"), Path)
+
+
+def test_ntfs_fragmented_mft_attribute_list_and_4kn_stride():
+    # Native 4Kn boot sector (bytes_per_sector=4096, sectors_per_cluster=1, cluster_size=4096)
+    boot = bytearray(512)
+    boot[3:11] = b"NTFS    "
+    struct.pack_into("<H", boot, 0x0B, 4096)
+    boot[0x0D] = 1
+    struct.pack_into("<Q", boot, 0x30, 100)  # $MFT LCN 100
+    struct.pack_into("<b", boot, 0x40, -10)  # 1024-byte MFT records
+
+    geom = parse_ntfs_boot_sector(bytes(boot))
+    assert geom is not None
+    assert geom.bytes_per_sector == 4096
+    rsize = geom.mft_record_size
+
+    def stamp_usa_512(rec: bytearray, seq: int = 3) -> bytes:
+        usa_off = 48
+        struct.pack_into("<HH", rec, 4, usa_off, 3)  # 2x 512-byte strides
+        struct.pack_into("<H", rec, usa_off, seq)
+        struct.pack_into("<H", rec, usa_off + 2, struct.unpack_from("<H", rec, 510)[0])
+        struct.pack_into("<H", rec, usa_off + 4, struct.unpack_from("<H", rec, 1022)[0])
+        struct.pack_into("<H", rec, 510, seq)
+        struct.pack_into("<H", rec, 1022, seq)
+        return bytes(rec)
+
+    empty = bytes(rsize)
+    rec5 = _build_file_record(rsize, 5, 5, ".", is_dir=True)
+    rec16 = _build_file_record(rsize, 16, 5, "CacheDir", is_dir=True)
+    rec17 = _build_file_record(rsize, 17, 16, "big.bin", is_dir=False, data_size=8192)
+
+    # Record 15 = extension MFT record carrying overflow $DATA extent starting at VCN 4 (LCN 200, 1 cluster)
+    ext15 = bytearray(rsize)
+    ext15[0:4] = b"FILE"
+    struct.pack_into("<H", ext15, 0x14, 56)
+    struct.pack_into("<H", ext15, 0x16, 0x0001)
+    struct.pack_into("<Q", ext15, 0x20, 0x0001000000000000)  # base record = 0 (non-zero ref -> extension)
+    struct.pack_into("<I", ext15, 0x2C, 15)
+    ext_run = bytes([0x21, 0x01, 0xC8, 0x00, 0x00])  # LCN 200 (0x00C8), len 1 cluster
+    struct.pack_into("<II", ext15, 56, 0x80, 72)
+    ext15[56 + 8] = 1
+    struct.pack_into("<Q", ext15, 56 + 16, 4)  # lowest_vcn = 4
+    struct.pack_into("<q", ext15, 56 + 24, 4)  # highest_vcn = 4
+    struct.pack_into("<H", ext15, 56 + 32, 64)
+    ext15[56 + 64 : 56 + 64 + len(ext_run)] = ext_run
+    struct.pack_into("<I", ext15, 56 + 72, 0xFFFFFFFF)
+    rec15 = stamp_usa_512(ext15)
+
+    # Record 0 = base record with $ATTRIBUTE_LIST (0x20) + VCN 0..3 $DATA extent (LCN 100, 4 clusters -> records 0..15)
+    rec0 = bytearray(_build_file_record(rsize, 0, 5, "$MFT", is_dir=False))
+    # Insert 0x20 + 0x80 right before 0xFFFFFFFF terminator
+    off = rec0.index(b"\xFF\xFF\xFF\xFF")
+    al_entry_size = 32
+    al_payload = bytearray()
+    for low_vcn, target_idx in [(0, 0), (4, 15)]:
+        ent = bytearray(al_entry_size)
+        struct.pack_into("<IHBB", ent, 0, 0x80, al_entry_size, 0, 0)
+        struct.pack_into("<Q", ent, 8, low_vcn)
+        struct.pack_into("<Q", ent, 16, target_idx)
+        al_payload.extend(ent)
+
+    al_attr_len = 24 + len(al_payload)
+    struct.pack_into("<II", rec0, off, 0x20, al_attr_len)
+    rec0[off + 8] = 0
+    struct.pack_into("<I", rec0, off + 16, len(al_payload))
+    struct.pack_into("<H", rec0, off + 20, 24)
+    rec0[off + 24 : off + 24 + len(al_payload)] = al_payload
+    off += al_attr_len
+
+    vcn0_run = bytes([0x11, 0x04, 0x64, 0x00])  # LCN 100, len 4 clusters (records 0..15)
+    struct.pack_into("<II", rec0, off, 0x80, 72)
+    rec0[off + 8] = 1
+    struct.pack_into("<Q", rec0, off + 16, 0)  # lowest_vcn = 0
+    struct.pack_into("<q", rec0, off + 24, 3)  # highest_vcn = 3
+    struct.pack_into("<H", rec0, off + 32, 64)
+    struct.pack_into("<Q", rec0, off + 48, 20 * rsize)  # total $MFT size
+    rec0[off + 64 : off + 64 + len(vcn0_run)] = vcn0_run
+    struct.pack_into("<I", rec0, off + 72, 0xFFFFFFFF)
+    rec0_bytes = stamp_usa_512(rec0)
+
+    # First extent at LCN 100 (clusters 100..103 -> 16 records: 0..15)
+    ext0_blob = rec0_bytes + (empty * 4) + rec5 + (empty * 9) + rec15
+    assert len(ext0_blob) == 16 * rsize
+    # Second fragmented extent at LCN 200 (cluster 200 -> 4 records: 16..19)
+    ext1_blob = rec16 + rec17 + (empty * 2)
+    assert len(ext1_blob) == 4 * rsize
+
+    def read_frag(offset: int, length: int) -> bytes:
+        if offset == 0:
+            return bytes(boot) + b"\x00" * max(0, length - 512)
+        c100_start = 100 * geom.cluster_size
+        c200_start = 200 * geom.cluster_size
+        if c100_start <= offset < c100_start + len(ext0_blob):
+            rel = offset - c100_start
+            return (ext0_blob[rel : rel + length]).ljust(length, b"\x00")
+        if c200_start <= offset < c200_start + len(ext1_blob):
+            rel = offset - c200_start
+            return (ext1_blob[rel : rel + length]).ljust(length, b"\x00")
+        return b"\x00" * length
+
+    res = scan_ntfs_mft_with_reader(
+        "X:\\",
+        read_frag,
+        guard=ScanGuard(),
+        dev_bloat_names=DEV_BLOAT_NAMES,
+        dir_node_cls=DirNode,
+    )
+    assert res is not None
+    nodes, _dev_paths, files_scanned, dirs_scanned, total_bytes = res
+    assert dirs_scanned == 2
+    assert files_scanned == 1
+    assert total_bytes == 8192
+    assert nodes["X:\\CacheDir"].files[0][0] == "big.bin"

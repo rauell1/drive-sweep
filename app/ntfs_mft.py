@@ -105,12 +105,16 @@ def apply_usa_fixup(record: bytearray, sector_size: int) -> bool:
     usa_cnt = struct.unpack_from("<H", record, 6)[0]
     if usa_cnt < 2 or usa_off + usa_cnt * 2 > len(record):
         return False
-    expected_sectors = len(record) // sector_size
-    if usa_cnt - 1 != expected_sectors:
+    # NTFS Update Sequence Arrays always step by 512 bytes, even on 4Kn volumes.
+    if len(record) // 512 == usa_cnt - 1:
+        stride = 512
+    elif sector_size > 0 and len(record) // sector_size == usa_cnt - 1:
+        stride = sector_size
+    else:
         return False
     usn = record[usa_off : usa_off + 2]
     for s_idx in range(1, usa_cnt):
-        end_pos = s_idx * sector_size - 2
+        end_pos = s_idx * stride - 2
         if end_pos + 2 > len(record):
             return False
         if record[end_pos : end_pos + 2] != usn:
@@ -126,34 +130,198 @@ def _filetime_to_unix(ft: int) -> float:
     return (ft - _FILETIME_EPOCH_DIFF) / 10_000_000.0
 
 
-def _parse_mft_runs_from_record0(rec0: bytearray, sector_size: int) -> tuple[int, list[tuple[int, int]]] | None:
-    """Extract total $MFT size and cluster runs from record 0."""
-    if not apply_usa_fixup(rec0, sector_size):
-        return None
-    attr_off = struct.unpack_from("<H", rec0, 0x14)[0]
-    rec_len = len(rec0)
+def _read_clusters_to_bytes(
+    runs: list[tuple[int, int]],
+    total_size: int,
+    cluster_size: int,
+    read_at: Callable[[int, int], bytes],
+) -> bytes:
+    """Read a non-resident attribute payload from decoded NTFS cluster runs."""
+    out = bytearray()
+    remaining = max(0, total_size)
+    for start_lcn, cluster_cnt in runs:
+        if remaining <= 0:
+            break
+        take = min(remaining, cluster_cnt * cluster_size)
+        if start_lcn < 0:
+            out.extend(b"\x00" * take)
+        else:
+            chunk = read_at(start_lcn * cluster_size, take)
+            if not chunk:
+                break
+            out.extend(chunk[:take])
+        remaining -= take
+    return bytes(out)
+
+
+def _read_mft_record_via_extents(
+    mft_idx: int,
+    extent_chunks: dict[int, list[tuple[int, int]]],
+    geom: NtfsVolumeGeometry,
+    read_at: Callable[[int, int], bytes],
+) -> bytes:
+    """Locate and read one MFT record using known $MFT data extents (or boot MFT LCN)."""
+    target_off = mft_idx * geom.mft_record_size
+    for lowest_vcn in sorted(extent_chunks.keys()):
+        cur_byte = lowest_vcn * geom.cluster_size
+        for start_lcn, cluster_cnt in extent_chunks[lowest_vcn]:
+            run_bytes = cluster_cnt * geom.cluster_size
+            if cur_byte <= target_off < cur_byte + run_bytes:
+                if start_lcn < 0:
+                    return b""
+                disk_off = start_lcn * geom.cluster_size + (target_off - cur_byte)
+                return read_at(disk_off, geom.mft_record_size)
+            cur_byte += run_bytes
+    fallback_off = geom.mft_lcn * geom.cluster_size + target_off
+    return read_at(fallback_off, geom.mft_record_size)
+
+
+def _extract_nonres_data_extents(
+    rec: bytearray,
+) -> tuple[list[tuple[int, int | None, list[tuple[int, int]]]], bytes | None, str]:
+    """Scan one fixup-applied MFT record for unnamed $DATA (0x80) and $ATTRIBUTE_LIST (0x20)."""
+    rec_len = len(rec)
+    attr_off = struct.unpack_from("<H", rec, 0x14)[0]
+    if attr_off < 48 or attr_off >= rec_len:
+        return [], None, "invalid attribute offset"
+    extents: list[tuple[int, int | None, list[tuple[int, int]]]] = []
+    attr_list_raw: tuple[int, int, int, int] | None = None
+    attr_list_res: bytes | None = None
     while attr_off + 8 <= rec_len:
-        a_type = struct.unpack_from("<I", rec0, attr_off)[0]
+        a_type = struct.unpack_from("<I", rec, attr_off)[0]
         if a_type == 0xFFFFFFFF:
             break
-        a_len = struct.unpack_from("<I", rec0, attr_off + 4)[0]
+        a_len = struct.unpack_from("<I", rec, attr_off + 4)[0]
         if a_len < 16 or attr_off + a_len > rec_len:
-            return None
+            return [], None, "corrupt attribute length"
+        non_res = rec[attr_off + 8]
+        name_len = rec[attr_off + 9]
         if a_type == 0x20:
-            # $ATTRIBUTE_LIST spans multiple MFT records; let standard scanner handle safely
-            return None
-        if a_type == 0x80 and rec0[attr_off + 9] == 0:
-            non_res = rec0[attr_off + 8]
-            if non_res != 1 or attr_off + 56 > rec_len:
-                return None
-            run_off = struct.unpack_from("<H", rec0, attr_off + 32)[0]
-            real_size = struct.unpack_from("<Q", rec0, attr_off + 48)[0]
-            runs = decode_data_runs(bytes(rec0[attr_off + run_off : attr_off + a_len]))
+            if non_res == 0 and attr_off + 24 <= attr_off + a_len:
+                val_len = struct.unpack_from("<I", rec, attr_off + 16)[0]
+                val_off = struct.unpack_from("<H", rec, attr_off + 20)[0]
+                if val_off >= 24 and attr_off + val_off + val_len <= attr_off + a_len:
+                    attr_list_res = bytes(rec[attr_off + val_off : attr_off + val_off + val_len])
+            elif non_res == 1 and attr_off + 56 <= attr_off + a_len:
+                attr_list_raw = (attr_off, a_len, 1, 0)
+        elif a_type == 0x80 and name_len == 0:
+            if non_res != 1 or attr_off + 56 > attr_off + a_len:
+                return [], None, "resident or truncated $MFT $DATA"
+            ext_low_vcn = struct.unpack_from("<Q", rec, attr_off + 16)[0]
+            run_off = struct.unpack_from("<H", rec, attr_off + 32)[0]
+            if run_off < 40 or attr_off + run_off >= attr_off + a_len:
+                return [], None, "invalid $DATA run offset"
+            runs = decode_data_runs(bytes(rec[attr_off + run_off : attr_off + a_len]))
             if not runs:
-                return None
-            return real_size, runs
+                return [], None, "failed decoding $MFT data runs"
+            real_size = struct.unpack_from("<Q", rec, attr_off + 48)[0] if ext_low_vcn == 0 else None
+            extents.append((ext_low_vcn, real_size, runs))
         attr_off += a_len
-    return None
+    if attr_list_res is not None:
+        return extents, attr_list_res, ""
+    if attr_list_raw is not None:
+        return extents, b"__NONRES__" + bytes(rec[attr_list_raw[0] : attr_list_raw[0] + attr_list_raw[1]]), ""
+    return extents, None, ""
+
+
+def _parse_attribute_list_data_refs(attr_list_bytes: bytes) -> list[tuple[int, int]]:
+    """Return sorted (lowest_vcn, mft_record_index) pairs for unnamed $DATA entries."""
+    refs: list[tuple[int, int]] = []
+    pos = 0
+    total = len(attr_list_bytes)
+    while pos + 26 <= total:
+        e_type, e_len, e_name_len = struct.unpack_from("<IHB", attr_list_bytes, pos)
+        if e_len < 26 or pos + e_len > total:
+            break
+        if e_type == 0x80 and e_name_len == 0:
+            e_low_vcn = struct.unpack_from("<Q", attr_list_bytes, pos + 8)[0]
+            e_mft_idx = struct.unpack_from("<Q", attr_list_bytes, pos + 16)[0] & 0x0000FFFFFFFFFFFF
+            refs.append((e_low_vcn, e_mft_idx))
+        pos += e_len
+    refs.sort(key=lambda item: (item[0], item[1]))
+    return refs
+
+
+def _resolve_mft_data_runs(
+    rec0: bytearray,
+    geom: NtfsVolumeGeometry,
+    read_at: Callable[[int, int], bytes],
+) -> tuple[tuple[int, list[tuple[int, int]]] | None, str]:
+    """Extract total $MFT size and ordered cluster runs from record 0 (and $ATTRIBUTE_LIST extensions)."""
+    if not apply_usa_fixup(rec0, geom.bytes_per_sector):
+        return None, "record 0 USA fixup failed"
+
+    base_extents, attr_list_blob, err = _extract_nonres_data_extents(rec0)
+    if err:
+        return None, err
+
+    extent_chunks: dict[int, list[tuple[int, int]]] = {}
+    real_size: int | None = None
+    for low_vcn, rsize, runs in base_extents:
+        extent_chunks[low_vcn] = runs
+        if rsize is not None:
+            real_size = rsize
+
+    if attr_list_blob is not None:
+        if attr_list_blob.startswith(b"__NONRES__"):
+            raw_attr = attr_list_blob[10:]
+            if len(raw_attr) < 56:
+                return None, "truncated non-resident $ATTRIBUTE_LIST"
+            run_off = struct.unpack_from("<H", raw_attr, 32)[0]
+            al_size = struct.unpack_from("<Q", raw_attr, 48)[0]
+            if run_off >= len(raw_attr):
+                return None, "invalid non-resident $ATTRIBUTE_LIST run offset"
+            al_runs = decode_data_runs(raw_attr[run_off:])
+            if not al_runs:
+                return None, "failed decoding non-resident $ATTRIBUTE_LIST runs"
+            attr_list_bytes = _read_clusters_to_bytes(al_runs, al_size, geom.cluster_size, read_at)
+        else:
+            attr_list_bytes = attr_list_blob
+
+        refs = _parse_attribute_list_data_refs(attr_list_bytes)
+        seen_recs: set[int] = {0}
+        for _low_vcn, ext_idx in refs:
+            if ext_idx in seen_recs:
+                continue
+            seen_recs.add(ext_idx)
+            ext_raw = _read_mft_record_via_extents(ext_idx, extent_chunks, geom, read_at)
+            if len(ext_raw) < geom.mft_record_size:
+                return None, f"extension record {ext_idx} short read ({len(ext_raw)} bytes)"
+            ext_rec = bytearray(ext_raw[: geom.mft_record_size])
+            if not apply_usa_fixup(ext_rec, geom.bytes_per_sector):
+                return None, f"extension record {ext_idx} USA fixup failed"
+            ext_extents, _sub_al, ext_err = _extract_nonres_data_extents(ext_rec)
+            if ext_err:
+                return None, f"extension record {ext_idx}: {ext_err}"
+            for e_low, e_rsize, e_runs in ext_extents:
+                if e_low not in extent_chunks:
+                    extent_chunks[e_low] = e_runs
+                if e_rsize is not None and real_size is None:
+                    real_size = e_rsize
+
+    if not extent_chunks or real_size is None or real_size <= 0:
+        return None, "no valid $MFT $DATA extents found"
+
+    merged_runs: list[tuple[int, int]] = []
+    for low_vcn in sorted(extent_chunks.keys()):
+        merged_runs.extend(extent_chunks[low_vcn])
+    return (real_size, merged_runs), ""
+
+
+def _parse_mft_runs_from_record0(rec0: bytearray, sector_size: int) -> tuple[int, list[tuple[int, int]]] | None:
+    """Extract total $MFT size and cluster runs from record 0 when contiguous in record 0."""
+    if not apply_usa_fixup(rec0, sector_size):
+        return None
+    extents, attr_list_blob, err = _extract_nonres_data_extents(rec0)
+    if err or attr_list_blob is not None or not extents:
+        return None
+    real_size = next((r for _l, r, _runs in extents if r is not None), None)
+    if real_size is None:
+        return None
+    merged: list[tuple[int, int]] = []
+    for _l, _r, runs in sorted(extents, key=lambda item: item[0]):
+        merged.extend(runs)
+    return real_size, merged
 
 
 @dataclass
@@ -264,12 +432,30 @@ def scan_ntfs_mft_with_reader(
     boot_buf = read_at(0, 4096)
     geom = parse_ntfs_boot_sector(boot_buf[:512])
     if geom is None:
+        _log.info("NTFS $MFT boot sector invalid or unreadable (read %d bytes)", len(boot_buf))
         return None
 
     mft_byte_offset = geom.mft_lcn * geom.cluster_size
-    rec0 = bytearray(read_at(mft_byte_offset, geom.mft_record_size))
-    runs_info = _parse_mft_runs_from_record0(rec0, geom.bytes_per_sector)
+    rec0_raw = read_at(mft_byte_offset, geom.mft_record_size)
+    if len(rec0_raw) < geom.mft_record_size:
+        _log.info(
+            "NTFS $MFT record 0 short read (%d < %d bytes at LCN %d)",
+            len(rec0_raw),
+            geom.mft_record_size,
+            geom.mft_lcn,
+        )
+        return None
+
+    rec0 = bytearray(rec0_raw[: geom.mft_record_size])
+    runs_info, fail_reason = _resolve_mft_data_runs(rec0, geom, read_at)
     if runs_info is None:
+        _log.info(
+            "NTFS $MFT record 0 resolve failed: %s (bps=%d spc=%d rec=%d)",
+            fail_reason,
+            geom.bytes_per_sector,
+            geom.sectors_per_cluster,
+            geom.mft_record_size,
+        )
         return None
 
     total_mft_bytes, runs = runs_info
@@ -312,6 +498,7 @@ def scan_ntfs_mft_with_reader(
                 progress_cb(len(records), 0, 0, f"Reading NTFS table ({len(records):,} entries)...")
 
     if _ROOT_MFT_INDEX not in records:
+        _log.info("NTFS $MFT root directory record #5 missing (parsed %d records across %d runs)", len(records), len(runs))
         return None
 
     norm_root = os.path.normpath(root_path)

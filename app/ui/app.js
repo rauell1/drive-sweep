@@ -17,7 +17,7 @@ const ICON_MOON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" s
 const state = {
   theme: "dark",
   language: "en",
-  version: "0.3.8",
+  version: "0.3.9",
   activeTab: "smart",
   dataDir: "",
   installKind: "source",
@@ -421,8 +421,29 @@ async function openExclusionsModal() {
   showModal(
     `Always Keep List (${list.length})`,
     `<p class="muted small-text">Paths listed here stay unchecked during Smart Scans and are marked "Always Keep" across DriveSweep.</p>
-     <div class="review-list">${rows || "<p class='muted'>No excluded paths yet. Click 'Keep' on any folder or cache to protect it.</p>"}</div>`,
-    [{ text: "Close", cls: "btn-primary", onClick: closeModal }]
+     <div class="review-list">${rows || "<p class='muted'>No excluded paths yet. Click '+ Add Folder...' below, or click 'Keep' on any folder or cache row to protect it.</p>"}</div>`,
+    [
+      {
+        text: "+ Add Folder...",
+        cls: "btn-soft",
+        id: "btn-add-exclusion-folder",
+        onClick: async () => {
+          const folder = await api().pick_folder();
+          if (!folder) return;
+          const updated = await api().add_exclusion(folder);
+          updateHeaderCounts(updated);
+          await loadSmartScan();
+          if (state.largeData) {
+            renderLargeSpacesTable();
+          }
+          if (state.currentBrowse && typeof renderFoldersView === "function") {
+            renderFoldersView();
+          }
+          await openExclusionsModal();
+        },
+      },
+      { text: "Close", cls: "btn-primary", onClick: closeModal },
+    ]
   );
 
   document.querySelectorAll(".btn-remove-ex").forEach((btn) => {
@@ -433,7 +454,10 @@ async function openExclusionsModal() {
       if (state.largeData) {
         renderLargeSpacesTable();
       }
-      openExclusionsModal();
+      if (state.currentBrowse && typeof renderFoldersView === "function") {
+        renderFoldersView();
+      }
+      await openExclusionsModal();
     });
   });
 }

@@ -361,6 +361,15 @@ sandbox.window.pywebview = {{
         if (prop === "get_reminder_status") {{
           return {{ enabled: false, frequency: "weekly", threshold_pct: 15, task: {{ installed: false }} }};
         }}
+        if (prop === "get_exclusions") {{
+          return ["C:\\\\Protected"];
+        }}
+        if (prop === "pick_folder") {{
+          return "D:\\\\KeepMe";
+        }}
+        if (prop === "add_exclusion") {{
+          return ["C:\\\\Protected", "D:\\\\KeepMe"];
+        }}
         return {{ ok: true, alerts: {{ has_alerts: false, alerts: [] }} }};
       }};
     }},
@@ -408,6 +417,9 @@ for (const lang of ["en", "es", "fr", "de", "pt"]) {{
   assert(elementMap.get("modal-title").textContent.includes("Windows Space"), "Windows Tools modal failed");
   await sandbox.openUpdatesPrivacyModal(false);
   assert(elementMap.get("modal-title").textContent.length > 0);
+  await sandbox.openExclusionsModal();
+  assert(elementMap.get("modal-title").textContent.includes("Always Keep List"));
+  assert(elementMap.get("modal-footer").children.some((b) => String(b.textContent).includes("Add Folder")));
   console.log("UI_HARNESS_OK");
 }})().catch((e) => {{
   console.error(e);

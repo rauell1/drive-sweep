@@ -16,7 +16,7 @@ Choose **Option A** (standard Windows installer, recommended for most users) or 
 ### Option A: Windows Installer (Recommended)
 
 1. Open the **[GitHub Releases](https://github.com/rauell1/drive-sweep/releases)** page.
-2. Under the latest release (**Assets** section at the bottom), click **`DriveSweep-Setup-0.3.8.exe`** (or the newest version listed) to download it.
+2. Under the latest release (**Assets** section at the bottom), click **`DriveSweep-Setup-0.3.9.exe`** (or the newest version listed) to download it.
 3. Open your `Downloads` folder and double-click the downloaded `DriveSweep-Setup-...exe` file.
 4. **If Windows shows a "Windows protected your PC" (SmartScreen) blue popup:**
    - This appears on new open-source Windows apps until code signing is complete. You can verify the file checksum against `SHA256SUMS.txt` on the Releases page if you wish.
@@ -60,7 +60,7 @@ Click **Windows Tools** on the left sidebar to inspect and reclaim space across:
 - **Hibernation & Virtual Disks:** View `hiberfil.sys` size and locate large WSL2 / Docker `.vhdx` virtual disks.
 
 ### 4. Always Keep, Cleanup Log & Scheduled Low-Disk Reminders
-- **Always Keep:** Any folder or file you mark **Keep** is protected from deletion across Quick Clean, Drive Scanner, and Duplicates. You can remove it from this list later if you change your mind.
+- **Always Keep:** Protect any folder or file from deletion across Quick Clean, Large Files & Folders, Drive Scanner, and Duplicates by clicking **Keep** on any row, or by opening **Always Keep** in the sidebar and clicking **+ Add Folder...**. You can remove protected paths from this list anytime.
 - **Cleanup Log:** Shows a local record of past cleanups on your PC and includes an **Open Recycle Bin** button for quick restoration.
 - **Settings & Updates:** Switch UI language (`English`, `Espanol`, `Francais`, `Deutsch`, `Portugues`), configure an optional Windows Task Scheduler low-disk space reminder, verify local storage privacy, and check or install updates via GitHub Releases Setup.
 
