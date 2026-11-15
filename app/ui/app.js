@@ -17,7 +17,7 @@ const ICON_MOON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" s
 const state = {
   theme: "dark",
   language: "en",
-  version: "0.3.0",
+  version: "0.3.1",
   dataDir: "",
   installKind: "source",
   autoCheckUpdates: true,
@@ -111,15 +111,23 @@ function selectionKey(path, contentsOnly = false) {
   return `${contentsOnly ? "C:" : "F:"}${path.toLowerCase()}`;
 }
 
+function tr(key, fallback) {
+  if (window.DriveSweepI18n && typeof window.DriveSweepI18n.t === "function") {
+    const val = window.DriveSweepI18n.t(key);
+    if (val && val !== key) return val;
+  }
+  return fallback || key;
+}
+
 function renderRiskBadge(riskLevel, riskReason) {
   const titleAttr = riskReason ? `title="${escapeHtml(riskReason)}"` : "";
   if (riskLevel === "critical") {
-    return `<span class="badge badge-danger" ${titleAttr}>Critical</span>`;
+    return `<span class="badge badge-danger" ${titleAttr}>${escapeHtml(tr("badge_critical", "System"))}</span>`;
   }
   if (riskLevel === "caution") {
-    return `<span class="badge badge-warn" ${titleAttr}>Caution</span>`;
+    return `<span class="badge badge-warn" ${titleAttr}>${escapeHtml(tr("badge_caution", "Caution"))}</span>`;
   }
-  return `<span class="badge badge-good" ${titleAttr}>Safe</span>`;
+  return `<span class="badge badge-good" ${titleAttr}>${escapeHtml(tr("badge_safe", "Safe"))}</span>`;
 }
 
 function buildSvgDonut(segments, centerTop, centerBottom, activeLabel = null, clickable = false) {
@@ -217,7 +225,7 @@ function updateSelectionBar() {
   });
 
   const cleanBtn = document.getElementById("btn-clean-now");
-  cleanBtn.textContent = count > 0 ? `Clean ${sizeStr}` : "Clean Selected";
+  cleanBtn.textContent = count > 0 ? `Clean ${sizeStr}` : tr("clean_selected", "Clean Selected");
   cleanBtn.disabled = count === 0;
 
   const dedupNote = document.getElementById("dedup-note");
@@ -418,7 +426,7 @@ async function openHistoryModal() {
     `<div class="review-list">${rows || "<p class='muted'>No cleanup runs recorded yet.</p>"}</div>`,
     [
       {
-        text: "Open Recycle Bin",
+        text: tr("open_recycle_bin", "Open Recycle Bin"),
         cls: "btn-soft",
         onClick: async () => {
           await api().open_recycle_bin();
@@ -526,6 +534,14 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
         <span class="toggle-slider"></span>
       </label>
     </label>
+
+    <div class="settings-section">
+      <h4>Diagnostics &amp; Crash Log</h4>
+      <div class="settings-row">
+        <div class="muted small-text">Version v${escapeHtml(state.version)} | ${escapeHtml(state.osName)} | ${state.isAdmin ? "Administrator" : "Standard Mode"}</div>
+        <button id="btn-open-diag-log" class="btn btn-soft btn-xs">${escapeHtml(tr("view_log_file", "Open Diagnostics Log"))}</button>
+      </div>
+    </div>
 
     <div id="update-status-panel" class="summary-strip">${statusHtml}</div>
   `;
@@ -682,12 +698,13 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
   };
 
   modalToken = showModal(
-    "Settings, Schedule & Updates",
+    tr("settings_modal_title", "Settings, Schedule & Updates"),
     renderBody(formatUpdatePanel(state.latestUpdateInfo)),
     buildFooterButtons()
   );
 
   document.getElementById("btn-open-data-dir")?.addEventListener("click", () => api().open_data_dir());
+  document.getElementById("btn-open-diag-log")?.addEventListener("click", () => api().open_log_file());
   document.getElementById("chk-auto-updates")?.addEventListener("change", async (e) => {
     state.autoCheckUpdates = !!e.target.checked;
     await api().set_auto_check_updates(state.autoCheckUpdates);
@@ -699,6 +716,11 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
     if (window.DriveSweepI18n) {
       window.DriveSweepI18n.setLanguage(lang);
     }
+    const activeTabBtn = document.querySelector(".nav-item.active[data-tab]");
+    if (activeTabBtn) switchTab(activeTabBtn.dataset.tab);
+    updateSelectionBar();
+    renderSmartGroups();
+    if (state.dupResult) renderDuplicateResults();
   });
   document.getElementById("btn-save-reminder")?.addEventListener("click", async () => {
     const enabled = !!document.getElementById("chk-reminder-enabled")?.checked;
@@ -1200,9 +1222,9 @@ function renderSmartGroups() {
         </div>
         <div class="preset-right">
           <div class="row-hover-actions">
-            ${item.is_custom ? `<button class="btn btn-soft btn-xs btn-remove-custom" data-id="${escapeHtml(item.id)}">Remove</button>` : ""}
-            ${item.is_docker_prune ? "" : `<button class="btn btn-soft btn-xs btn-keep-toggle">${excluded ? "Allow" : "Keep"}</button>`}
-            ${item.is_docker_prune ? "" : `<button class="btn btn-soft btn-xs btn-open">Open Folder</button>`}
+            ${item.is_custom ? `<button class="btn btn-soft btn-xs btn-remove-custom" data-id="${escapeHtml(item.id)}">${escapeHtml(tr("remove", "Remove"))}</button>` : ""}
+            ${item.is_docker_prune ? "" : `<button class="btn btn-soft btn-xs btn-keep-toggle">${excluded ? escapeHtml(tr("allow", "Allow")) : escapeHtml(tr("keep", "Keep"))}</button>`}
+            ${item.is_docker_prune ? "" : `<button class="btn btn-soft btn-xs btn-open">${escapeHtml(tr("open_folder", "Open Folder"))}</button>`}
           </div>
           <span class="muted small-text row-file-count">${item.file_count ? `${item.file_count.toLocaleString()} files` : "-"}</span>
           <span class="size-pill">${escapeHtml(item.size_human)}</span>
@@ -1357,8 +1379,8 @@ async function loadTreemap(targetPath) {
     <div class="breadcrumbs">${crumbsHtml}</div>
     <div style="display:flex;gap:6px;align-items:center;">
       <span class="muted small-text">${escapeHtml(data.total_human || "0 B")}</span>
-      <button id="btn-treemap-up" class="btn btn-soft btn-xs" ${parentPath ? "" : "disabled"}>Up One Level</button>
-      <button id="btn-treemap-browse" class="btn btn-soft btn-xs">Open in Folders</button>
+      <button id="btn-treemap-up" class="btn btn-soft btn-xs" ${parentPath ? "" : "disabled"}>${escapeHtml(tr("treemap_up", "Up One Level"))}</button>
+      <button id="btn-treemap-browse" class="btn btn-soft btn-xs">${escapeHtml(tr("treemap_open_folders", "Open in Folders"))}</button>
     </div>
   `;
 
@@ -1423,7 +1445,7 @@ async function loadAnalytics() {
   document.getElementById("risk-cards-row").innerHTML = `
     <div class="risk-card">
       <div class="risk-card-title">
-        <span class="risk-card-label"><span class="risk-dot risk-dot-critical"></span>System Files (Locked)</span>
+        <span class="risk-card-label"><span class="risk-dot risk-dot-critical"></span>${escapeHtml(tr("risk_sys_title", "System Files (Locked)"))}</span>
         <span class="muted">${crit.percent}%</span>
       </div>
       <div class="risk-card-val">${escapeHtml(crit.size_human)}</div>
@@ -1431,7 +1453,7 @@ async function loadAnalytics() {
     </div>
     <div class="risk-card">
       <div class="risk-card-title">
-        <span class="risk-card-label"><span class="risk-dot risk-dot-caution"></span>Important Files (Review First)</span>
+        <span class="risk-card-label"><span class="risk-dot risk-dot-caution"></span>${escapeHtml(tr("risk_imp_title", "Important Files (Review First)"))}</span>
         <span class="muted">${caut.percent}%</span>
       </div>
       <div class="risk-card-val">${escapeHtml(caut.size_human)}</div>
@@ -1439,7 +1461,7 @@ async function loadAnalytics() {
     </div>
     <div class="risk-card">
       <div class="risk-card-title">
-        <span class="risk-card-label"><span class="risk-dot risk-dot-safe"></span>Standard Files</span>
+        <span class="risk-card-label"><span class="risk-dot risk-dot-safe"></span>${escapeHtml(tr("risk_std_title", "Standard Files"))}</span>
         <span class="muted">${safe.percent}%</span>
       </div>
       <div class="risk-card-val">${escapeHtml(safe.size_human)}</div>
@@ -2420,13 +2442,13 @@ function renderDuplicateResults() {
         <div class="preset-main">
           <div class="preset-title-line">
             <span class="preset-title">${escapeHtml(copy.name)}</span>
-            ${copy.keep_recommended ? `<span class="badge badge-good">Keep Original</span>` : `<span class="badge badge-warn">Extra Copy</span>`}
+            ${copy.keep_recommended ? `<span class="badge badge-good">${escapeHtml(tr("dup_keep_newest", "Keep Original"))}</span>` : `<span class="badge badge-warn">${escapeHtml(tr("dup_extra_copy", "Extra Copy"))}</span>`}
             ${renderRiskBadge(copy.risk_level || "safe", copy.risk_reason || "")}
           </div>
           <div class="preset-path" title="${escapeHtml(copy.path)}">${escapeHtml(copy.path)}</div>
         </div>
         <div class="preset-right">
-          <button class="btn btn-soft btn-xs btn-open">Open Folder</button>
+          <button class="btn btn-soft btn-xs btn-open">${escapeHtml(tr("open_folder", "Open Folder"))}</button>
           <span class="size-pill">${escapeHtml(copy.size_human)}</span>
         </div>
       `;
@@ -2482,6 +2504,18 @@ function selectAllExtraDuplicates() {
 }
 
 async function initApp() {
+  window.addEventListener("error", (ev) => {
+    try {
+      api().report_ui_error(ev.message || "Uncaught UI error", ev.filename || "window.onerror", ev.error?.stack || "");
+    } catch (_e) {}
+  });
+  window.addEventListener("unhandledrejection", (ev) => {
+    try {
+      const reason = ev.reason;
+      api().report_ui_error(String(reason?.message || reason || "Unhandled promise rejection"), "unhandledrejection", reason?.stack || "");
+    } catch (_e) {}
+  });
+
   bindEvents();
   const info = await api().get_app_info();
   applyTheme(info.theme || "dark");
@@ -2491,7 +2525,7 @@ async function initApp() {
   }
   state.isAdmin = !!info.is_admin;
   state.osName = info.os || "Windows";
-  state.version = info.version || "0.3.0";
+  state.version = info.version || "0.3.1";
   state.dataDir = info.data_dir || "";
   state.installKind = info.install_kind || "source";
   state.autoCheckUpdates = info.auto_check_updates !== false;

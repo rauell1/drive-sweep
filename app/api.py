@@ -14,6 +14,7 @@ import webview
 
 from app import __version__
 from app.duplicates import find_duplicates
+from app.logger import get_log_path, get_logger, open_log_file, read_recent_logs, setup_logging
 from app.presets import scan_smart_presets
 from app.safety import (
     delete_targets,
@@ -68,6 +69,7 @@ class DriveSweepAPI:
     """Exposed to the frontend UI as `window.pywebview.api`."""
 
     def __init__(self) -> None:
+        setup_logging()
         self.scanner = DriveScanner()
         self._window: webview.Window | None = None
         self._cleanup_lock = threading.Lock()
@@ -695,3 +697,26 @@ class DriveSweepAPI:
             {"drive": "C:\\", "free_human": "Test Alert", "free_pct": threshold}
         ]
         return show_low_disk_notification(target_alerts)
+
+    def report_ui_error(self, message: str, source: str = "", stack: str = "") -> dict:
+        msg = str(message or "").strip()[:500]
+        src = str(source or "").strip()[:200]
+        stk = str(stack or "").strip()[:1500]
+        get_logger().error("UI error (%s): %s\n%s", src or "renderer", msg, stk)
+        return {"ok": True}
+
+    def get_diagnostics_info(self) -> dict:
+        return {
+            "version": __version__,
+            "os": f"{platform.system()} {platform.release()} ({platform.machine()})",
+            "python": platform.python_version(),
+            "is_admin": is_admin(),
+            "install_kind": detect_install_kind(),
+            "scan_engine": self.scanner.scan_engine,
+            "data_dir": str(get_app_data_dir()),
+            "log_path": str(get_log_path()),
+            "log_tail": read_recent_logs(max_lines=100),
+        }
+
+    def open_log_file(self) -> dict:
+        return open_log_file()

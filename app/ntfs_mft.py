@@ -74,14 +74,20 @@ def decode_data_runs(run_bytes: bytes) -> list[tuple[int, int]] | None:
             break
         len_size = header & 0x0F
         off_size = (header >> 4) & 0x0F
-        if len_size == 0 or off_size == 0 or idx + len_size + off_size > total:
+        if len_size == 0 or idx + len_size + off_size > total:
             return None
         cluster_len = int.from_bytes(run_bytes[idx : idx + len_size], "little", signed=False)
         idx += len_size
+        if cluster_len <= 0:
+            return None
+        if off_size == 0:
+            # Sparse unallocated cluster run inside $MFT
+            runs.append((-1, cluster_len))
+            continue
         lcn_delta = int.from_bytes(run_bytes[idx : idx + off_size], "little", signed=True)
         idx += off_size
         current_lcn += lcn_delta
-        if current_lcn < 0 or cluster_len <= 0:
+        if current_lcn < 0:
             return None
         runs.append((current_lcn, cluster_len))
     return runs
@@ -161,6 +167,9 @@ def _parse_single_record(rec: bytearray, sector_size: int) -> tuple[int, _MftRec
         return None
     flags = struct.unpack_from("<H", rec, 0x16)[0]
     if not (flags & 0x0001):
+        return None
+    # Skip extension MFT records; base record carries primary metadata and index
+    if len(rec) >= 0x28 and struct.unpack_from("<Q", rec, 0x20)[0] != 0:
         return None
 
     mft_idx = struct.unpack_from("<I", rec, 0x2C)[0]
@@ -248,8 +257,8 @@ def scan_ntfs_mft_with_reader(
     Returns (nodes, dev_paths, files_scanned, dirs_scanned, bytes_scanned) or None
     if the volume does not use a supported standard MFT layout.
     """
-    boot = read_at(0, 512)
-    geom = parse_ntfs_boot_sector(boot)
+    boot_buf = read_at(0, 4096)
+    geom = parse_ntfs_boot_sector(boot_buf[:512])
     if geom is None:
         return None
 
@@ -270,8 +279,12 @@ def scan_ntfs_mft_with_reader(
     for start_lcn, cluster_cnt in runs:
         if cancel_event is not None and cancel_event.is_set():
             return None
-        run_byte_start = start_lcn * geom.cluster_size
         remaining = min(cluster_cnt * geom.cluster_size, max(0, total_mft_bytes - processed_bytes))
+        if start_lcn < 0:
+            fallback_idx += remaining // rec_size
+            processed_bytes += remaining
+            continue
+        run_byte_start = start_lcn * geom.cluster_size
         pos = 0
         while pos < remaining:
             if cancel_event is not None and cancel_event.is_set():
@@ -444,16 +457,25 @@ def try_ntfs_mft_scan(
 
     try:
         def read_at(offset: int, length: int) -> bytes:
-            if length <= 0:
+            if length <= 0 or offset < 0:
                 return b""
+            # Align raw volume reads to 4096-byte boundaries for both 512e and 4Kn drives
+            align = 4096
+            aligned_off = (offset // align) * align
+            end_off = offset + length
+            aligned_end = ((end_off + align - 1) // align) * align
+            aligned_len = aligned_end - aligned_off
+
             new_pos = ctypes.c_longlong(0)
-            if not k32.SetFilePointerEx(handle, ctypes.c_longlong(offset), ctypes.byref(new_pos), 0):
+            if not k32.SetFilePointerEx(handle, ctypes.c_longlong(aligned_off), ctypes.byref(new_pos), 0):
                 return b""
-            buf = ctypes.create_string_buffer(length)
+            buf = ctypes.create_string_buffer(aligned_len)
             bytes_read = ctypes.c_ulong(0)
-            if not k32.ReadFile(handle, buf, length, ctypes.byref(bytes_read), None):
+            if not k32.ReadFile(handle, buf, aligned_len, ctypes.byref(bytes_read), None):
                 return b""
-            return buf.raw[: bytes_read.value]
+            lead = offset - aligned_off
+            raw = buf.raw[: bytes_read.value]
+            return raw[lead : lead + length]
 
         return scan_ntfs_mft_with_reader(
             root_path,

@@ -20,15 +20,15 @@
           </svg>
         </div>
         <div class="brand-meta">
-          <div class="brand-name">DriveSweep <span id="app-version" class="ver-chip">v0.2.0</span></div>
-          <div class="brand-tag">Storage Analyzer</div>
+          <div class="brand-name">DriveSweep <span id="app-version" class="ver-chip">v0.3.1</span></div>
+          <div class="brand-tag" data-i18n="app_subtitle">Storage Analyzer</div>
         </div>
         <button id="btn-theme-toggle" class="theme-toggle-btn" title="Switch Light / Dark theme" aria-label="Toggle Light or Dark Mode">
           <span id="theme-icon"></span>
         </button>
       </div>
 
-      <div class="sidebar-section-label">Workspace</div>
+      <div class="sidebar-section-label" data-i18n="nav_workspace">Workspace</div>
       <nav class="nav-list">
         <button class="nav-item active" data-tab="smart">
           <span class="nav-icon">
@@ -36,7 +36,7 @@
               <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"/>
             </svg>
           </span>
-          <span class="nav-label">Quick Clean</span>
+          <span class="nav-label" data-i18n="nav_smart">Quick Clean</span>
           <span id="nav-smart-badge" class="nav-badge">0 B</span>
         </button>
 
@@ -145,27 +145,27 @@
             <div class="hero-card">
               <div class="hero-metrics">
                 <div class="metric-block">
-                  <div class="metric-label">Total Found</div>
+                  <div class="metric-label" data-i18n="total_reclaimable">Total Found</div>
                   <div id="smart-total-metric" class="metric-value">0 B</div>
                   <div id="smart-count-sub" class="metric-sub">Scanning this PC...</div>
                 </div>
                 <div class="metric-divider"></div>
                 <div class="metric-block">
-                  <div class="metric-label">Safe to Clean</div>
+                  <div class="metric-label" data-i18n="safe_to_clean">Safe to Clean</div>
                   <div id="smart-rec-metric" class="metric-value accent-good">0 B</div>
                   <div class="metric-sub">Recommended defaults</div>
                 </div>
                 <div class="metric-divider"></div>
                 <div class="metric-block">
-                  <div class="metric-label">Selected</div>
+                  <div class="metric-label" data-i18n="selected_clean">Selected</div>
                   <div id="smart-selected-metric" class="metric-value">0 B</div>
                   <div id="smart-selected-sub" class="metric-sub">0 items queued</div>
                 </div>
                 <div class="metric-actions">
                   <div class="pill-group">
-                    <button id="btn-smart-recommended" class="pill-btn">Recommended</button>
-                    <button id="btn-smart-all" class="pill-btn">Select All</button>
-                    <button id="btn-smart-none" class="pill-btn">Clear</button>
+                    <button id="btn-smart-recommended" class="pill-btn" data-i18n="recommended">Recommended</button>
+                    <button id="btn-smart-all" class="pill-btn" data-i18n="select_all">Select All</button>
+                    <button id="btn-smart-none" class="pill-btn" data-i18n="clear">Clear</button>
                   </div>
                 </div>
               </div>
@@ -201,8 +201,8 @@
           <div class="explorer-top-bar">
             <div id="drive-cards" class="drive-grid"></div>
             <div class="explorer-top-actions">
-              <button id="btn-pick-folder" class="btn btn-soft">Scan Custom Folder...</button>
-              <button id="btn-cancel-scan" class="btn btn-danger hidden">Cancel Scan</button>
+              <button id="btn-pick-folder" class="btn btn-soft" data-i18n="scan_custom_folder">Scan Custom Folder...</button>
+              <button id="btn-cancel-scan" class="btn btn-danger hidden" data-i18n="cancel_scan">Cancel Scan</button>
             </div>
           </div>
 
@@ -213,8 +213,8 @@
                 <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
               </svg>
             </div>
-            <h3>Select a drive or folder to analyze</h3>
-            <p class="muted">
+            <h3 data-i18n="empty_hero_title">Select a drive or folder to analyze</h3>
+            <p class="muted" data-i18n="empty_hero_desc">
               DriveSweep builds visual charts, folder maps, and safety ratings so you can immediately see what fills your drive and decide what to keep or remove.
             </p>
           </div>
@@ -311,13 +311,13 @@
                 <table class="data-table">
                   <thead>
                     <tr>
-                      <th class="col-check">Clean</th>
-                      <th>Item &amp; Relative Size</th>
-                      <th class="col-risk">Safety</th>
-                      <th class="col-date">Modified</th>
-                      <th class="col-count">Files</th>
-                      <th class="col-size">Size</th>
-                      <th class="col-actions">Actions</th>
+                      <th class="col-check" data-i18n="th_clean">Clean</th>
+                      <th data-i18n="th_item">Item &amp; Relative Size</th>
+                      <th class="col-risk" data-i18n="th_safety">Safety</th>
+                      <th class="col-date" data-i18n="th_modified">Modified</th>
+                      <th class="col-count" data-i18n="th_files">Files</th>
+                      <th class="col-size" data-i18n="th_size">Size</th>
+                      <th class="col-actions" data-i18n="th_actions">Actions</th>
                     </tr>
                   </thead>
                   <tbody id="browse-tbody"></tbody>
@@ -346,7 +346,7 @@
                     <option value="mtime">Newest</option>
                     <option value="oldest">Oldest First</option>
                   </select>
-                  <button id="btn-allfiles-search" class="btn btn-primary btn-sm">Filter</button>
+                  <button id="btn-allfiles-search" class="btn btn-primary btn-sm" data-i18n="filter_btn">Filter</button>
                 </div>
                 <div id="allfiles-meta" class="muted small-text"></div>
               </div>
@@ -354,12 +354,12 @@
                 <table class="data-table">
                   <thead>
                     <tr>
-                      <th class="col-check">Clean</th>
-                      <th>File &amp; Location</th>
-                      <th class="col-risk">Safety</th>
-                      <th class="col-date">Modified</th>
-                      <th class="col-size">Size</th>
-                      <th class="col-actions">Actions</th>
+                      <th class="col-check" data-i18n="th_clean">Clean</th>
+                      <th data-i18n="th_file">File &amp; Location</th>
+                      <th class="col-risk" data-i18n="th_safety">Safety</th>
+                      <th class="col-date" data-i18n="th_modified">Modified</th>
+                      <th class="col-size" data-i18n="th_size">Size</th>
+                      <th class="col-actions" data-i18n="th_actions">Actions</th>
                     </tr>
                   </thead>
                   <tbody id="allfiles-tbody"></tbody>
@@ -374,12 +374,12 @@
                 <table class="data-table">
                   <thead>
                     <tr>
-                      <th class="col-check">Clean</th>
-                      <th>File &amp; Location</th>
-                      <th class="col-risk">Safety</th>
-                      <th class="col-date">Modified</th>
-                      <th class="col-size">Size</th>
-                      <th class="col-actions">Actions</th>
+                      <th class="col-check" data-i18n="th_clean">Clean</th>
+                      <th data-i18n="th_file">File &amp; Location</th>
+                      <th class="col-risk" data-i18n="th_safety">Safety</th>
+                      <th class="col-date" data-i18n="th_modified">Modified</th>
+                      <th class="col-size" data-i18n="th_size">Size</th>
+                      <th class="col-actions" data-i18n="th_actions">Actions</th>
                     </tr>
                   </thead>
                   <tbody id="largest-tbody"></tbody>
@@ -406,13 +406,13 @@
                 <table class="data-table">
                   <thead>
                     <tr>
-                      <th class="col-check">Clean</th>
-                      <th>Cache Folder &amp; Location</th>
-                      <th class="col-risk">Safety</th>
-                      <th class="col-date">Last Activity</th>
-                      <th class="col-count">Files</th>
-                      <th class="col-size">Size</th>
-                      <th class="col-actions">Actions</th>
+                      <th class="col-check" data-i18n="th_clean">Clean</th>
+                      <th data-i18n="th_cache">Cache Folder &amp; Location</th>
+                      <th class="col-risk" data-i18n="th_safety">Safety</th>
+                      <th class="col-date" data-i18n="th_activity">Last Activity</th>
+                      <th class="col-count" data-i18n="th_files">Files</th>
+                      <th class="col-size" data-i18n="th_size">Size</th>
+                      <th class="col-actions" data-i18n="th_actions">Actions</th>
                     </tr>
                   </thead>
                   <tbody id="devbloat-tbody"></tbody>
@@ -459,21 +459,21 @@
             <span id="selected-count" class="dock-count">0 items selected</span>
           </div>
           <span id="dedup-note" class="dedup-pill hidden"></span>
-          <button id="btn-review-queue" class="btn btn-soft btn-sm" disabled>Review Selected</button>
+          <button id="btn-review-queue" class="btn btn-soft btn-sm" disabled data-i18n="review_queue">Review Selected</button>
         </div>
 
         <div class="dock-right">
           <div class="mode-segmented" role="radiogroup" aria-label="Deletion Mode">
             <label class="seg-opt" title="Safe and undoable from your Windows Recycle Bin">
               <input type="radio" name="delete-mode" value="recycle" checked />
-              <span>Recycle Bin (Safe)</span>
+              <span data-i18n="recycle_bin">Recycle Bin (Safe)</span>
             </label>
             <label class="seg-opt seg-danger" title="Erases files permanently without moving to Recycle Bin">
               <input type="radio" name="delete-mode" value="permanent" />
-              <span>Delete Forever</span>
+              <span data-i18n="permanent">Delete Forever</span>
             </label>
           </div>
-          <button id="btn-clean-now" class="btn btn-cta" disabled>Clean Selected</button>
+          <button id="btn-clean-now" class="btn btn-cta" disabled data-i18n="clean_selected">Clean Selected</button>
         </div>
       </footer>
     </div>

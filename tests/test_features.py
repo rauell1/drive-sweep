@@ -217,8 +217,8 @@ def test_ntfs_boot_runs_usa_and_synthetic_mft_scan(tmp_path: Path):
     mft_base = geom.mft_lcn * geom.cluster_size
 
     def fake_read_at(offset: int, length: int) -> bytes:
-        if offset == 0 and length == 512:
-            return boot
+        if offset == 0:
+            return (boot + (b"\x00" * max(0, length - 512)))[:length]
         rel = offset - mft_base
         if rel < 0 or rel >= len(mft_blob):
             return b"\x00" * length

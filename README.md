@@ -16,7 +16,7 @@ Choose **Option A** (standard Windows installer, recommended for most users) or 
 ### Option A: Windows Installer (Recommended)
 
 1. Open the **[GitHub Releases](https://github.com/rauell1/drive-sweep/releases)** page.
-2. Under the latest release (**Assets** section at the bottom), click **`DriveSweep-Setup-0.3.0.exe`** (or the newest version listed) to download it.
+2. Under the latest release (**Assets** section at the bottom), click **`DriveSweep-Setup-0.3.1.exe`** (or the newest version listed) to download it.
 3. Open your `Downloads` folder and double-click the downloaded `DriveSweep-Setup-...exe` file.
 4. **If Windows shows a "Windows protected your PC" (SmartScreen) blue popup:**
    - This appears on new open-source Windows apps until code signing is complete. You can verify the file checksum against `SHA256SUMS.txt` on the Releases page if you wish.
@@ -78,6 +78,11 @@ Open **Settings & Updates** (left sidebar) -> **Check for Updates**. DriveSweep 
 
 ---
 
+## Diagnostics & Winget Packaging
+
+- **Crash & Diagnostics Log:** Rotating logs (`drivesweep.log`, up to 1 MB x 3 backups) are stored in `%LOCALAPPDATA%\DriveSweep\drivesweep.log` and capture unhandled Python exceptions and UI `window.onerror` / `unhandledrejection` events. Open it anytime from **Settings & Updates -> Open Diagnostics Log**.
+- **Winget Manifests:** Release manifest templates live under `packaging/winget/` (`rauell1.DriveSweep.yaml`, `rauell1.DriveSweep.installer.yaml`, `rauell1.DriveSweep.locale.en-US.yaml`).
+
 ## Code Signing Policy
 
 Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).
@@ -85,6 +90,7 @@ Free code signing provided by [SignPath.io](https://signpath.io), certificate by
 ### Project Team & Roles
 - **Authors / Maintainers / Approvers:** [Roy Otieno (@rauell1)](https://github.com/rauell1)
 - All source code changes are committed to the public repository and built cleanly through GitHub Actions workflows in [.github/workflows/ci-release.yml](https://github.com/rauell1/drive-sweep/blob/main/.github/workflows/ci-release.yml).
+- Once SignPath Foundation approves the project, add `SIGNPATH_API_TOKEN`, `SIGNPATH_ORGANIZATION_ID`, `SIGNPATH_PROJECT_SLUG`, and `SIGNPATH_SIGNING_POLICY_SLUG` to GitHub repository Actions secrets to enable automatic Authenticode signing on every release tag.
 
 ---
 

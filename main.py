@@ -9,6 +9,7 @@ from pathlib import Path
 import webview
 
 from app.api import DriveSweepAPI
+from app.logger import setup_logging
 from app.safety import is_admin, relaunch_as_admin
 from app.scheduler import evaluate_low_disk_alerts, show_low_disk_notification
 from app.storage import load_settings
@@ -66,6 +67,7 @@ def run_low_disk_check_cli() -> int:
 
 
 def main() -> None:
+    setup_logging()
     if "--low-disk-check" in sys.argv[1:]:
         raise SystemExit(run_low_disk_check_cli())
     if not ensure_admin_or_relaunch():
