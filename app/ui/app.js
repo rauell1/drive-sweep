@@ -17,7 +17,7 @@ const ICON_MOON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" s
 const state = {
   theme: "dark",
   language: "en",
-  version: "0.3.5",
+  version: "0.3.6",
   activeTab: "smart",
   dataDir: "",
   installKind: "source",
@@ -30,6 +30,9 @@ const state = {
   latestUpdateInfo: null,
   drives: [],
   smartItems: [],
+  largeData: null,
+  largeMode: "files",
+  largestMode: "files",
   exclusions: [],
   collapsedGroups: new Set(),
   activeCategoryFilter: null,
@@ -277,17 +280,33 @@ function switchTab(tabName) {
   const titleEl = document.getElementById("view-title");
   const subEl = document.getElementById("view-subtitle");
   const toolbarEl = document.getElementById("header-toolbar");
+  const largeToolbarEl = document.getElementById("large-header-toolbar");
   const explorerToolbarEl = document.getElementById("explorer-header-toolbar");
 
   if (tabName === "smart") {
     titleEl.textContent = window.DriveSweepI18n ? window.DriveSweepI18n.t("smart_title") : "Quick Safe Cleanup";
     subEl.textContent = window.DriveSweepI18n ? window.DriveSweepI18n.t("smart_subtitle") : "Clean temporary files, browser caches, and leftover installers without touching your personal folders.";
     toolbarEl.classList.remove("hidden");
+    largeToolbarEl?.classList.add("hidden");
     explorerToolbarEl?.classList.add("hidden");
+  } else if (tabName === "large") {
+    titleEl.textContent = window.DriveSweepI18n ? window.DriveSweepI18n.t("large_title") : "Large Files & Folders";
+    subEl.textContent = window.DriveSweepI18n
+      ? window.DriveSweepI18n.t("large_subtitle")
+      : "Review large files and folders in Downloads, user spaces, and all drives. Nothing is selected unless you check it.";
+    toolbarEl.classList.add("hidden");
+    largeToolbarEl?.classList.remove("hidden");
+    explorerToolbarEl?.classList.add("hidden");
+    if (state.largeData === null) {
+      loadLargeSpaces();
+    } else {
+      renderLargeSpacesTable();
+    }
   } else {
     titleEl.textContent = window.DriveSweepI18n ? window.DriveSweepI18n.t("explorer_title") : "Drive Scanner";
     subEl.textContent = window.DriveSweepI18n ? window.DriveSweepI18n.t("explorer_subtitle") : "Scan any drive or folder to see what takes up space, check safety levels, and find duplicates.";
     toolbarEl.classList.add("hidden");
+    largeToolbarEl?.classList.add("hidden");
     explorerToolbarEl?.classList.remove("hidden");
   }
   updateDockVisibility();
@@ -378,6 +397,9 @@ async function toggleAlwaysKeep(path) {
     updateSelectionBar();
   }
   await loadSmartScan();
+  if (state.largeData) {
+    renderLargeSpacesTable();
+  }
   if (state.browseState.path) {
     await Promise.all([loadAnalytics(), loadBrowseFolder(), loadAllFiles(), loadLargestFiles(), loadDevArtifacts()]);
   }
@@ -408,6 +430,9 @@ async function openExclusionsModal() {
       const updated = await api().remove_exclusion(btn.dataset.path);
       updateHeaderCounts(updated);
       await loadSmartScan();
+      if (state.largeData) {
+        renderLargeSpacesTable();
+      }
       openExclusionsModal();
     });
   });
@@ -1679,9 +1704,210 @@ async function loadAllFiles() {
   });
 }
 
+async function loadLargeSpaces(force = false) {
+  const metaEl = document.getElementById("large-meta");
+  const tbody = document.getElementById("large-tbody");
+  if (!metaEl || !tbody) return;
+  if (!force && state.largeData !== null) {
+    renderLargeSpacesTable();
+    return;
+  }
+  metaEl.textContent = "Scanning Downloads, user spaces, and all drives...";
+  tbody.innerHTML = `<tr><td colspan="7" class="muted" style="text-align:center;padding:28px;">Scanning large files and folders...</td></tr>`;
+  try {
+    const res = await api().scan_large_spaces(25.0, 100.0);
+    state.largeData = res || { files: [], folders: [], spaces: [] };
+    populateLargeSpacesDropdown(state.largeData.spaces || []);
+    renderLargeSpacesTable();
+  } catch (err) {
+    state.largeData = { files: [], folders: [], spaces: [] };
+    metaEl.textContent = "Could not complete large item scan.";
+    tbody.innerHTML = `<tr><td colspan="7" class="muted" style="text-align:center;padding:28px;">${escapeHtml(err?.message || String(err))}</td></tr>`;
+  }
+}
+
+function populateLargeSpacesDropdown(spaces) {
+  const sel = document.getElementById("large-space-filter");
+  if (!sel) return;
+  const prev = sel.value || "";
+  sel.innerHTML = `<option value="">All Spaces &amp; Drives</option>`;
+  for (const sp of spaces || []) {
+    const opt = document.createElement("option");
+    opt.value = sp;
+    opt.textContent = sp;
+    sel.appendChild(opt);
+  }
+  if (prev && (spaces || []).includes(prev)) {
+    sel.value = prev;
+  }
+}
+
+function renderLargeSpacesTable() {
+  const metaEl = document.getElementById("large-meta");
+  const tbody = document.getElementById("large-tbody");
+  if (!metaEl || !tbody) return;
+  const data = state.largeData || { files: [], folders: [] };
+  const isFolders = state.largeMode === "folders";
+  const rawList = isFolders ? (data.folders || []) : (data.files || []);
+  const spaceFilter = document.getElementById("large-space-filter")?.value || "";
+  const minMb = Number(document.getElementById("large-min-mb")?.value || 0);
+  const query = (document.getElementById("large-filter")?.value || "").trim().toLowerCase();
+  const minBytes = minMb * 1024 * 1024;
+
+  const filtered = rawList.filter((item) => {
+    if (spaceFilter && item.space !== spaceFilter) return false;
+    if (Number(item.size_bytes || 0) < minBytes) return false;
+    if (query) {
+      const hay = `${item.name || ""} ${item.path || ""} ${item.space || ""}`.toLowerCase();
+      if (!hay.includes(query)) return false;
+    }
+    return true;
+  });
+
+  const totalBytes = filtered.reduce((acc, it) => acc + Number(it.size_bytes || 0), 0);
+  const kindLabel = isFolders ? "large folder" : "large file";
+  metaEl.textContent = `${filtered.length} ${kindLabel}${filtered.length === 1 ? "" : "s"} (${formatBytes(totalBytes)}) | Nothing auto-selected`;
+
+  tbody.innerHTML = "";
+  if (filtered.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7" class="muted" style="text-align:center;padding:28px;">No matching ${isFolders ? "folders" : "files"} above ${minMb} MB. Try lowering the size filter or rescanning.</td></tr>`;
+    return;
+  }
+
+  const maxBytes = Math.max(1, ...filtered.map((it) => Number(it.size_bytes || 0)));
+  for (const item of filtered) {
+    const tr = document.createElement("tr");
+    const excluded = isPathExcludedLocal(item.path);
+    const disabled = !!item.is_protected || excluded;
+    const checked = !disabled && isItemSelected(item.path, false);
+    const pct = Math.min(100, (Number(item.size_bytes || 0) / maxBytes) * 100);
+    const fileCountHint = isFolders && item.file_count ? ` | ${Number(item.file_count).toLocaleString()} files` : "";
+
+    tr.innerHTML = `
+      <td class="col-check">
+        <input class="chk-box" type="checkbox" ${checked ? "checked" : ""} ${disabled ? "disabled" : ""} />
+      </td>
+      <td>
+        <div class="item-name-line">
+          ${isFolders ? ICON_FOLDER : ICON_FILE}
+          <strong>${escapeHtml(item.name)}</strong>
+          ${excluded ? `<span class="badge badge-info">Always Keep</span>` : ""}
+        </div>
+        <div class="item-subpath" title="${escapeHtml(item.path)}">${escapeHtml(item.path)}${escapeHtml(fileCountHint)}</div>
+        <div class="inline-bar-track"><div class="inline-bar-fill" style="width:${pct}%"></div></div>
+      </td>
+      <td class="col-risk"><span class="badge badge-info">${escapeHtml(item.space || "PC")}</span></td>
+      <td class="col-risk">${renderRiskBadge(item.risk_level || (item.is_protected ? "critical" : "caution"), item.risk_reason)}</td>
+      <td class="col-date">${escapeHtml(formatModified(item.mtime_str, item.age_days))}</td>
+      <td class="col-size">${escapeHtml(item.size_human)}</td>
+      <td class="col-actions">
+        <div class="row-actions">
+          ${item.is_protected ? "" : `<button class="btn btn-soft btn-xs btn-keep-toggle">${excluded ? "Allow" : "Keep"}</button>`}
+          <button class="btn btn-soft btn-xs btn-open">Open Folder</button>
+        </div>
+      </td>
+    `;
+
+    const cb = tr.querySelector('input[type="checkbox"]');
+    if (!disabled) {
+      cb.addEventListener("change", () => {
+        setItemSelected(
+          {
+            path: item.path,
+            label: item.name,
+            size_bytes: item.size_bytes,
+            size_human: item.size_human,
+            contents_only: false,
+            risk_level: item.risk_level || "caution",
+            risk_reason: item.risk_reason || "",
+            source: "large",
+          },
+          cb.checked
+        );
+      });
+    }
+    tr.querySelector(".btn-keep-toggle")?.addEventListener("click", () => toggleAlwaysKeep(item.path));
+    tr.querySelector(".btn-open")?.addEventListener("click", () => api().open_in_explorer(item.path));
+    tbody.appendChild(tr);
+  }
+}
+
 async function loadLargestFiles() {
-  const items = await api().get_largest_files(200);
-  renderFileRows(document.getElementById("largest-tbody"), items || []);
+  const isFolders = state.largestMode === "folders";
+  const items = isFolders
+    ? await api().get_largest_folders(200, 25.0)
+    : await api().get_largest_files(200);
+  const list = items || [];
+  const metaEl = document.getElementById("largest-meta");
+  if (metaEl) {
+    const totalBytes = list.reduce((acc, it) => acc + Number(it.size_bytes || 0), 0);
+    metaEl.textContent = `${list.length} largest ${isFolders ? "folders" : "files"} (${formatBytes(totalBytes)})`;
+  }
+  const tbody = document.getElementById("largest-tbody");
+  if (!tbody) return;
+  if (isFolders) {
+    renderExplorerFolderRows(tbody, list);
+  } else {
+    renderFileRows(tbody, list);
+  }
+}
+
+function renderExplorerFolderRows(tbody, items) {
+  tbody.innerHTML = "";
+  const maxBytes = Math.max(1, ...items.map((it) => Number(it.size_bytes || 0)));
+  for (const item of items) {
+    const tr = document.createElement("tr");
+    const excluded = isPathExcludedLocal(item.path);
+    const disabled = item.is_protected || excluded;
+    const checked = !disabled && isItemSelected(item.path, false);
+    const pct = Math.min(100, (Number(item.size_bytes || 0) / maxBytes) * 100);
+    const fileCountHint = item.file_count ? ` | ${Number(item.file_count).toLocaleString()} files` : "";
+
+    tr.innerHTML = `
+      <td class="col-check">
+        <input class="chk-box" type="checkbox" ${checked ? "checked" : ""} ${disabled ? "disabled" : ""} />
+      </td>
+      <td>
+        <div class="item-name-line">
+          ${ICON_FOLDER}
+          <strong>${escapeHtml(item.name)}</strong>
+          ${excluded ? `<span class="badge badge-info">Always Keep</span>` : ""}
+        </div>
+        <div class="item-subpath">${escapeHtml(item.path)}${escapeHtml(fileCountHint)}</div>
+        <div class="inline-bar-track"><div class="inline-bar-fill" style="width:${pct}%"></div></div>
+      </td>
+      <td class="col-risk">${renderRiskBadge(item.risk_level || (item.is_protected ? "critical" : "caution"), item.risk_reason)}</td>
+      <td class="col-date">${escapeHtml(formatModified(item.mtime_str, item.age_days))}</td>
+      <td class="col-size">${escapeHtml(item.size_human)}</td>
+      <td class="col-actions">
+        <div class="row-actions">
+          ${item.is_protected ? "" : `<button class="btn btn-soft btn-xs btn-keep-toggle">${excluded ? "Allow" : "Keep"}</button>`}
+          <button class="btn btn-soft btn-xs btn-open">Open Folder</button>
+        </div>
+      </td>
+    `;
+    const cb = tr.querySelector('input[type="checkbox"]');
+    if (!disabled) {
+      cb.addEventListener("change", () => {
+        setItemSelected(
+          {
+            path: item.path,
+            label: item.name,
+            size_bytes: item.size_bytes,
+            size_human: item.size_human,
+            contents_only: false,
+            risk_level: item.risk_level || "caution",
+            risk_reason: item.risk_reason || "",
+            source: "explorer",
+          },
+          cb.checked
+        );
+      });
+    }
+    tr.querySelector(".btn-keep-toggle")?.addEventListener("click", () => toggleAlwaysKeep(item.path));
+    tr.querySelector(".btn-open")?.addEventListener("click", () => api().open_in_explorer(item.path));
+    tbody.appendChild(tr);
+  }
 }
 
 async function loadDevArtifacts() {
@@ -2092,6 +2318,10 @@ async function runCleanup(items, mode) {
         onClick: async () => {
           closeModal();
           await loadSmartScan();
+          state.largeData = null;
+          if (state.activeTab === "large") {
+            await loadLargeSpaces(true);
+          }
           if (state.browseState.path) {
             await Promise.all([loadAnalytics(), loadBrowseFolder(), loadAllFiles(), loadLargestFiles(), loadDevArtifacts()]);
           }
@@ -2213,6 +2443,34 @@ function bindEvents() {
 
   document.getElementById("btn-smart-scan").addEventListener("click", loadSmartScan);
   document.getElementById("smart-filter").addEventListener("input", renderSmartGroups);
+  document.getElementById("btn-large-rescan")?.addEventListener("click", () => loadLargeSpaces(true));
+  document.getElementById("large-filter")?.addEventListener("input", renderLargeSpacesTable);
+  document.getElementById("large-space-filter")?.addEventListener("change", renderLargeSpacesTable);
+  document.getElementById("large-min-mb")?.addEventListener("change", renderLargeSpacesTable);
+  document.getElementById("btn-large-mode-files")?.addEventListener("click", () => {
+    state.largeMode = "files";
+    document.getElementById("btn-large-mode-files")?.classList.add("active");
+    document.getElementById("btn-large-mode-folders")?.classList.remove("active");
+    renderLargeSpacesTable();
+  });
+  document.getElementById("btn-large-mode-folders")?.addEventListener("click", () => {
+    state.largeMode = "folders";
+    document.getElementById("btn-large-mode-folders")?.classList.add("active");
+    document.getElementById("btn-large-mode-files")?.classList.remove("active");
+    renderLargeSpacesTable();
+  });
+  document.getElementById("btn-explorer-largest-files")?.addEventListener("click", () => {
+    state.largestMode = "files";
+    document.getElementById("btn-explorer-largest-files")?.classList.add("active");
+    document.getElementById("btn-explorer-largest-folders")?.classList.remove("active");
+    loadLargestFiles();
+  });
+  document.getElementById("btn-explorer-largest-folders")?.addEventListener("click", () => {
+    state.largestMode = "folders";
+    document.getElementById("btn-explorer-largest-folders")?.classList.add("active");
+    document.getElementById("btn-explorer-largest-files")?.classList.remove("active");
+    loadLargestFiles();
+  });
   document.getElementById("btn-smart-collapse-toggle").addEventListener("click", () => {
     const cards = Array.from(document.querySelectorAll(".group-card[data-group]"));
     const allCollapsed = cards.length > 0 && cards.every((el) => state.collapsedGroups.has(el.dataset.group));
@@ -2332,10 +2590,13 @@ function bindEvents() {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
       e.preventDefault();
       const explorerActive = document.getElementById("tab-explorer")?.classList.contains("active");
+      const largeActive = document.getElementById("tab-large")?.classList.contains("active");
       const allFilesActive = document.getElementById("subview-allfiles")?.classList.contains("active");
       const target = explorerActive
         ? document.getElementById(allFilesActive ? "allfiles-query" : "browse-query")
-        : document.getElementById("smart-filter");
+        : largeActive
+          ? document.getElementById("large-filter")
+          : document.getElementById("smart-filter");
       if (target) {
         target.focus();
         target.select();

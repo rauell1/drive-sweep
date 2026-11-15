@@ -11,7 +11,7 @@ import time
 from ctypes import wintypes
 from pathlib import Path
 
-from .safety import format_bytes, is_admin, sanitized_subprocess_env
+from .safety import format_bytes, get_known_folder_path, is_admin, sanitized_subprocess_env
 
 _CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 _SHERB_NOCONFIRMATION = 0x00000001
@@ -123,7 +123,7 @@ def find_old_download_installers(
     max_items: int = 200,
 ) -> dict:
     """Find old installer packages and archives in Downloads (read-only discovery)."""
-    target_dir = Path(downloads_dir) if downloads_dir else (Path.home() / "Downloads")
+    target_dir = Path(downloads_dir) if downloads_dir else get_known_folder_path("downloads")
     if not target_dir.exists() or not target_dir.is_dir():
         return {
             "directory": str(target_dir),

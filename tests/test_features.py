@@ -18,8 +18,8 @@ from app.ntfs_mft import (
     scan_ntfs_mft_with_reader,
     try_ntfs_mft_scan,
 )
-from app.presets import scan_smart_presets
-from app.safety import ScanGuard
+from app.presets import scan_large_spaces, scan_smart_presets
+from app.safety import ScanGuard, get_known_folder_path
 from app.scanner import DEV_BLOAT_NAMES, DirNode, DriveScanner
 from app.scheduler import build_schtasks_create_command, evaluate_low_disk_alerts
 from app.storage import (
@@ -390,3 +390,63 @@ def test_custom_presets_language_and_scheduler(tmp_path: Path, monkeypatch):
 
     cmd = build_schtasks_create_command(frequency="weekly")
     assert "schtasks.exe" in cmd and "WEEKLY" in cmd and "/Create" in cmd
+
+
+def test_large_spaces_and_redirected_downloads_selection(tmp_path: Path, monkeypatch):
+    # Redirected Downloads folder (e.g. D:\Downloads or OneDrive KFM) + secondary drive root
+    dl_dir = tmp_path / "CustomDownloads"
+    dl_sub = dl_dir / "ExtractedSDK"
+    dl_sub.mkdir(parents=True)
+    big_iso = dl_dir / "installer_pack.iso"
+    big_iso.write_bytes(b"A" * (2 * 1024 * 1024))
+    (dl_sub / "sdk_archive.bin").write_bytes(b"B" * (2 * 1024 * 1024))
+
+    extra_drive = tmp_path / "DriveD"
+    proj_dir = extra_drive / "BigWorkspace"
+    proj_dir.mkdir(parents=True)
+    (proj_dir / "vm_disk.vhdx").write_bytes(b"C" * (2 * 1024 * 1024))
+
+    res = scan_large_spaces(
+        exclusions=[],
+        min_file_mb=1.0,
+        min_folder_mb=1.5,
+        personal_roots=[("Downloads", dl_dir)],
+        drive_roots=[extra_drive],
+        include_home_custom=False,
+    )
+    assert res["file_count"] >= 3
+    assert res["folder_count"] >= 2
+    assert "Downloads" in res["spaces"]
+    assert any("Drive" in sp for sp in res["spaces"])
+
+    file_paths = {Path(it["path"]) for it in res["files"]}
+    folder_paths = {Path(it["path"]) for it in res["folders"]}
+    assert big_iso in file_paths
+    assert (dl_sub / "sdk_archive.bin") in file_paths
+    assert (proj_dir / "vm_disk.vhdx") in file_paths
+    assert dl_sub in folder_paths
+    assert proj_dir in folder_paths
+
+    # Every item across all spaces MUST default to unchecked until the user selects it
+    for it in res["files"] + res["folders"]:
+        assert it["default_checked"] is False
+        assert it["contents_only"] is False
+
+    # DriveScanner.get_largest_folders returns selectable folders too
+    sc = DriveScanner()
+    sc.start_scan(str(extra_drive), force=True)
+    _wait_scan(sc)
+    lg_folders = sc.get_largest_folders(limit=20, min_size_mb=1.0)
+    assert any(Path(f["path"]) == proj_dir for f in lg_folders)
+
+    # find_old_download_installers uses redirected Downloads via get_known_folder_path
+    old_msi = dl_dir / "old_setup.msi"
+    old_msi.write_bytes(b"M" * 4096)
+    old_ts = time.time() - (40 * 86400)
+    os.utime(old_msi, (old_ts, old_ts))
+    monkeypatch.setattr("app.system_tools.get_known_folder_path", lambda _name: dl_dir)
+    old_info = find_old_download_installers(max_age_days=14)
+    assert old_info["count"] == 1
+    assert Path(old_info["items"][0]["path"]) == old_msi
+    # Known folder lookup helper resolves valid Path or None without crashing
+    assert isinstance(get_known_folder_path("downloads"), Path)

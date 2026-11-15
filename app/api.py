@@ -15,7 +15,7 @@ import webview
 from app import __version__
 from app.duplicates import find_duplicates
 from app.logger import get_log_path, get_logger, open_log_file, read_recent_logs, setup_logging
-from app.presets import scan_smart_presets
+from app.presets import scan_large_spaces, scan_smart_presets
 from app.safety import (
     delete_targets,
     format_bytes,
@@ -296,6 +296,13 @@ class DriveSweepAPI:
     def scan_smart_presets(self) -> dict:
         return scan_smart_presets(exclusions=get_exclusions())
 
+    def scan_large_spaces(self, min_file_mb: float = 25.0, min_folder_mb: float = 100.0) -> dict:
+        return scan_large_spaces(
+            exclusions=get_exclusions(),
+            min_file_mb=float(min_file_mb or 25.0),
+            min_folder_mb=float(min_folder_mb or 100.0),
+        )
+
     def start_drive_scan(self, root_path: str, force: bool = False) -> dict:
         return self.scanner.start_scan(root_path, force=bool(force))
 
@@ -352,6 +359,9 @@ class DriveSweepAPI:
 
     def get_largest_files(self, limit: int = 200) -> list[dict]:
         return self.scanner.get_largest_files(limit=limit)
+
+    def get_largest_folders(self, limit: int = 200, min_size_mb: float = 50.0) -> list[dict]:
+        return self.scanner.get_largest_folders(limit=limit, min_size_mb=float(min_size_mb or 50.0))
 
     def get_dev_artifacts(self, limit: int = 200, min_age_days: int = 0) -> list[dict]:
         return self.scanner.get_dev_artifacts(limit=limit, min_age_days=int(min_age_days or 0))

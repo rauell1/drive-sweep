@@ -193,7 +193,7 @@ function makeEl(id, tag = "div", attrs = {{}}) {{
       _html = _text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     }},
     get innerHTML() {{ return _html; }},
-    set innerHTML(v) {{ _html = String(v ?? ""); }},
+    set innerHTML(v) {{ _html = String(v ?? ""); this.children = []; }},
     value: attrs.value || "",
     checked: !!attrs.checked,
     disabled: false,
@@ -230,7 +230,8 @@ function makeEl(id, tag = "div", attrs = {{}}) {{
 }}
 
 const requiredIds = [
-  "view-title","view-subtitle","header-toolbar","explorer-header-toolbar","smart-filter","btn-smart-scan",
+  "view-title","view-subtitle","header-toolbar","large-header-toolbar","explorer-header-toolbar","smart-filter","btn-smart-scan",
+  "large-filter","btn-large-rescan","btn-large-mode-files","btn-large-mode-folders","large-space-filter","large-min-mb","large-meta","large-tbody",
   "btn-add-custom-preset","smart-total-metric","smart-rec-metric","smart-selected-metric",
   "smart-selected-sub","smart-count-sub","smart-breakdown-bar","smart-donut-wrap",
   "smart-cat-hint","smart-groups","nav-smart-badge","btn-smart-recommended","btn-smart-all",
@@ -240,7 +241,7 @@ const requiredIds = [
   "update-nav-badge","priv-title","priv-sub","btn-elevate","btn-pick-folder","btn-cancel-scan",
   "explorer-empty","scan-progress","explorer-workspace","explorer-summary-pill","scan-engine-badge",
   "export-menu-wrap","btn-export-toggle","export-dropdown","btn-export-csv","btn-export-json",
-  "btn-explorer-rescan","risk-cards-row","treemap-controls",
+  "btn-explorer-rescan","btn-explorer-largest-files","btn-explorer-largest-folders","largest-meta","risk-cards-row","treemap-controls",
   "treemap-grid","category-chart-wrap","age-chart-wrap","top-folders-table-wrap",
   "breadcrumbs","browse-query","browse-sort","browse-tbody","browse-pager","allfiles-query",
   "allfiles-ext","allfiles-minmb","allfiles-age","allfiles-sort","btn-allfiles-search",
@@ -321,6 +322,34 @@ sandbox.window.pywebview = {{
         if (prop === "get_treemap_data") {{
           return {{ current_path: "C:\\\\", total_human: "100 GB", breadcrumbs: [{{ name: "C:", path: "C:\\\\" }}], items: [] }};
         }}
+        if (prop === "scan_large_spaces") {{
+          return {{
+            files: [{{
+              id: "lgf-1", kind: "file", space: "Downloads", name: "ubuntu.iso", path: "D:\\\\Downloads\\\\ubuntu.iso",
+              dir_path: "D:\\\\Downloads", size_bytes: 1073741824, size_human: "1.00 GB", file_count: 1,
+              mtime_str: "2026-10-01", age_days: 45, default_checked: false, contents_only: false,
+              is_protected: false, risk_level: "caution", risk_reason: "Large download file"
+            }}],
+            folders: [{{
+              id: "lgd-1", kind: "dir", space: "Downloads", name: "ExtractedSDK", path: "D:\\\\Downloads\\\\ExtractedSDK",
+              size_bytes: 536870912, size_human: "512.00 MB", file_count: 120,
+              mtime_str: "2026-09-01", age_days: 75, default_checked: false, contents_only: false,
+              is_protected: false, risk_level: "caution", risk_reason: "Large folder"
+            }}],
+            spaces: ["Downloads"],
+            file_count: 1,
+            folder_count: 1,
+            total_files_human: "1.00 GB",
+            total_folders_human: "512.00 MB",
+          }};
+        }}
+        if (prop === "get_largest_folders") {{
+          return [{{
+            kind: "dir", path: "D:\\\\Projects\\\\BigAssets", dir_path: "D:\\\\Projects", name: "BigAssets",
+            size_bytes: 2147483648, size_human: "2.00 GB", file_count: 42, mtime_str: "2026-08-01",
+            age_days: 100, is_protected: false, is_personal: false, risk_level: "caution", risk_reason: "Folder"
+          }}];
+        }}
         if (prop === "get_reminder_status") {{
           return {{ enabled: false, frequency: "weekly", threshold_pct: 15, task: {{ installed: false }} }};
         }}
@@ -350,6 +379,12 @@ for (const lang of ["en", "es", "fr", "de", "pt"]) {{
   assert(apiCalls.some((c) => c[0] === "get_app_info"), "initApp did not call get_app_info");
   assert(apiCalls.some((c) => c[0] === "scan_smart_presets"), "initApp did not call scan_smart_presets");
   assert(!elementMap.get("dock-bar").classList.contains("hidden"), "Dock should stay visible on Smart tab");
+  sandbox.switchTab("large");
+  await sandbox.loadLargeSpaces(true);
+  assert(apiCalls.some((c) => c[0] === "scan_large_spaces"), "Large tab should call scan_large_spaces");
+  assert(elementMap.get("large-tbody").children.length === 1, "Large files tbody should populate");
+  assert(!elementMap.get("large-tbody").children[0].innerHTML.includes(" checked "), "Large items must never be checked by default");
+  assert(elementMap.get("dock-bar").classList.contains("hidden"), "Dock should remain hidden on Large tab when nothing is manually checked");
   sandbox.switchTab("explorer");
   assert(elementMap.get("dock-bar").classList.contains("hidden"), "Dock should hide on Drive Scanner when only smart items selected");
   sandbox.setItemSelected({{ path: "C:\\\\Temp\\\\test.log", label: "test.log", size_bytes: 1024, size_human: "1.0 KB", source: "explorer" }}, true);

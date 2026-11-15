@@ -3,7 +3,7 @@
 **Free up disk space safely on Windows.** DriveSweep scans your PC for temporary files, leftover app caches, browser caches, and oversized old files, then lets you review everything in plain visual charts before moving anything to the Recycle Bin.
 
 - **Works on any Windows PC:** Automatically finds Windows temporary files, Windows Update leftovers, Microsoft Store app caches, browser caches (Edge, Chrome, Firefox, Brave, Opera), everyday app caches (Teams, Discord, Spotify, Slack, Zoom, Steam, Epic Games, Office), and any installed desktop app caches on your computer. Optional coding and AI caches are also detected automatically only if you use those tools.
-- **Built for safety first:** Personal folders (`Downloads`, `OneDrive`, `Documents`, `Pictures`, `Videos`, `Music`, `Desktop`) are never selected by Quick Clean. System files are locked so they cannot be removed accidentally, important files ask for your confirmation first, and cleanup defaults to **Recycle Bin (Safe)** so you can restore files anytime.
+- **Built for safety first:** Personal folders (`Downloads`, `OneDrive`, `Documents`, `Pictures`, `Videos`, `Music`, `Desktop`) are never auto-selected by Quick Clean. Use the **Large Files & Folders** view to inspect big files and folders across `Downloads`, user spaces, and all drives where every item stays unchecked until you manually select it. System files are locked so they cannot be removed accidentally, important files ask for your confirmation first, and cleanup defaults to **Recycle Bin (Safe)** so you can restore files anytime.
 - **Light and Dark Mode:** Switch themes anytime from the top-left corner.
 - **100% private and offline:** Every scan, setting, and cleanup record stays on your own computer. Nothing is uploaded anywhere.
 
@@ -16,7 +16,7 @@ Choose **Option A** (standard Windows installer, recommended for most users) or 
 ### Option A: Windows Installer (Recommended)
 
 1. Open the **[GitHub Releases](https://github.com/rauell1/drive-sweep/releases)** page.
-2. Under the latest release (**Assets** section at the bottom), click **`DriveSweep-Setup-0.3.5.exe`** (or the newest version listed) to download it.
+2. Under the latest release (**Assets** section at the bottom), click **`DriveSweep-Setup-0.3.6.exe`** (or the newest version listed) to download it.
 3. Open your `Downloads` folder and double-click the downloaded `DriveSweep-Setup-...exe` file.
 4. **If Windows shows a "Windows protected your PC" (SmartScreen) blue popup:**
    - This appears on new open-source Windows apps until code signing is complete. You can verify the file checksum against `SHA256SUMS.txt` on the Releases page if you wish.

@@ -1,3 +1,3 @@
 """DriveSweep - Interactive Drive & Dev Cache Cleanup Desktop Tool."""
 
-__version__ = "0.3.5"
+__version__ = "0.3.6"

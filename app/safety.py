@@ -9,11 +9,93 @@ import stat
 import subprocess
 import sys
 import threading
+import uuid
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Iterable
 
 from send2trash import send2trash
+
+_KNOWN_FOLDER_GUIDS: dict[str, tuple[str, str]] = {
+    "downloads": ("{374DE290-123F-4565-9164-39C4925E467B}", "Downloads"),
+    "documents": ("{FDD39AD0-238F-46AF-ADB4-6C85480369C7}", "Documents"),
+    "desktop": ("{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}", "Desktop"),
+    "pictures": ("{33E28130-4E1E-4676-835A-98395C3BC3BB}", "Pictures"),
+    "music": ("{4BD8D571-6D19-48D3-BE97-422220080E43}", "Music"),
+    "videos": ("{18989B1D-99B5-455B-841C-AB7C74E4DDFC}", "Videos"),
+}
+
+
+class _GUID(ctypes.Structure):
+    _fields_ = [
+        ("Data1", ctypes.c_uint32),
+        ("Data2", ctypes.c_uint16),
+        ("Data3", ctypes.c_uint16),
+        ("Data4", ctypes.c_ubyte * 8),
+    ]
+
+
+@lru_cache(maxsize=16)
+def get_known_folder_path(folder_key: str) -> Path:
+    """Resolve redirected Windows Known Folders (e.g., D:\\Downloads or OneDrive\\Desktop)."""
+    key = folder_key.lower()
+    guid_str, default_name = _KNOWN_FOLDER_GUIDS.get(key, ("", folder_key))
+    fallback = Path.home() / default_name
+    if os.name != "nt" or not guid_str:
+        return fallback
+    try:
+        u = uuid.UUID(guid_str)
+        guid = _GUID(u.time_low, u.time_mid, u.time_hi_version, (ctypes.c_ubyte * 8)(*u.bytes[8:]))
+        ptr = ctypes.c_wchar_p()
+        hr = ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(guid), 0, None, ctypes.byref(ptr))
+        try:
+            if hr == 0 and ptr.value:
+                resolved = Path(ptr.value)
+                if resolved.exists():
+                    return resolved
+        finally:
+            if ptr.value:
+                ctypes.windll.ole32.CoTaskMemFree(ptr)
+    except Exception:
+        pass
+    return fallback
+
+
+def get_all_personal_roots() -> list[tuple[str, Path]]:
+    """Return unique (space_label, path) pairs for all user personal/cloud folders."""
+    seen: set[str] = set()
+    roots: list[tuple[str, Path]] = []
+
+    def _add(label: str, cand: Path) -> None:
+        try:
+            if not cand or not cand.exists():
+                return
+            norm = os.path.normcase(os.path.abspath(str(cand)))
+            if norm in seen:
+                return
+            seen.add(norm)
+            roots.append((label, cand))
+        except OSError:
+            pass
+
+    for key, label in (
+        ("downloads", "Downloads"),
+        ("desktop", "Desktop"),
+        ("documents", "Documents"),
+        ("videos", "Videos"),
+        ("pictures", "Pictures"),
+        ("music", "Music"),
+    ):
+        _add(label, get_known_folder_path(key))
+        _add(label, Path.home() / label)
+
+    for env_key in ("OneDrive", "OneDriveConsumer", "OneDriveCommercial"):
+        val = os.environ.get(env_key)
+        if val:
+            _add("OneDrive", Path(val))
+    _add("OneDrive", Path.home() / "OneDrive")
+    return roots
 
 
 def format_bytes(num_bytes: int | float) -> str:
@@ -160,6 +242,10 @@ def is_os_protected_path(raw_path: str | Path, *, allow_temp_contents: bool = Fa
                 / "DeliveryOptimization"
                 / "Cache"
             ),
+            _normalize(windir / "Minidump"),
+            _normalize(windir / "LiveKernelReports"),
+            _normalize(windir / "Logs" / "CBS"),
+            _normalize(windir / "Logs" / "DISM"),
             _normalize(program_data / "Microsoft" / "Windows" / "WER" / "ReportArchive"),
             _normalize(program_data / "Microsoft" / "Windows" / "WER" / "ReportQueue"),
         )
@@ -252,10 +338,16 @@ class ScanGuard:
             "Downloads", "OneDrive", "CrossDevice", "Documents",
             "Desktop", "Pictures", "Music", "Videos",
         )
-        self.personal_prefixes = tuple(
+        pref_set: list[str] = [
             os.path.normcase(str(home / name)).rstrip("\\/") + os.sep
             for name in personal_names
-        )
+        ]
+        if self.is_nt:
+            for _lbl, p_root in get_all_personal_roots():
+                pref = os.path.normcase(os.path.abspath(str(p_root))).rstrip("\\/") + os.sep
+                if pref not in pref_set:
+                    pref_set.append(pref)
+        self.personal_prefixes = tuple(pref_set)
 
     def check_dir(
         self,
@@ -321,6 +413,10 @@ def is_personal_guarded_path(raw_path: str | Path) -> bool:
     for name in personal_names:
         if _is_same_or_child(p, home / name):
             return True
+    if os.name == "nt":
+        for _lbl, root in get_all_personal_roots():
+            if _is_same_or_child(p, _normalize(root)):
+                return True
     lowered_parts = {part.lower() for part in p.parts}
     return bool(lowered_parts & {"downloads", "onedrive", "crossdevice"})
 

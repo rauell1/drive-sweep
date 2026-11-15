@@ -5,13 +5,22 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
 
 import psutil
 
-from app.safety import format_bytes, is_os_protected_path, is_personal_guarded_path, to_os_path
+from app.safety import (
+    classify_path_risk,
+    format_bytes,
+    get_all_personal_roots,
+    is_os_protected_path,
+    is_personal_guarded_path,
+    to_os_path,
+)
 from app.storage import get_custom_presets, get_exclusions, is_path_excluded
 
 
@@ -95,7 +104,7 @@ def _measure_path(raw_path: str) -> tuple[int, int]:
                             continue
                         st = entry.stat(follow_symlinks=False)
                         attrs = getattr(st, "st_file_attributes", 0)
-                        if os.name == "nt" and (attrs & 0x400):
+                        if os.name == "nt" and (attrs & 0x400400):
                             continue
                         if entry.is_file(follow_symlinks=False):
                             total_bytes += st.st_size
@@ -345,6 +354,67 @@ def _discover_windows_candidates() -> list[SmartPresetCandidate]:
         local_app / "Intel" / "ShaderCache",
         note="Intel graphics cache rebuilt automatically when needed.",
     )
+    add(
+        "win-minidump",
+        "Windows & Temp",
+        "Windows BSOD Minidump Files",
+        windir / "Minidump",
+        note="Old Windows crash dump snapshots.",
+    )
+    add(
+        "win-live-kernel",
+        "Windows & Temp",
+        "Windows Live Kernel Reports",
+        windir / "LiveKernelReports",
+        note="Diagnostic kernel crash reports saved by Windows.",
+    )
+    add(
+        "win-cbs-logs",
+        "Windows & Temp",
+        "Windows Servicing Logs (CBS)",
+        windir / "Logs" / "CBS",
+        note="Windows Update servicing log files.",
+    )
+    add(
+        "win-dism-logs",
+        "Windows & Temp",
+        "Windows DISM Logs",
+        windir / "Logs" / "DISM",
+        note="Component store servicing logs.",
+    )
+    sys_drive_root = Path(os.environ.get("SystemDrive", "C:") + "\\")
+    win_old = sys_drive_root / "Windows.old"
+    if win_old.exists():
+        add(
+            "win-old-backup",
+            "Windows & Temp",
+            "Previous Windows Installation (Windows.old)",
+            win_old,
+            contents_only=False,
+            note="Backup of your prior Windows install. Review before cleaning if you no longer need rollback.",
+            default_checked=False,
+        )
+    add(
+        "winget-temp",
+        "Windows & Temp",
+        "Windows Package Manager (WinGet) Temp",
+        temp_dir / "WinGet",
+        note="Downloaded WinGet installer packages already installed.",
+    )
+    add(
+        "winget-store-cache",
+        "Windows & Temp",
+        "App Installer Local Cache",
+        local_app / "Packages" / "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe" / "LocalCache",
+        note="Downloaded WinGet manifest & installer cache.",
+    )
+    add(
+        "squirrel-temp",
+        "Windows & Temp",
+        "Desktop App Installer Temp (SquirrelTemp)",
+        local_app / "SquirrelTemp",
+        note="Leftover temporary installer extraction files.",
+    )
 
     uwp_packages = local_app / "Packages"
     if uwp_packages.exists():
@@ -366,11 +436,12 @@ def _discover_windows_candidates() -> list[SmartPresetCandidate]:
         except OSError:
             pass
 
-    # 2. Web Browsers (Chrome, Edge, Brave, Firefox, Opera)
+    # 2. Web Browsers (Chrome, Edge, Brave, Vivaldi, Firefox, Opera)
     chromium_browsers = [
         ("chrome", "Google Chrome", local_app / "Google" / "Chrome" / "User Data", "chrome"),
         ("edge", "Microsoft Edge", local_app / "Microsoft" / "Edge" / "User Data", "msedge"),
         ("brave", "Brave Browser", local_app / "BraveSoftware" / "Brave-Browser" / "User Data", "brave"),
+        ("vivaldi", "Vivaldi Browser", local_app / "Vivaldi" / "User Data", "vivaldi"),
     ]
     for slug, bname, ud_path, proc in chromium_browsers:
         if not ud_path.exists():
@@ -382,7 +453,10 @@ def _discover_windows_candidates() -> list[SmartPresetCandidate]:
                         ("Cache", "Temporary Web Files"),
                         ("Code Cache", "Page Speed Cache"),
                         ("GPUCache", "Graphics Cache"),
+                        ("DawnWebGPUCache", "WebGPU Shader Cache"),
+                        ("DawnGraphiteCache", "Graphics Pipeline Cache"),
                         (os.path.join("Service Worker", "CacheStorage"), "Offline Site Cache"),
+                        ("File System", "Site File System Cache"),
                         ("Shared Dictionary", "Compression Cache"),
                     ):
                         add(
@@ -564,6 +638,45 @@ def _discover_windows_candidates() -> list[SmartPresetCandidate]:
     add("bt-cache", "Desktop Apps", "BitTorrent Web Cache", bt_base / "Cache", note="Temporary browser view cache.")
     add("bt-code-cache", "Desktop Apps", "BitTorrent Web Speed Cache", bt_base / "Code Cache", note="Temporary browser script cache.")
 
+    openwa_sessions = local_app / "Docker" / "OpenWA" / "data" / "sessions"
+    if openwa_sessions.exists():
+        try:
+            for sess in openwa_sessions.iterdir():
+                if not sess.is_dir():
+                    continue
+                default_dir = sess / "Default"
+                if not default_dir.is_dir():
+                    continue
+                for sub, label in (
+                    ("Cache", "Browser Cache"),
+                    ("Code Cache", "Script Cache"),
+                    ("Service Worker", "Service Worker Cache"),
+                ):
+                    add(
+                        f"openwa-{sess.name.lower()}-{sub.lower().replace(' ', '-')}",
+                        "Desktop Apps",
+                        f"OpenWA ({sess.name}) {label}",
+                        default_dir / sub,
+                        note="Temporary OpenWA Chromium cache.",
+                    )
+        except OSError:
+            pass
+
+    adobe_common = roaming_app / "Adobe" / "Common"
+    if adobe_common.exists():
+        for sub, label in (
+            ("Media Cache Files", "Adobe Media Cache Files"),
+            ("Media Cache", "Adobe Media Peak Cache"),
+        ):
+            add(
+                f"adobe-{sub.lower().replace(' ', '-')}",
+                "Desktop Apps",
+                label,
+                adobe_common / sub,
+                note="Rebuilt by Premiere/After Effects on next project open.",
+                default_checked=False,
+            )
+
     # Dynamically catch any other installed apps on this user's machine!
     _discover_dynamic_app_caches(local_app, roaming_app, add)
 
@@ -672,6 +785,21 @@ def _discover_windows_candidates() -> list[SmartPresetCandidate]:
     )
     add("vscode-cache", "Dev Editors & Packages", "VS Code Temporary Cache", vscode / "Cache", note="Temporary editor cache.", process_hint="Code")
     add("vscode-cached-data", "Dev Editors & Packages", "VS Code Speed Cache", vscode / "CachedData", note="Rebuilt automatically on launch.", process_hint="Code")
+    vscode_web = vscode / "WebStorage"
+    if vscode_web.exists():
+        try:
+            for sub in vscode_web.rglob("CacheStorage"):
+                if sub.is_dir():
+                    add(
+                        f"vscode-webstorage-{abs(hash(str(sub))) & 0xFFFF:04x}",
+                        "Dev Editors & Packages",
+                        f"VS Code WebStorage ({sub.parent.name})",
+                        sub,
+                        note="Extension webview CacheStorage rebuilt automatically.",
+                        process_hint="Code",
+                    )
+        except OSError:
+            pass
 
     cursor = roaming_app / "Cursor"
     if cursor.exists():
@@ -684,6 +812,21 @@ def _discover_windows_candidates() -> list[SmartPresetCandidate]:
         )
         add("cursor-cache", "Dev Editors & Packages", "Cursor Temporary Cache", cursor / "Cache", note="Temporary editor cache.", process_hint="Cursor")
         add("cursor-cached-data", "Dev Editors & Packages", "Cursor Speed Cache", cursor / "CachedData", note="Rebuilt automatically on launch.", process_hint="Cursor")
+        cursor_web = cursor / "WebStorage"
+        if cursor_web.exists():
+            try:
+                for sub in cursor_web.rglob("CacheStorage"):
+                    if sub.is_dir():
+                        add(
+                            f"cursor-webstorage-{abs(hash(str(sub))) & 0xFFFF:04x}",
+                            "Dev Editors & Packages",
+                            f"Cursor WebStorage ({sub.parent.name})",
+                            sub,
+                            note="Extension webview CacheStorage rebuilt automatically.",
+                            process_hint="Cursor",
+                        )
+            except OSError:
+                pass
 
     gh_desktop = local_app / "GitHubDesktop"
     add("gh-packages", "Dev Editors & Packages", "GitHub Desktop Old Updates", gh_desktop / "packages", note="Old downloaded app update files.")
@@ -709,6 +852,28 @@ def _discover_windows_candidates() -> list[SmartPresetCandidate]:
     add("torch-cache", "Dev Editors & Packages", "PyTorch AI Model Cache", home / ".cache" / "torch", note="Cached PyTorch model downloads.", default_checked=False)
     add("playwright-browsers", "Dev Editors & Packages", "Playwright Test Browsers", local_app / "ms-playwright", note="Downloaded test browsers.", default_checked=False)
     add("gradle-caches", "Dev Editors & Packages", "Gradle Build Cache", home / ".gradle" / "caches", note="Cached Java and Android build libraries.", default_checked=False)
+    add("nuget-v3-cache", "Dev Editors & Packages", "NuGet HTTP Cache", local_app / "NuGet" / "v3-cache", note="Cached .NET package index files.")
+    add("nuget-packages", "Dev Editors & Packages", "NuGet Package Cache", home / ".nuget" / "packages", note="Downloaded .NET packages (restored on build).", default_checked=False)
+    add("yarn-cache", "Dev Editors & Packages", "Yarn Package Cache", local_app / "Yarn" / "Cache", note="Saved Yarn package downloads.")
+    add("pnpm-store", "Dev Editors & Packages", "pnpm Content Store", local_app / "pnpm" / "store", note="Shared pnpm package store (re-links cleanly if cleared).", default_checked=False)
+    add("go-build-cache", "Dev Editors & Packages", "Go Build Cache", local_app / "go-build", note="Compiled Go build cache.")
+    add("cargo-reg-cache", "Dev Editors & Packages", "Rust Cargo Registry Cache", home / ".cargo" / "registry" / "cache", note="Downloaded Rust crate archives.")
+    jetbrains_root = local_app / "JetBrains"
+    if jetbrains_root.exists():
+        try:
+            for jb_dir in jetbrains_root.iterdir():
+                c_dir = jb_dir / "caches"
+                if jb_dir.is_dir() and c_dir.is_dir():
+                    add(
+                        f"jetbrains-{jb_dir.name.lower()}-caches",
+                        "Dev Editors & Packages",
+                        f"JetBrains {jb_dir.name} Caches",
+                        c_dir,
+                        note="IDE index caches rebuilt automatically on launch.",
+                        default_checked=False,
+                    )
+        except OSError:
+            pass
 
     return items
 
@@ -876,4 +1041,295 @@ def scan_smart_presets(
         "recommended_bytes": recommended_bytes,
         "recommended_human": format_bytes(recommended_bytes),
         "count": len(results),
+    }
+
+
+def _scan_space_tree(
+    space_label: str,
+    root: Path,
+    *,
+    max_depth: int,
+    max_entries: int,
+    exclude_child_norms: set[str],
+    min_file_bytes: int,
+    min_folder_bytes: int,
+) -> tuple[list[dict], list[dict]]:
+    """Bounded fast walk of a space to collect large files and large subfolders."""
+    root_str = os.path.abspath(os.path.normpath(str(root)))
+    root_norm = os.path.normcase(root_str)
+    os_root = to_os_path(root_str)
+    if not os.path.exists(os_root) or not os.path.isdir(os_root):
+        return [], []
+
+    # Map normalized dir path -> [orig_path, parent_norm, size, files_cnt, latest_mtime]
+    dir_stats: dict[str, list] = {}
+    large_files: list[dict] = []
+    stack: list[tuple[str, int]] = [(root_str, 0)]
+    seen_entries = 0
+    is_nt = os.name == "nt"
+    now = time.time()
+
+    while stack and seen_entries < max_entries:
+        cur_dir, depth = stack.pop()
+        cur_norm = os.path.normcase(cur_dir)
+        own_size = 0
+        own_files = 0
+        latest_mtime = 0.0
+
+        try:
+            with os.scandir(to_os_path(cur_dir)) as it:
+                for entry in it:
+                    seen_entries += 1
+                    if seen_entries > max_entries:
+                        break
+                    try:
+                        if entry.is_symlink():
+                            continue
+                        st = entry.stat(follow_symlinks=False)
+                        attrs = getattr(st, "st_file_attributes", 0)
+                        if is_nt and (attrs & 0x400400):
+                            continue
+                        epath = os.path.join(cur_dir, entry.name)
+                        enorm = os.path.normcase(epath)
+                        if entry.is_dir(follow_symlinks=False):
+                            if enorm in exclude_child_norms:
+                                continue
+                            if is_os_protected_path(epath, allow_temp_contents=False):
+                                continue
+                            if depth < max_depth:
+                                stack.append((epath, depth + 1))
+                            dir_stats.setdefault(enorm, [epath, cur_norm, 0, 0, st.st_mtime])
+                        elif entry.is_file(follow_symlinks=False):
+                            fsize = int(st.st_size)
+                            fmtime = float(st.st_mtime)
+                            own_size += fsize
+                            own_files += 1
+                            if fmtime > latest_mtime:
+                                latest_mtime = fmtime
+                            if fsize >= min_file_bytes and not is_os_protected_path(epath, allow_temp_contents=False):
+                                age_days = max(0, int((now - fmtime) // 86400)) if fmtime > 0 else 0
+                                mtime_str = datetime.fromtimestamp(fmtime).strftime("%Y-%m-%d") if fmtime > 0 else ""
+                                risk = classify_path_risk(epath, is_dir=False, age_days=age_days)
+                                large_files.append({
+                                    "id": f"lgf-{abs(hash(enorm)) & 0xFFFFFFFF:08x}",
+                                    "kind": "file",
+                                    "space": space_label,
+                                    "name": entry.name,
+                                    "label": entry.name,
+                                    "path": epath,
+                                    "dir_path": cur_dir,
+                                    "size_bytes": fsize,
+                                    "size_human": format_bytes(fsize),
+                                    "file_count": 1,
+                                    "mtime": fmtime,
+                                    "mtime_str": mtime_str,
+                                    "age_days": age_days,
+                                    "ext": os.path.splitext(entry.name)[1].lower(),
+                                    "default_checked": False,
+                                    "contents_only": False,
+                                    "is_protected": risk["risk_level"] == "critical",
+                                    "risk_level": risk["risk_level"],
+                                    "risk_reason": risk["risk_reason"],
+                                })
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+
+        info = dir_stats.setdefault(cur_norm, [cur_dir, None, 0, 0, latest_mtime])
+        info[2] += own_size
+        info[3] += own_files
+        if latest_mtime > info[4]:
+            info[4] = latest_mtime
+
+    # Bottom-up size aggregation into immediate parent dirs
+    for dnorm in sorted(dir_stats.keys(), key=lambda p: p.count(os.sep), reverse=True):
+        if dnorm == root_norm:
+            continue
+        _orig, pnorm, sz, fcnt, mt = dir_stats[dnorm]
+        if pnorm and pnorm in dir_stats:
+            dir_stats[pnorm][2] += sz
+            dir_stats[pnorm][3] += fcnt
+            if mt > dir_stats[pnorm][4]:
+                dir_stats[pnorm][4] = mt
+
+    large_folders: list[dict] = []
+    for dnorm, (orig, _pnorm, sz, fcnt, mt) in dir_stats.items():
+        if dnorm == root_norm or sz < min_folder_bytes:
+            continue
+        if is_os_protected_path(orig, allow_temp_contents=False):
+            continue
+        age_days = max(0, int((now - mt) // 86400)) if mt > 0 else 0
+        mtime_str = datetime.fromtimestamp(mt).strftime("%Y-%m-%d") if mt > 0 else ""
+        risk = classify_path_risk(orig, is_dir=True, age_days=age_days)
+        large_folders.append({
+            "id": f"lgd-{abs(hash(dnorm)) & 0xFFFFFFFF:08x}",
+            "kind": "folder",
+            "space": space_label,
+            "name": Path(orig).name or orig,
+            "label": Path(orig).name or orig,
+            "path": orig,
+            "dir_path": str(Path(orig).parent),
+            "size_bytes": sz,
+            "size_human": format_bytes(sz),
+            "file_count": fcnt,
+            "mtime": mt,
+            "mtime_str": mtime_str,
+            "age_days": age_days,
+            "default_checked": False,
+            "contents_only": False,
+            "is_protected": risk["risk_level"] == "critical",
+            "risk_level": risk["risk_level"],
+            "risk_reason": risk["risk_reason"],
+        })
+
+    return large_files, large_folders
+
+
+def scan_large_spaces(
+    exclusions: list[str] | None = None,
+    *,
+    min_file_mb: float = 25.0,
+    min_folder_mb: float = 100.0,
+    personal_roots: list[tuple[str, Path]] | None = None,
+    drive_roots: list[Path] | None = None,
+    include_home_custom: bool = True,
+    max_files: int = 160,
+    max_folders: int = 120,
+) -> dict:
+    """Discover large files and folders across Downloads, user spaces, and all drives for manual review."""
+    min_file_bytes = int(max(1.0, float(min_file_mb)) * 1024 * 1024)
+    min_folder_bytes = int(max(1.0, float(min_folder_mb)) * 1024 * 1024)
+    ex_list = exclusions if exclusions is not None else get_exclusions()
+
+    tasks: list[tuple[str, Path, int, int]] = []
+    seen_roots: set[str] = set()
+    known_norms: set[str] = set()
+
+    p_roots = personal_roots if personal_roots is not None else get_all_personal_roots()
+    for label, ppath in p_roots:
+        try:
+            if not ppath.exists():
+                continue
+            norm = os.path.normcase(os.path.abspath(str(ppath)))
+            known_norms.add(norm)
+            if norm in seen_roots:
+                continue
+            seen_roots.add(norm)
+            depth = 7 if label == "Downloads" else 5
+            tasks.append((label, ppath, depth, 60000))
+        except OSError:
+            continue
+
+    home = Path.home()
+    home_norm = os.path.normcase(os.path.abspath(str(home)))
+    known_norms.add(os.path.normcase(os.path.abspath(str(home / "AppData"))))
+    known_norms.add(os.path.normcase(os.path.abspath(str(home / "Users"))))
+    if include_home_custom and home.exists():
+        try:
+            for entry in home.iterdir():
+                if not entry.is_dir() or entry.name.startswith("."):
+                    continue
+                if entry.name.lower() in {"appdata", "contacts", "favorites", "links", "saved games", "searches", "crossdevice"}:
+                    continue
+                norm = os.path.normcase(os.path.abspath(str(entry)))
+                if norm in seen_roots or norm in known_norms:
+                    continue
+                seen_roots.add(norm)
+                tasks.append(("User Profile", entry, 4, 30000))
+        except OSError:
+            pass
+
+    d_roots: list[Path]
+    if drive_roots is not None:
+        d_roots = list(drive_roots)
+    else:
+        d_roots = []
+        for part in psutil.disk_partitions(all=False):
+            if "cdrom" in (part.opts or "").lower():
+                continue
+            d_roots.append(Path(part.mountpoint))
+
+    for droot in d_roots:
+        try:
+            if not droot.exists():
+                continue
+            norm = os.path.normcase(os.path.abspath(str(droot)))
+            if norm in seen_roots:
+                continue
+            seen_roots.add(norm)
+            label = f"Drive {str(droot).rstrip(chr(92) + '/')}"
+            tasks.append((label, droot, 3, 50000))
+        except OSError:
+            continue
+
+    exclude_children = {
+        home_norm,
+        os.path.normcase(os.path.abspath(str(home / "AppData"))),
+        os.path.normcase(os.path.abspath(os.environ.get("WINDIR", "C:\\Windows"))),
+    }
+    sys_drive_users = os.path.normcase(os.path.abspath(os.path.join(os.environ.get("SystemDrive", "C:") + "\\", "Users")))
+    exclude_children.add(sys_drive_users)
+
+    all_files: list[dict] = []
+    all_folders: list[dict] = []
+    seen_file_paths: set[str] = set()
+    seen_folder_paths: set[str] = set()
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futs = {
+            pool.submit(
+                _scan_space_tree,
+                lbl,
+                rpath,
+                max_depth=depth,
+                max_entries=budget,
+                exclude_child_norms=(exclude_children | (known_norms - {os.path.normcase(os.path.abspath(str(rpath)))})),
+                min_file_bytes=min_file_bytes,
+                min_folder_bytes=min_folder_bytes,
+            ): lbl
+            for lbl, rpath, depth, budget in tasks
+        }
+        for fut in as_completed(futs):
+            try:
+                flist, dlist = fut.result()
+            except Exception:
+                continue
+            for item in flist:
+                pnorm = os.path.normcase(item["path"])
+                if pnorm in seen_file_paths:
+                    continue
+                seen_file_paths.add(pnorm)
+                item["excluded"] = is_path_excluded(item["path"], ex_list)
+                item["default_checked"] = False
+                all_files.append(item)
+            for item in dlist:
+                pnorm = os.path.normcase(item["path"])
+                if pnorm in seen_folder_paths:
+                    continue
+                seen_folder_paths.add(pnorm)
+                item["excluded"] = is_path_excluded(item["path"], ex_list)
+                item["default_checked"] = False
+                all_folders.append(item)
+
+    all_files.sort(key=lambda x: x["size_bytes"], reverse=True)
+    all_folders.sort(key=lambda x: x["size_bytes"], reverse=True)
+    files_out = all_files[:max_files]
+    folders_out = all_folders[:max_folders]
+
+    spaces = []
+    for item in files_out + folders_out:
+        if item["space"] not in spaces:
+            spaces.append(item["space"])
+
+    total_files_bytes = sum(x["size_bytes"] for x in files_out)
+    total_folders_bytes = sum(x["size_bytes"] for x in folders_out)
+    return {
+        "files": files_out,
+        "folders": folders_out,
+        "spaces": spaces,
+        "file_count": len(files_out),
+        "folder_count": len(folders_out),
+        "total_files_human": format_bytes(total_files_bytes),
+        "total_folders_human": format_bytes(total_folders_bytes),
     }

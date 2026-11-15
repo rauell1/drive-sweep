@@ -67,6 +67,8 @@ def list_drives() -> list[dict]:
     seen: set[str] = set()
 
     for part in psutil.disk_partitions(all=False):
+        if "cdrom" in (part.opts or "").lower():
+            continue
         mount = part.mountpoint
         norm = os.path.normcase(os.path.normpath(mount))
         if norm in seen:
@@ -355,7 +357,7 @@ class DriveScanner:
         worker_outputs: list[tuple[dict[str, DirNode], list[str]]] = []
 
         is_nt = os.name == "nt"
-        reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+        skip_win_attrs = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400) | 0x400000
         s_islnk = stat.S_ISLNK
         s_isdir = stat.S_ISDIR
         s_isreg = stat.S_ISREG
@@ -409,7 +411,7 @@ class DriveScanner:
                                 mode = st.st_mode
                                 if s_islnk(mode):
                                     continue
-                                if is_nt and (getattr(st, "st_file_attributes", 0) & reparse_flag):
+                                if is_nt and (getattr(st, "st_file_attributes", 0) & skip_win_attrs):
                                     continue
 
                                 if s_isdir(mode):
@@ -755,6 +757,58 @@ class DriveScanner:
     def get_largest_files(self, limit: int = 200) -> list[dict]:
         with self._lock:
             return list(self._largest_files[:limit])
+
+    def get_largest_folders(
+        self,
+        limit: int = 200,
+        min_size_mb: float = 50.0,
+        include_protected: bool = False,
+    ) -> list[dict]:
+        """Return top largest non-root folders across the entire scanned drive."""
+        min_bytes = int(max(0.0, float(min_size_mb)) * 1024 * 1024)
+        home_norm = os.path.normcase(os.path.abspath(str(Path.home())))
+        app_data_norms = {
+            os.path.normcase(os.path.abspath(str(Path.home() / "AppData"))),
+            os.path.normcase(os.path.abspath(str(Path.home() / "AppData" / "Local"))),
+            os.path.normcase(os.path.abspath(str(Path.home() / "AppData" / "Roaming"))),
+        }
+        with self._lock:
+            root_norm = os.path.normcase(os.path.normpath(self.root_path)) if self.root_path else ""
+            out: list[dict] = []
+            for dpath, node in self._nodes.items():
+                norm_d = os.path.normcase(os.path.normpath(dpath))
+                if norm_d == root_norm or norm_d == home_norm or norm_d in app_data_norms:
+                    continue
+                if node.total_size < min_bytes:
+                    continue
+                if node.is_protected and not include_protected:
+                    continue
+                mtime_str, age_days = _format_mtime(node.latest_mtime)
+                risk = classify_path_risk(
+                    node.path,
+                    is_dir=True,
+                    age_days=age_days,
+                    is_dev_bloat=node.is_dev_bloat,
+                )
+                out.append({
+                    "kind": "dir",
+                    "path": node.path,
+                    "dir_path": node.parent_path or node.path,
+                    "name": node.name,
+                    "size_bytes": node.total_size,
+                    "size_human": format_bytes(node.total_size),
+                    "file_count": node.total_file_count,
+                    "mtime": node.latest_mtime,
+                    "mtime_str": mtime_str,
+                    "age_days": age_days,
+                    "is_protected": node.is_protected,
+                    "is_personal": node.is_personal,
+                    "is_dev_bloat": node.is_dev_bloat,
+                    "risk_level": risk["risk_level"],
+                    "risk_reason": risk["risk_reason"],
+                })
+            out.sort(key=lambda item: item["size_bytes"], reverse=True)
+            return out[:limit]
 
     def get_dev_artifacts(self, limit: int = 200, min_age_days: int = 0) -> list[dict]:
         with self._lock:

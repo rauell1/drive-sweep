@@ -20,7 +20,7 @@
           </svg>
         </div>
         <div class="brand-meta">
-          <div class="brand-name">DriveSweep <span id="app-version" class="ver-chip">v0.3.5</span></div>
+          <div class="brand-name">DriveSweep <span id="app-version" class="ver-chip">v0.3.6</span></div>
           <div class="brand-tag" data-i18n="app_subtitle">Storage Analyzer</div>
         </div>
         <button id="btn-theme-toggle" class="theme-toggle-btn" title="Switch Light / Dark theme" aria-label="Toggle Light or Dark Mode">
@@ -38,6 +38,17 @@
           </span>
           <span class="nav-label" data-i18n="nav_smart">Quick Clean</span>
           <span id="nav-smart-badge" class="nav-badge">0 B</span>
+        </button>
+
+        <button class="nav-item" data-tab="large">
+          <span class="nav-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="12 2 2 7 12 12 22 7 12 2"/>
+              <polyline points="2 17 12 22 22 17"/>
+              <polyline points="2 12 12 17 22 12"/>
+            </svg>
+          </span>
+          <span class="nav-label" data-i18n="nav_large">Large Files &amp; Folders</span>
         </button>
 
         <button class="nav-item" data-tab="explorer">
@@ -133,6 +144,15 @@
           <button id="btn-add-custom-preset" class="btn btn-soft" data-i18n="add_custom_folder">+ Add Custom Folder</button>
           <button id="btn-smart-scan" class="btn btn-primary" data-i18n="rescan">Re-scan</button>
         </div>
+        <div id="large-header-toolbar" class="header-toolbar hidden">
+          <div class="search-box">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+            </svg>
+            <input id="large-filter" type="search" data-i18n-placeholder="large_search_placeholder" placeholder="Search large files, folders, or paths..." />
+          </div>
+          <button id="btn-large-rescan" class="btn btn-primary" data-i18n="rescan">Re-scan</button>
+        </div>
         <div id="explorer-header-toolbar" class="header-toolbar hidden">
           <button id="btn-pick-folder" class="btn btn-soft" data-i18n="scan_custom_folder">Scan Custom Folder...</button>
           <button id="btn-explorer-rescan" class="btn btn-soft hidden" title="Force fresh scan of current drive or folder" data-i18n="rescan_drive">Re-scan</button>
@@ -200,6 +220,44 @@
           <div id="smart-groups" class="groups-stack"></div>
         </section>
 
+        <!-- TAB 1B: Large Files & Folders across Downloads, User Spaces & All Drives -->
+        <section id="tab-large" class="tab-panel">
+          <div class="browser-bar">
+            <div class="browser-filters wrap">
+              <div class="segmented-tabs">
+                <button id="btn-large-mode-files" class="subtab-btn active" type="button" data-i18n="large_files_btn">Large Files</button>
+                <button id="btn-large-mode-folders" class="subtab-btn" type="button" data-i18n="large_folders_btn">Large Folders</button>
+              </div>
+              <select id="large-space-filter" class="select">
+                <option value="">All Spaces &amp; Drives</option>
+              </select>
+              <select id="large-min-mb" class="select">
+                <option value="25">Size &ge; 25 MB</option>
+                <option value="100">Size &ge; 100 MB</option>
+                <option value="500">Size &ge; 500 MB</option>
+                <option value="1024">Size &ge; 1 GB</option>
+              </select>
+            </div>
+            <div id="large-meta" class="muted small-text">Select to review before cleaning</div>
+          </div>
+          <div class="table-card">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th class="col-check" data-i18n="th_clean">Clean</th>
+                  <th data-i18n="th_item">Item &amp; Relative Size</th>
+                  <th class="col-risk" data-i18n="th_space">Space</th>
+                  <th class="col-risk" data-i18n="th_safety">Safety</th>
+                  <th class="col-date" data-i18n="th_modified">Modified</th>
+                  <th class="col-size" data-i18n="th_size">Size</th>
+                  <th class="col-actions" data-i18n="th_actions">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="large-tbody"></tbody>
+            </table>
+          </div>
+        </section>
+
         <!-- TAB 2: Full-Drive Explorer -->
         <section id="tab-explorer" class="tab-panel">
           <!-- Empty State before First Scan -->
@@ -234,7 +292,7 @@
                 <button class="subtab-btn active" data-subview="overview" data-i18n="tab_overview">Visual Summary</button>
                 <button class="subtab-btn" data-subview="browse" data-i18n="tab_browse">Folders</button>
                 <button class="subtab-btn" data-subview="allfiles" data-i18n="tab_allfiles">Find Any File</button>
-                <button class="subtab-btn" data-subview="largest" data-i18n="tab_largest">Biggest Files</button>
+                <button class="subtab-btn" data-subview="largest" data-i18n="tab_largest">Biggest Items</button>
                 <button class="subtab-btn" data-subview="devbloat" data-i18n="tab_devbloat">Project Caches</button>
                 <button class="subtab-btn" data-subview="duplicates" data-i18n="tab_duplicates">Duplicates</button>
               </div>
@@ -368,14 +426,23 @@
               <div id="allfiles-pager" class="pager"></div>
             </div>
 
-            <!-- Subview: Largest Files -->
+            <!-- Subview: Largest Files & Folders -->
             <div id="subview-largest" class="subview">
+              <div class="browser-bar">
+                <div class="browser-filters">
+                  <div class="segmented-tabs">
+                    <button id="btn-explorer-largest-files" class="subtab-btn active" type="button" data-i18n="large_files_btn">Large Files</button>
+                    <button id="btn-explorer-largest-folders" class="subtab-btn" type="button" data-i18n="large_folders_btn">Large Folders</button>
+                  </div>
+                </div>
+                <div id="largest-meta" class="muted small-text"></div>
+              </div>
               <div class="table-card">
                 <table class="data-table">
                   <thead>
                     <tr>
                       <th class="col-check" data-i18n="th_clean">Clean</th>
-                      <th data-i18n="th_file">File &amp; Location</th>
+                      <th data-i18n="th_item">Item &amp; Relative Size</th>
                       <th class="col-risk" data-i18n="th_safety">Safety</th>
                       <th class="col-date" data-i18n="th_modified">Modified</th>
                       <th class="col-size" data-i18n="th_size">Size</th>
