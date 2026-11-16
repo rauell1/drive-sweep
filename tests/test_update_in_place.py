@@ -177,7 +177,8 @@ def test_cleanup_removes_in_place_leftovers(tmp_path: Path):
 
 
 def _run_ps(script: str, env: dict[str, str]) -> subprocess.CompletedProcess:
-    full_env = {**os.environ, **env}
+    # Same environment the app gives the hidden swap step (inherited PSModulePath removed)
+    full_env = updater.windows_powershell_env(env)
     return subprocess.run(
         ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
         env=full_env,
@@ -266,3 +267,12 @@ def test_real_folder_swap_script_replaces_program_files_only(tmp_path: Path):
     assert not (app_dir / "DriveSweep-win64.zip.download").exists()
     backup = app_dir / updater.UPDATE_BACKUP_DIRNAME
     assert (backup / "_internal" / "old_only.dll").exists()
+
+
+def test_windows_powershell_env_drops_inherited_module_path(monkeypatch):
+    monkeypatch.setenv("PSModulePath", r"C:\Program Files\PowerShell\7\Modules")
+    monkeypatch.setenv("_PYI_ARCHIVE_FILE", "x")
+    env = updater.windows_powershell_env({"DS_X": "1"})
+    assert not any(k.upper() == "PSMODULEPATH" for k in env)
+    assert "_PYI_ARCHIVE_FILE" not in env
+    assert env["DS_X"] == "1"

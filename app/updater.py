@@ -576,7 +576,7 @@ def get_authenticode_info(path: str | Path) -> dict:
             capture_output=True,
             text=True,
             timeout=60,
-            env=sanitized_subprocess_env({"DS_SIG_PATH": str(path)}),
+            env=windows_powershell_env({"DS_SIG_PATH": str(path)}),
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         data = json.loads((proc.stdout or "").strip() or "{}")
@@ -707,7 +707,12 @@ Start-Sleep -Milliseconds 400
 Get-ChildItem Env:_PYI_* -ErrorAction SilentlyContinue | Remove-Item -ErrorAction SilentlyContinue
 Remove-Item Env:_MEIPASS2 -ErrorAction SilentlyContinue
 $old = $env:DS_OLD_EXE; $new = $env:DS_NEW_EXE; $bak = "$old.old"
-$hash = (Get-FileHash -LiteralPath $new -Algorithm SHA256).Hash.ToLower()
+# Hash with .NET directly so no PowerShell module has to load (works in any PowerShell host).
+$fs = [System.IO.File]::OpenRead($new)
+try {
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  $hash = ([System.BitConverter]::ToString($sha.ComputeHash($fs)) -replace '[^0-9A-Fa-f]', '').ToLower()
+} finally { $fs.Dispose() }
 if ($hash -ne $env:DS_SHA256) {
   Remove-Item -LiteralPath $new -Force -ErrorAction SilentlyContinue
   Start-Process -FilePath $old
@@ -779,11 +784,24 @@ def _wait_pids() -> str:
     return ",".join(pids)
 
 
+def windows_powershell_env(extra: dict[str, str] | None = None) -> dict[str, str]:
+    """Environment for Windows PowerShell without an inherited PSModulePath.
+
+    If DriveSweep was started from PowerShell 7, PSModulePath points at PowerShell 7 modules and
+    Windows PowerShell 5.1 then fails to load its own built in modules (Get-FileHash and
+    Get-AuthenticodeSignature are not found). Dropping it restores the default module paths.
+    """
+    env = sanitized_subprocess_env(extra)
+    for key in [k for k in env if k.upper() == "PSMODULEPATH"]:
+        env.pop(key, None)
+    return env
+
+
 def _spawn_hidden_powershell(script: str, extra_env: dict[str, str], cwd: str | None = None) -> None:
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     subprocess.Popen(
         ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-Command", script],
-        env=sanitized_subprocess_env(extra_env),
+        env=windows_powershell_env(extra_env),
         creationflags=flags,
         close_fds=True,
         cwd=cwd,
