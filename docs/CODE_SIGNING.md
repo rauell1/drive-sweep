@@ -1,23 +1,43 @@
-# Setting up code signing for DriveSweep
+# Code signing for DriveSweep
+
+## Current status and plan
+
+**Releases are not code signed, by choice, for now.**
+
+* **November 2026:** the SignPath Foundation application was not approved. The Foundation only issues certificates in its name to projects with enough public visibility: community adoption (stars, forks, contributors), independent articles or discussions, institutional backing, and sustained activity. It was explicitly not a judgment on the code, and the project is welcome to reapply.
+* **Decision:** stay unsigned and reapply later, instead of buying a paid certificate now. After the first signed release, DriveSweep only installs updates signed by the **same publisher**, so starting with a paid provider and later moving to the free Foundation certificate would force every user to download that update by hand.
+* **Meanwhile:** every release ships `SHA256SUMS.txt`, a GitHub build provenance attestation and an SBOM, and the in app updater verifies the checksum before installing. See [Verifying downloads](../README.md#verifying-downloads).
+* **The pipeline needs no changes to start signing.** With no signing secrets set, the release job skips the signing steps and the release notes say the build is unsigned.
+
+### Before reapplying
+
+Signals the Foundation looks for, and practical ways to build them:
+
+* **Adoption:** submit the ready made winget manifests (`packaging/winget/`) to the [winget-pkgs](https://github.com/microsoft/winget-pkgs) repository so users can run `winget install rauell1.DriveSweep`; ask happy users to star the repository.
+* **Independent references:** a short introduction post (for example on Reddit's Windows or open source communities, or a personal blog), a demo video, and listings on software directories.
+* **Contributors and activity:** label beginner friendly issues, answer issues and pull requests, and keep a steady release cadence with release notes.
+* **Reapply** through the SignPath Foundation website with links to that evidence (download counts, stars, articles).
+
+Once approved, follow Option A below. If a signed build becomes urgent first, Options B (Azure Trusted Signing) or a paid SignPath subscription also work with the existing pipeline, but read the warning about changing publishers above before choosing one.
+
+---
 
 Signed releases stop the "Windows protected your PC" warning from being shown as an unknown publisher, prove the files came from this project, and let DriveSweep's updater insist that every future update comes from the same publisher.
 
-The release pipeline (`.github/workflows/ci-release.yml`) is already wired for two providers. Pick **one**:
+The release pipeline (`.github/workflows/ci-release.yml`) is already wired for two providers:
 
 | | SignPath Foundation | Azure Trusted Signing |
 | --- | --- | --- |
 | Cost | Free for approved open source projects | Paid monthly Azure subscription |
-| Who can use it | Open source projects with an OSI license (MIT qualifies) | Organizations and individuals that pass Microsoft's identity validation in supported countries (check Microsoft's current eligibility) |
+| Who can use it | Open source projects with an OSI license and enough public visibility | Organizations and individuals that pass Microsoft's identity validation in supported countries (check Microsoft's current eligibility) |
 | Certificate shows | SignPath Foundation, on behalf of the project | Your validated legal name |
 | Approval per release | You approve each signing request in SignPath | None |
-
-**Recommendation: SignPath Foundation.** It is free, the repository already meets its published requirements, and the pipeline and artifact configurations below are ready for it.
 
 > **Important: choose once.** After the first signed release, DriveSweep only installs updates signed by the **same publisher**. Switching providers later changes the publisher name, so existing users would have to download the next version by hand.
 
 ---
 
-## Option A: SignPath Foundation (recommended)
+## Option A: SignPath Foundation (the plan, once approved)
 
 ### 1. What the repository already provides
 SignPath Foundation reviews these before approving a project. They are already in place:
@@ -27,7 +47,7 @@ SignPath Foundation reviews these before approving a project. They are already i
 - Builds that run only on GitHub Actions from the public repository, with pinned actions, hash locked dependencies and build provenance.
 - Artifact configurations: [`.signpath/artifact-configurations/`](../.signpath/artifact-configurations/).
 
-### 2. Apply
+### 2. Apply (first attempt: November 2026, not approved yet; see the plan above)
 1. Go to the SignPath Foundation website (signpath.org) and open the application for open source projects.
 2. Give the repository URL `https://github.com/rauell1/drive-sweep`, a short description, and yourself as the maintainer.
 3. Wait for approval. SignPath then creates an organization and a project for DriveSweep and sends you the login details.
