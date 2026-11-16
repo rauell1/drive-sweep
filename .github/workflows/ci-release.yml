@@ -118,7 +118,7 @@ jobs:
       - name: Upload unsigned executables for SignPath
         id: upload-unsigned-exes
         if: steps.signing.outputs.signpath == 'true'
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: drivesweep-unsigned-exes
           path: |
@@ -163,7 +163,7 @@ jobs:
       - name: Upload unsigned installer for SignPath
         id: upload-unsigned-setup
         if: steps.signing.outputs.signpath == 'true'
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: drivesweep-unsigned-setup
           path: dist/setup/DriveSweep-Setup-*.exe
@@ -208,7 +208,7 @@ jobs:
             dist/DriveSweep-Setup-*.exe
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: drivesweep-win64
           path: |
