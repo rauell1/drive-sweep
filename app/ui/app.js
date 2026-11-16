@@ -17,7 +17,7 @@ const ICON_MOON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" s
 const state = {
   theme: "dark",
   language: "en",
-  version: "0.6.0",
+  version: "0.7.0",
   activeTab: "smart",
   dataDir: "",
   installKind: "source",
