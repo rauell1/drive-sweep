@@ -20,7 +20,7 @@ Choose **Option A** (standard Windows installer, recommended for most users) or 
 2. Under the latest release (**Assets** section at the bottom), click **`DriveSweep-Setup-0.7.0.exe`** (or the newest version listed) to download it.
 3. Open your `Downloads` folder and double-click the downloaded `DriveSweep-Setup-...exe` file.
 4. **If Windows shows a "Windows protected your PC" (SmartScreen) blue popup:**
-   - This appears on new open source Windows apps until they are code signed. Before running, you can verify the file's SHA-256 against `SHA256SUMS.txt` on the Releases page, and its build provenance with `gh attestation verify DriveSweep-Setup-...exe --repo rauell1/drive-sweep`.
+   - DriveSweep releases are not code signed yet (see [Code Signing Policy](#code-signing-policy)), so Windows shows this for a publisher it does not know. Before running, you can [verify the download](#verifying-downloads) against `SHA256SUMS.txt` and its build provenance.
    - Click **More info**, then click **Run anyway**.
 5. **Accept the Administrator prompt (UAC):** Click **Yes** when Windows asks if Setup can make changes to your device. Setup needs this to install into `Program Files`. The app itself then runs as a standard user.
 6. Follow the setup wizard (**Next -> Install -> Finish**). Leave **Launch DriveSweep** checked to open the app right away, or open **DriveSweep** anytime from your Start Menu or Desktop shortcut.
@@ -111,15 +111,33 @@ These protections reduce risk; they do not remove it. You decide what is removed
 
 ## Code Signing Policy
 
-**Current status: DriveSweep releases are not code signed yet.** Each release states whether its files are signed. Until then, verify downloads with `SHA256SUMS.txt` and the GitHub build provenance attestation (`gh attestation verify <file> --repo rauell1/drive-sweep`).
+**Current status: DriveSweep releases are not code signed.** Windows SmartScreen may therefore show "Windows protected your PC" the first time you run a download; click **More info > Run anyway** once you have verified the file (see [Verifying downloads](#verifying-downloads)). Each release states in its notes whether its files are signed.
 
-The project has applied for free code signing from [SignPath Foundation](https://signpath.org). Once approved, signed releases will carry this notice: _Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org)._
+The project applied for free code signing from [SignPath Foundation](https://signpath.org) in November 2026. The application was not approved yet because the Foundation requires a project to show more public visibility first (community adoption, independent references and sustained activity); the decision was not about the code. The project will reapply as it grows. Until then releases stay unsigned on purpose, rather than switching to a paid certificate that would later change the publisher name and break automatic updates.
+
+Once a signed release is published, its notes will carry this notice: _Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org)._
+
+### Verifying downloads
+
+Every release includes three ways to check that a file is genuine and unchanged:
+
+1. **Checksum.** In PowerShell, compare the file's hash with the matching line in `SHA256SUMS.txt` from the same release:
+   ```powershell
+   (Get-FileHash .\DriveSweep-Setup-0.7.0.exe -Algorithm SHA256).Hash.ToLower()
+   ```
+2. **Build provenance.** Proves the file was built by this repository's GitHub Actions workflow from a specific commit (requires the [GitHub CLI](https://cli.github.com)):
+   ```powershell
+   gh attestation verify .\DriveSweep-Setup-0.7.0.exe --repo rauell1/drive-sweep
+   ```
+3. **Software bill of materials.** `DriveSweep-sbom.cdx.json` lists every bundled Python package and version.
+
+DriveSweep's built in updater does the checksum check automatically before installing anything.
 
 ### Project Team & Roles
 - **Authors / Maintainers / Approvers:** [Roy Otieno (@rauell1)](https://github.com/rauell1)
 - All source code changes are committed to the public repository and built through the GitHub Actions workflow in [.github/workflows/ci-release.yml](https://github.com/rauell1/drive-sweep/blob/main/.github/workflows/ci-release.yml). Every third party action is pinned to a commit SHA and every Python dependency is installed from the hash-locked `requirements-dev.lock`.
 - The pipeline signs in the correct order: the app executables first, then the zip and installer are built from the signed files, then the installer itself is signed.
-- Step by step setup for SignPath Foundation (recommended, free for open source) or Azure Trusted Signing: [docs/CODE_SIGNING.md](docs/CODE_SIGNING.md). The SignPath artifact configurations live in [`.signpath/artifact-configurations/`](.signpath/artifact-configurations/).
+- The pipeline is ready to sign as soon as a provider is set up; see [docs/CODE_SIGNING.md](docs/CODE_SIGNING.md) for the current plan and the setup steps. The SignPath artifact configurations live in [`.signpath/artifact-configurations/`](.signpath/artifact-configurations/).
 - Tagged releases are never published with SignPath's test certificate; test signing runs only through **Run workflow**.
 
 ---
