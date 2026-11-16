@@ -8,51 +8,101 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
-jobs:
-  test-and-build:
-    runs-on: windows-latest
-    permissions:
-      contents: write
-    env:
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+# Least privilege by default; only the release job can write.
+permissions:
+  contents: read
 
+# Every third party action is pinned to a full commit SHA (the tag is noted beside it),
+# so a moved or hijacked tag cannot change what runs in this pipeline.
+
+jobs:
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Check locked dependencies for known vulnerabilities
+        run: pipx run pip-audit==2.10.1 --requirement requirements-dev.lock --require-hashes --disable-pip --progress-spinner off
+
+  test:
+    name: Unit tests (Windows)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
-          cache: "pip"
 
-      - name: Create virtual environment and install dependencies
+      - name: Install hash locked dependencies
         shell: pwsh
         run: |
           python -m venv .venv
-          .\.venv\Scripts\python.exe -m pip install --upgrade pip
-          .\.venv\Scripts\pip.exe install -r requirements-dev.txt
+          .\.venv\Scripts\python.exe -m pip install --require-hashes -r requirements-dev.lock
 
       - name: Run unit tests
         shell: pwsh
         run: .\.venv\Scripts\python.exe -m pytest -v
 
-      - name: Install Inno Setup for Setup.exe installer
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-        shell: pwsh
-        run: choco install innosetup -y
+  release:
+    name: Build, sign and publish
+    needs: [audit, test]
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    permissions:
+      contents: write      # publish the GitHub Release
+      id-token: write      # build provenance attestation and Azure OIDC
+      attestations: write  # build provenance attestation
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
-      - name: Build Windows executables and installer
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-        shell: pwsh
-        run: .\build.ps1
+      - name: Set up Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
 
-      - name: Optional Azure Trusted Signing
-        if: (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') && env.AZURE_CLIENT_ID != ''
-        uses: azure/trusted-signing-action@v0.5.9
+      - name: Install hash locked dependencies
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install --require-hashes -r requirements-dev.lock
+
+      # Only true/false flags leave this step; secret values stay inside the signing steps.
+      - name: Detect signing configuration
+        id: signing
+        shell: pwsh
         env:
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          HAS_AZURE: ${{ secrets.AZURE_CLIENT_ID != '' }}
+          HAS_SIGNPATH: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+        run: |
+          "azure=$env:HAS_AZURE" >> $env:GITHUB_OUTPUT
+          "signpath=$env:HAS_SIGNPATH" >> $env:GITHUB_OUTPUT
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      # Stage 1: build the executables (portable exe and the folder bundle the installer ships).
+      - name: Build executables
+        shell: pwsh
+        run: .\build.ps1 -Stage Binaries
+
+      # Stage 2: sign the executables BEFORE they are zipped or packed into Setup,
+      # so the DriveSweep.exe that ends up installed on users' PCs is signed too.
+      - name: Sign executables (Azure Trusted Signing)
+        if: steps.signing.outputs.azure == 'true'
+        uses: azure/trusted-signing-action@bb15ca63eb5548cc306f4f335c5617bb414abcad # v0.5.9
         with:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -60,49 +110,83 @@ jobs:
           endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
           trusted-signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
           certificate-profile-name: ${{ secrets.AZURE_SIGNING_PROFILE }}
-          files-folder: dist
-          files-folder-filter: exe
+          files: ${{ github.workspace }}\dist\DriveSweep.exe,${{ github.workspace }}\dist\DriveSweep-win64\DriveSweep.exe
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
 
-      - name: Upload unsigned artifact for SignPath (when enabled)
-        id: upload-unsigned-artifact
-        if: (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') && env.SIGNPATH_API_TOKEN != ''
-        uses: actions/upload-artifact@v5
+      - name: Upload unsigned executables for SignPath
+        id: upload-unsigned-exes
+        if: steps.signing.outputs.signpath == 'true'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
-          name: drivesweep-unsigned
+          name: drivesweep-unsigned-exes
           path: |
             dist/DriveSweep.exe
-            dist/DriveSweep-Setup-*.exe
+            dist/DriveSweep-win64/DriveSweep.exe
 
-      - name: Sign executables with SignPath Foundation (when configured)
-        if: (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') && env.SIGNPATH_API_TOKEN != ''
-        uses: signpath/github-action-submit-signing-request@v3
+      - name: Sign executables (SignPath Foundation)
+        if: steps.signing.outputs.signpath == 'true'
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
           project-slug: ${{ secrets.SIGNPATH_PROJECT_SLUG }}
           signing-policy-slug: ${{ secrets.SIGNPATH_SIGNING_POLICY_SLUG }}
-          github-artifact-id: ${{ steps.upload-unsigned-artifact.outputs.artifact-id }}
+          artifact-configuration-slug: executables
+          github-artifact-id: ${{ steps.upload-unsigned-exes.outputs.artifact-id }}
           wait-for-completion: true
           output-artifact-directory: dist
 
-      - name: Recompute SHA256SUMS and Winget manifest after signing
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+      # Stage 3: zip the signed bundle and build Setup into dist\setup\.
+      - name: Package zip and installer
+        shell: pwsh
+        run: .\build.ps1 -Stage Package
+
+      # Stage 4: sign the installer itself.
+      - name: Sign installer (Azure Trusted Signing)
+        if: steps.signing.outputs.azure == 'true'
+        uses: azure/trusted-signing-action@bb15ca63eb5548cc306f4f335c5617bb414abcad # v0.5.9
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\dist\setup
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Upload unsigned installer for SignPath
+        id: upload-unsigned-setup
+        if: steps.signing.outputs.signpath == 'true'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: drivesweep-unsigned-setup
+          path: dist/setup/DriveSweep-Setup-*.exe
+
+      - name: Sign installer (SignPath Foundation)
+        if: steps.signing.outputs.signpath == 'true'
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ secrets.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ secrets.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: installer
+          github-artifact-id: ${{ steps.upload-unsigned-setup.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: dist/setup
+
+      # Stage 5: checksums, winget hash, SBOM.
+      - name: Write SHA256SUMS and Winget manifest hash
         shell: pwsh
         run: |
-          $lines = @()
+          .\build.ps1 -Stage Checksums
           $setupExe = Get-ChildItem "dist\DriveSweep-Setup-*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-          $targets = @("dist\DriveSweep.exe", "dist\DriveSweep-win64.zip") + @(Get-ChildItem "dist\DriveSweep-Setup-*.exe" -ErrorAction SilentlyContinue | ForEach-Object { "dist\$($_.Name)" })
-          foreach ($file in $targets) {
-            if (Test-Path $file) {
-              $h = (Get-FileHash -Path $file -Algorithm SHA256).Hash.ToLower()
-              $lines += "$h  $(Split-Path $file -Leaf)"
-            }
-          }
-          Set-Content -Path "dist\SHA256SUMS.txt" -Value $lines -Encoding UTF8
-
           $wingetInstaller = "packaging\winget\rauell1.DriveSweep.installer.yaml"
           if ($setupExe -and (Test-Path $wingetInstaller)) {
             $setupSha = (Get-FileHash -Path $setupExe.FullName -Algorithm SHA256).Hash.ToUpper()
@@ -111,9 +195,20 @@ jobs:
             Set-Content -Path $wingetInstaller -Value $yaml -Encoding UTF8 -NoNewline
           }
 
+      - name: Generate software bill of materials (CycloneDX)
+        shell: pwsh
+        run: pipx run --spec cyclonedx-bom==8.0.1 cyclonedx-py requirements requirements-dev.lock --of JSON -o dist\DriveSweep-sbom.cdx.json
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: |
+            dist/DriveSweep.exe
+            dist/DriveSweep-win64.zip
+            dist/DriveSweep-Setup-*.exe
+
       - name: Upload build artifacts
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: drivesweep-win64
           path: |
@@ -121,20 +216,29 @@ jobs:
             dist/DriveSweep-win64.zip
             dist/DriveSweep-Setup-*.exe
             dist/SHA256SUMS.txt
+            dist/DriveSweep-sbom.cdx.json
             packaging/winget/*.yaml
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           body: |
-            Interactive Windows disk analyzer and AI/dev cache cleaner with Recycle Bin and Permanent cleanup modes, Light/Dark themes, Administrator mode, and local-only data storage.
+            Windows disk analyzer and cache cleaner with Recycle Bin and Permanent cleanup modes, Light/Dark themes, optional Administrator mode, and local-only data storage.
 
-            ### Code Signing Policy
-            Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+            ### Verify your download
+            * Compare the file's SHA-256 with `SHA256SUMS.txt`.
+            * Check the build provenance: `gh attestation verify <file> --repo ${{ github.repository }}`.
+            * `DriveSweep-sbom.cdx.json` lists every bundled Python package (CycloneDX format).
+
+            ### Code signing
+            ${{ steps.signing.outputs.signpath == 'true' && 'Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).' || (steps.signing.outputs.azure == 'true' && 'Executables are signed with Azure Trusted Signing.' || 'These builds are not code signed yet, so Windows SmartScreen may warn on first run. Verify the checksum and provenance above before running.') }}
+
+            Provided "as is" under the MIT License, without warranty. Back up important files before cleaning.
           files: |
             dist/DriveSweep.exe
             dist/DriveSweep-win64.zip
             dist/DriveSweep-Setup-*.exe
             dist/SHA256SUMS.txt
+            dist/DriveSweep-sbom.cdx.json
             packaging/winget/*.yaml

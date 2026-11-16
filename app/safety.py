@@ -201,6 +201,180 @@ def relaunch_as_admin() -> dict:
         return {"ok": False, "error": str(exc)}
 
 
+_IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003
+_IO_REPARSE_TAG_SYMLINK = 0xA000000C
+
+
+@lru_cache(maxsize=256)
+def _profile_is_current_user(profile_norm: str, home_norm: str) -> bool:
+    """Return True if a profile folder is the current user's home (8.3 short names included)."""
+    if profile_norm == home_norm:
+        return True
+    try:
+        return os.path.samefile(profile_norm, home_norm)
+    except OSError:
+        return False
+
+
+def _users_root_norm() -> str:
+    """Return the normalized parent folder of user profiles (usually C:\\Users), or '' if unknown."""
+    home = _normalize(Path.home())
+    users = home.parent
+    if users == users.parent:
+        return ""
+    return os.path.normcase(str(users))
+
+
+def other_user_profile_status(norm_path: str, users: str | None = None, home_norm: str | None = None) -> str:
+    """Classify a normcased absolute Windows path against the user profiles folder.
+
+    Returns "root" for the profiles folder itself (C:\\Users), "other" for anything inside a
+    profile that is not the current user's (other accounts, Public, Default), or "" otherwise.
+    """
+    if users is None:
+        users = _users_root_norm()
+    if not users:
+        return ""
+    if norm_path == users:
+        return "root"
+    prefix = users.rstrip("\\/") + os.sep
+    if not norm_path.startswith(prefix):
+        return ""
+    first = norm_path[len(prefix):].split(os.sep, 1)[0]
+    if not first:
+        return ""
+    if home_norm is None:
+        home_norm = os.path.normcase(str(_normalize(Path.home())))
+    if _profile_is_current_user(prefix + first, home_norm):
+        return ""
+    return "other"
+
+
+def is_link_entry(raw_path: str | Path) -> bool:
+    """Return True if the entry itself is a symbolic link, junction, or volume mount point.
+
+    Cloud placeholder files (OneDrive) are reparse points too but are not links, so only
+    name surrogate tags that redirect to another location are treated as links.
+    """
+    try:
+        st = os.lstat(to_os_path(raw_path))
+    except OSError:
+        return False
+    if stat.S_ISLNK(st.st_mode):
+        return True
+    tag = getattr(st, "st_reparse_tag", 0)
+    return tag in (_IO_REPARSE_TAG_MOUNT_POINT, _IO_REPARSE_TAG_SYMLINK)
+
+
+def find_link_in_path(raw_path: str | Path) -> str | None:
+    """Return the first path component (from the drive root down) that is a link, else None."""
+    target = _normalize(raw_path)
+    parts = target.parts
+    if not parts:
+        return None
+    cur = Path(parts[0])
+    for part in parts[1:]:
+        cur = cur / part
+        if is_link_entry(cur):
+            return str(cur)
+    return None
+
+
+def _remove_link_only(target: Path) -> None:
+    """Remove a symlink or junction itself without touching the folder it points to."""
+    os_target = to_os_path(target)
+    try:
+        os.unlink(os_target)
+    except (IsADirectoryError, PermissionError, OSError):
+        os.rmdir(os_target)
+
+
+def _norm_key(raw_path: str | Path) -> str:
+    return os.path.normcase(str(_normalize(raw_path)))
+
+
+def _is_within(child_norm: str, parent_norm: str) -> bool:
+    return child_norm == parent_norm or child_norm.startswith(parent_norm.rstrip("\\/") + os.sep)
+
+
+def _exclusion_conflict(target: Path, exclusion_norms: list[str]) -> str:
+    """Return 'excluded' if target is on Always Keep, 'contains' if it holds an Always Keep item."""
+    t = _norm_key(target)
+    for ex in exclusion_norms:
+        if _is_within(t, ex):
+            return "excluded"
+    for ex in exclusion_norms:
+        if _is_within(ex, t):
+            return "contains"
+    return ""
+
+
+def recycle_bin_supported(raw_path: str | Path) -> bool:
+    """Return False for network and removable drives, where Windows has no Recycle Bin."""
+    if os.name != "nt":
+        return True
+    p = str(_normalize(raw_path))
+    if p.startswith("\\\\"):
+        return False
+    drive = os.path.splitdrive(p)[0]
+    if not drive:
+        return True
+    try:
+        dtype = ctypes.windll.kernel32.GetDriveTypeW(drive + "\\")
+    except Exception:
+        return True
+    # DRIVE_FIXED = 3. External USB hard disks also report as fixed and keep a Recycle Bin.
+    return dtype == 3
+
+
+_SECURE_DIR_ACL = ("*S-1-5-32-544:(OI)(CI)F", "*S-1-5-18:(OI)(CI)F")
+
+
+def _lock_down_dir_for_admins(folder: Path) -> bool:
+    """Make Administrators the owner and the only writers (with SYSTEM) of folder and its contents."""
+    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    env = sanitized_subprocess_env()
+    try:
+        own = subprocess.run(
+            ["icacls", str(folder), "/setowner", "*S-1-5-32-544", "/T", "/C", "/Q"],
+            capture_output=True, text=True, timeout=60, creationflags=flags, env=env,
+        )
+        acl = subprocess.run(
+            ["icacls", str(folder), "/inheritance:r", "/grant:r", *_SECURE_DIR_ACL, "/T", "/C", "/Q"],
+            capture_output=True, text=True, timeout=60, creationflags=flags, env=env,
+        )
+        return own.returncode == 0 and acl.returncode == 0
+    except Exception:
+        return False
+
+
+def secure_work_dir(name: str) -> Path:
+    """Return a folder for files that an elevated DriveSweep will run or hand to system tools.
+
+    When running as Administrator on Windows this is %ProgramData%\\DriveSweep\\<name>, owned by
+    Administrators and writable only by Administrators and SYSTEM. That stops a standard user
+    process from swapping a verified installer or a diskpart script before it is used.
+    Otherwise (not elevated, or the lock down failed) it falls back to the per user temp folder.
+    """
+    safe_name = "".join(ch for ch in str(name) if ch.isalnum() or ch in "-_") or "Work"
+    if os.name == "nt" and is_admin():
+        root = Path(os.environ.get("ProgramData", "C:\\ProgramData")) / "DriveSweep"
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+            if find_link_in_path(root) is None and _lock_down_dir_for_admins(root):
+                target = root / safe_name
+                target.mkdir(exist_ok=True)
+                if not is_link_entry(target) and _lock_down_dir_for_admins(target):
+                    return target
+        except OSError:
+            pass
+    import tempfile
+
+    fallback = Path(tempfile.gettempdir()) / f"DriveSweep-{safe_name}"
+    fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
+
+
 def _windows_protected_roots() -> list[Path]:
     system_drive = os.environ.get("SystemDrive", "C:") + "\\"
     windir = Path(os.environ.get("WINDIR", os.path.join(system_drive, "Windows")))
@@ -280,6 +454,13 @@ def is_os_protected_path(raw_path: str | Path, *, allow_temp_contents: bool = Fa
         home = _normalize(Path.home())
         if p in (home, home / "AppData", home / "AppData" / "Local", home / "AppData" / "Roaming"):
             return True
+
+        if os.path.normcase(str(p)) == os.path.normcase(str(_normalize(program_data))):
+            return True
+
+        # The Users folder itself, plus other accounts, Public and Default profiles
+        if other_user_profile_status(os.path.normcase(str(p))):
+            return True
     else:
         for root in ("/System", "/usr", "/bin", "/sbin", "/etc", "/lib", "/lib64", "/var", "/boot", "/dev", "/proc", "/sys"):
             if _is_same_or_child(p, Path(root)):
@@ -300,11 +481,15 @@ class ScanGuard:
         "win_temp_prefix",
         "home_exact_set",
         "personal_prefixes",
+        "users_root",
+        "home_norm",
     )
 
     def __init__(self) -> None:
         self.is_nt = os.name == "nt"
         home = _normalize(Path.home())
+        self.home_norm = os.path.normcase(str(home))
+        self.users_root = _users_root_norm() if self.is_nt else ""
         if self.is_nt:
             windir = _normalize(os.environ.get("WINDIR", "C:\\Windows"))
             win_temp = _normalize(windir / "Temp")
@@ -321,9 +506,15 @@ class ScanGuard:
                 home / "AppData" / "Local",
                 home / "AppData" / "Roaming",
             )
+            program_data = _normalize(
+                os.environ.get(
+                    "ProgramData",
+                    os.path.join(os.environ.get("SystemDrive", "C:") + "\\", "ProgramData"),
+                )
+            )
             self.home_exact_set = frozenset(
                 os.path.normcase(str(h)) for h in home_targets
-            ) | frozenset(protected_exacts)
+            ) | frozenset(protected_exacts) | frozenset({os.path.normcase(str(program_data))})
         else:
             self.win_temp_exact = ""
             self.win_temp_prefix = ""
@@ -397,6 +588,8 @@ class ScanGuard:
                 if name_lower in {"recovery", "boot", "$winreagent"}:
                     return True, is_personal
             if norm.startswith(self.protected_prefixes):
+                return True, is_personal
+            if self.users_root and other_user_profile_status(norm, self.users_root, self.home_norm):
                 return True, is_personal
             return False, is_personal
 
@@ -641,6 +834,14 @@ def _handle_remove_readonly(func, path: str, _exc_info) -> None:
     func(os_path)
 
 
+def _rmtree(os_target: str) -> None:
+    # shutil.rmtree never follows nested junctions or symlinks; it removes the link itself.
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(os_target, onexc=_handle_remove_readonly)
+    else:
+        shutil.rmtree(os_target, onerror=_handle_remove_readonly)
+
+
 def _permanent_delete_entry(target: Path) -> None:
     os_target = to_os_path(target)
     if os.path.islink(os_target) or os.path.isfile(os_target):
@@ -650,7 +851,7 @@ def _permanent_delete_entry(target: Path) -> None:
             os.chmod(os_target, stat.S_IWRITE)
             os.unlink(os_target)
     elif os.path.isdir(os_target):
-        shutil.rmtree(os_target, onerror=_handle_remove_readonly)
+        _rmtree(os_target)
 
 
 def _recycle_entry(target: Path) -> None:
@@ -711,11 +912,18 @@ def delete_targets(
     mode: str = "recycle",
     progress_cb: Callable[[int, int, str, int], None] | None = None,
     cancel_event: threading.Event | None = None,
+    exclusions: Iterable[str] | None = None,
 ) -> DeleteResult:
-    """Delete selected files/directories via Recycle Bin or Permanent Delete."""
+    """Delete selected files/directories via Recycle Bin or Permanent Delete.
+
+    Every target is re-checked here, independently of the UI:
+    protected OS paths, Always Keep exclusions, and folder links (junctions, symlinks,
+    mount points) are enforced so a redirected path can never steer an elevated delete.
+    """
     if mode not in ("recycle", "permanent"):
         raise ValueError(f"Invalid delete mode: {mode}")
 
+    exclusion_norms = [_norm_key(ex) for ex in (exclusions or []) if str(ex or "").strip()]
     deduped = deduplicate_targets(targets)
     total_items = len(deduped)
     delete_fn = _recycle_entry if mode == "recycle" else _permanent_delete_entry
@@ -743,6 +951,17 @@ def delete_targets(
             })
             continue
 
+        conflict = _exclusion_conflict(target, exclusion_norms)
+        if conflict == "excluded":
+            failed.append({"path": str(target), "error": "Skipped: this item is on your Always Keep list."})
+            continue
+        if conflict == "contains" and not contents_only:
+            failed.append({
+                "path": str(target),
+                "error": "Skipped: this folder contains an item on your Always Keep list.",
+            })
+            continue
+
         if not os.path.lexists(os_target):
             failed.append({
                 "path": str(target),
@@ -750,11 +969,39 @@ def delete_targets(
             })
             continue
 
-        before_size = get_entry_size(target)
+        link = find_link_in_path(target)
+        if link is not None:
+            is_self = os.path.normcase(link) == os.path.normcase(str(target))
+            if is_self and not contents_only:
+                # Remove only the link; the folder it points to is never touched.
+                try:
+                    _remove_link_only(target)
+                    deleted.append({"path": str(target), "freed_bytes": 0, "partial": False, "link_only": True})
+                except Exception as exc:
+                    failed.append({"path": str(target), "error": f"Could not remove folder link: {exc}"})
+            else:
+                failed.append({
+                    "path": str(target),
+                    "error": (
+                        f"Blocked: {link} is a folder link (junction or symbolic link). "
+                        "Open the real folder it points to and clean that instead."
+                    ),
+                })
+            if progress_cb is not None:
+                progress_cb(idx + 1, total_items, str(target), freed_bytes)
+            continue
+
+        if mode == "recycle" and not recycle_bin_supported(target):
+            failed.append({
+                "path": str(target),
+                "error": "This drive has no Recycle Bin (network or removable drive). Use Delete Forever if you are sure.",
+            })
+            continue
 
         try:
             if contents_only and os.path.isdir(os_target):
                 child_errors: list[str] = []
+                reclaimed = 0
                 with os.scandir(os_target) as it:
                     children = [Path(strip_long_prefix(e.path)) for e in it]
                 for child in children:
@@ -764,13 +1011,22 @@ def delete_targets(
                     if is_os_protected_path(child, allow_temp_contents=False):
                         child_errors.append(f"Protected child skipped: {child.name}")
                         continue
+                    if _exclusion_conflict(child, exclusion_norms):
+                        child_errors.append(f"Always Keep item skipped: {child.name}")
+                        continue
                     try:
+                        if is_link_entry(child):
+                            _remove_link_only(child)
+                            continue
+                        child_size = get_entry_size(child)
                         delete_fn(child)
+                        if os.path.lexists(to_os_path(child)):
+                            reclaimed += max(0, child_size - get_entry_size(child))
+                        else:
+                            reclaimed += child_size
                     except Exception as exc:
                         child_errors.append(f"{child.name}: {exc}")
 
-                after_size = get_entry_size(target)
-                reclaimed = max(0, before_size - after_size)
                 freed_bytes += reclaimed
                 if reclaimed > 0 or not child_errors:
                     deleted.append({
@@ -786,6 +1042,7 @@ def delete_targets(
                 if cancelled:
                     break
             else:
+                before_size = get_entry_size(target)
                 delete_fn(target)
                 after_size = get_entry_size(target) if os.path.lexists(os_target) else 0
                 reclaimed = max(0, before_size - after_size)

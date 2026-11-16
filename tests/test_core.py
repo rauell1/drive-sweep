@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 import os
 import time
 from pathlib import Path
@@ -33,12 +35,16 @@ from app.storage import (
 )
 
 
+
+WINDOWS_ONLY = pytest.mark.skipif(os.name != "nt", reason="Uses Windows drive letters and path semantics")
+
 def test_format_bytes():
     assert format_bytes(0) == "0 B"
     assert format_bytes(1024) == "1.00 KB"
     assert format_bytes(1024 * 1024) == "1.00 MB"
 
 
+@WINDOWS_ONLY
 def test_os_protection_guards():
     assert is_os_protected_path("C:\\")
     assert is_os_protected_path("D:\\")
@@ -211,6 +217,7 @@ def test_list_drives_and_smart_scan_smoke(tmp_path: Path, monkeypatch):
         assert item["risk_level"] in ("safe", "caution")
 
 
+@WINDOWS_ONLY
 def test_risk_classification_theme_and_analytics(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("DRIVESWEEP_DATA_DIR", str(tmp_path / "appdata"))
 
@@ -244,6 +251,7 @@ def test_risk_classification_theme_and_analytics(tmp_path: Path, monkeypatch):
     assert analytics["risk_summary"]["safe"]["size_bytes"] == 3000
 
 
+@WINDOWS_ONLY
 def test_scan_guard_parity_and_drive_scan_cache(tmp_path: Path):
     guard = ScanGuard()
     home = Path.home()
@@ -310,14 +318,19 @@ def test_ensure_admin_or_relaunch(monkeypatch):
     monkeypatch.setattr(entry_main, "is_admin", lambda: True)
     assert entry_main.ensure_admin_or_relaunch([]) is True
 
-    # Standard user -> attempts UAC relaunch and returns False so parent exits cleanly
+    # Standard user without --elevate -> keeps running with least privilege, no UAC prompt
     monkeypatch.setattr(entry_main, "is_admin", lambda: False)
-    monkeypatch.setattr(entry_main, "relaunch_as_admin", lambda: {"ok": True, "launching": True})
-    assert entry_main.ensure_admin_or_relaunch([]) is False
+    calls: list[int] = []
+    monkeypatch.setattr(entry_main, "relaunch_as_admin", lambda: (calls.append(1), {"ok": True, "launching": True})[1])
+    assert entry_main.ensure_admin_or_relaunch([]) is True
+    assert calls == []
+
+    # Standard user with --elevate -> attempts UAC relaunch and returns False so parent exits cleanly
+    assert entry_main.ensure_admin_or_relaunch(["--elevate"]) is False
 
     # If user declines UAC, returns True cleanly instead of looping infinitely
     monkeypatch.setattr(entry_main, "relaunch_as_admin", lambda: {"ok": False, "error": "cancelled"})
-    assert entry_main.ensure_admin_or_relaunch([]) is True
+    assert entry_main.ensure_admin_or_relaunch(["--elevate"]) is True
 
 
 def test_updater_semver_sha256_and_url_verification(tmp_path: Path, monkeypatch):
@@ -347,8 +360,8 @@ def test_updater_semver_sha256_and_url_verification(tmp_path: Path, monkeypatch)
     payload = b"MZ-mock-installer-binary"
     good_hash = hashlib.sha256(payload).hexdigest()
     bad_hash = "0" * 64
-    sums_good = f"{good_hash}  DriveSweep-Setup-0.2.1.exe\n".encode("utf-8")
-    sums_bad = f"{bad_hash}  DriveSweep-Setup-0.2.1.exe\n".encode("utf-8")
+    sums_good = f"{good_hash}  DriveSweep-Setup-99.0.1.exe\n".encode("utf-8")
+    sums_bad = f"{bad_hash}  DriveSweep-Setup-99.0.1.exe\n".encode("utf-8")
 
     class FakeResp(io.BytesIO):
         def __enter__(self):
@@ -367,9 +380,9 @@ def test_updater_semver_sha256_and_url_verification(tmp_path: Path, monkeypatch)
 
     monkeypatch.setattr(updater.urllib.request, "urlopen", fake_urlopen_good)
     ok_res = updater.download_and_verify_update(
-        "https://github.com/rauell1/drive-sweep/releases/download/v0.2.1/DriveSweep-Setup-0.2.1.exe",
-        "DriveSweep-Setup-0.2.1.exe",
-        "https://github.com/rauell1/drive-sweep/releases/download/v0.2.1/SHA256SUMS.txt",
+        "https://github.com/rauell1/drive-sweep/releases/download/v99.0.1/DriveSweep-Setup-99.0.1.exe",
+        "DriveSweep-Setup-99.0.1.exe",
+        "https://github.com/rauell1/drive-sweep/releases/download/v99.0.1/SHA256SUMS.txt",
     )
     assert ok_res["ok"] is True
     assert ok_res["sha256"] == good_hash
@@ -381,14 +394,15 @@ def test_updater_semver_sha256_and_url_verification(tmp_path: Path, monkeypatch)
 
     monkeypatch.setattr(updater.urllib.request, "urlopen", fake_urlopen_bad)
     bad_res = updater.download_and_verify_update(
-        "https://github.com/rauell1/drive-sweep/releases/download/v0.2.1/DriveSweep-Setup-0.2.1.exe",
-        "DriveSweep-Setup-0.2.1.exe",
-        "https://github.com/rauell1/drive-sweep/releases/download/v0.2.1/SHA256SUMS.txt",
+        "https://github.com/rauell1/drive-sweep/releases/download/v99.0.1/DriveSweep-Setup-99.0.1.exe",
+        "DriveSweep-Setup-99.0.1.exe",
+        "https://github.com/rauell1/drive-sweep/releases/download/v99.0.1/SHA256SUMS.txt",
     )
     assert bad_res["ok"] is False
     assert "verification failed" in bad_res["error"].lower()
 
 
+@WINDOWS_ONLY
 def test_universal_windows_cache_safety_and_dynamic_discovery(tmp_path: Path):
     import app.presets as presets
 
@@ -465,6 +479,13 @@ def test_sanitized_subprocess_env_strips_pyi_markers(tmp_path: Path, monkeypatch
     monkeypatch.setattr(updater.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(updater, "_lock_file_against_writes", lambda _p: 1)
+    monkeypatch.setattr(updater, "_release_file_lock", lambda _h: None)
+    monkeypatch.setattr(
+        updater,
+        "get_authenticode_info",
+        lambda _p: {"status": "NotSigned", "subject": "", "thumbprint": ""},
+    )
 
     res = updater.launch_downloaded_update(str(fake_exe), install_kind="onefile_exe")
     assert res["ok"] is True
@@ -588,7 +609,7 @@ def test_async_update_install_progress_and_stale_cleanup(tmp_path: Path, monkeyp
 
     payload = b"MZ-setup-package-bytes" * 200
     good_hash = hashlib.sha256(payload).hexdigest()
-    sums = f"{good_hash}  DriveSweep-Setup-0.2.7.exe\n".encode("utf-8")
+    sums = f"{good_hash}  DriveSweep-Setup-99.0.7.exe\n".encode("utf-8")
 
     class FakeResp(io.BytesIO):
         headers = {}
@@ -608,14 +629,14 @@ def test_async_update_install_progress_and_stale_cleanup(tmp_path: Path, monkeyp
     monkeypatch.setattr(
         api_mod,
         "launch_downloaded_update",
-        lambda fp, install_kind=None: (launched.append(fp), {"ok": True, "should_exit": True, "mode": "setup"})[1],
+        lambda fp, install_kind=None, expected_sha256="": (launched.append(fp), {"ok": True, "should_exit": True, "mode": "setup"})[1],
     )
 
     api = api_mod.DriveSweepAPI()
     api.start_update_install(
-        "https://github.com/rauell1/drive-sweep/releases/download/v0.2.7/DriveSweep-Setup-0.2.7.exe",
-        "DriveSweep-Setup-0.2.7.exe",
-        "https://github.com/rauell1/drive-sweep/releases/download/v0.2.7/SHA256SUMS.txt",
+        "https://github.com/rauell1/drive-sweep/releases/download/v99.0.7/DriveSweep-Setup-99.0.7.exe",
+        "DriveSweep-Setup-99.0.7.exe",
+        "https://github.com/rauell1/drive-sweep/releases/download/v99.0.7/SHA256SUMS.txt",
         expected_size=len(payload),
     )
 
@@ -629,7 +650,7 @@ def test_async_update_install_progress_and_stale_cleanup(tmp_path: Path, monkeyp
     assert st["mode"] == "setup"
     assert st["sha256"] == good_hash
     assert len(launched) == 1
-    assert launched[0].endswith("DriveSweep-Setup-0.2.7.exe")
+    assert launched[0].endswith("DriveSweep-Setup-99.0.7.exe")
     assert Path(launched[0]).exists()
 
 
@@ -659,3 +680,76 @@ def test_update_check_web_fallback_on_rate_limit(monkeypatch):
     assert res["latest_version"] == "0.9.9"
     assert res["asset_name"] == "DriveSweep-Setup-0.9.9.exe"
     assert res["sha256_url"].endswith("/v0.9.9/SHA256SUMS.txt")
+
+
+def test_updater_rejects_foreign_downgrade_and_mismatched_urls(tmp_path: Path, monkeypatch):
+    import app.updater as updater
+
+    good = "https://github.com/rauell1/drive-sweep/releases/download/v99.1.0/DriveSweep-Setup-99.1.0.exe"
+    sums = "https://github.com/rauell1/drive-sweep/releases/download/v99.1.0/SHA256SUMS.txt"
+    assert updater.parse_release_download_url(good) == ("v99.1.0", "DriveSweep-Setup-99.1.0.exe")
+    for bad in (
+        "https://raw.githubusercontent.com/evil/repo/main/DriveSweep-Setup-99.1.0.exe",
+        "https://objects.githubusercontent.com/x/DriveSweep-Setup-99.1.0.exe",
+        "https://github.com/evil/drive-sweep/releases/download/v99.1.0/DriveSweep-Setup-99.1.0.exe",
+        "https://github.com/rauell1/drive-sweep/releases/download/v99.1.0/../../evil/payload.exe",
+        "https://github.com/rauell1/drive-sweep/releases/download/v99.1.0/Other.exe",
+        "https://github.com@evil.com/rauell1/drive-sweep/releases/download/v99.1.0/DriveSweep.exe",
+        "http://github.com/rauell1/drive-sweep/releases/download/v99.1.0/DriveSweep.exe",
+    ):
+        assert updater.parse_release_download_url(bad) is None, bad
+
+    def no_network(*_a, **_k):
+        raise AssertionError("network must not be used for rejected URLs")
+
+    monkeypatch.setattr(updater.urllib.request, "urlopen", no_network)
+    foreign = updater.download_and_verify_update(
+        "https://raw.githubusercontent.com/evil/repo/main/DriveSweep-Setup-99.1.0.exe",
+        "DriveSweep-Setup-99.1.0.exe",
+        sums,
+    )
+    assert foreign["ok"] is False
+    downgrade = updater.download_and_verify_update(
+        "https://github.com/rauell1/drive-sweep/releases/download/v0.0.1/DriveSweep-Setup-0.0.1.exe",
+        "DriveSweep-Setup-0.0.1.exe",
+        "https://github.com/rauell1/drive-sweep/releases/download/v0.0.1/SHA256SUMS.txt",
+    )
+    assert downgrade["ok"] is False and "newer" in downgrade["error"]
+    mixed = updater.download_and_verify_update(
+        good,
+        "DriveSweep-Setup-99.1.0.exe",
+        "https://github.com/rauell1/drive-sweep/releases/download/v99.2.0/SHA256SUMS.txt",
+    )
+    assert mixed["ok"] is False
+
+
+def test_update_signature_policy(monkeypatch):
+    import app.updater as updater
+
+    sigs = {}
+    monkeypatch.setattr(updater, "get_authenticode_info", lambda p: sigs[str(p)])
+    sigs.update({"cur": {"status": "Valid", "subject": "CN=Roy"}, "upd": {"status": "Valid", "subject": "CN=Roy"}})
+    assert updater.check_update_signature("upd", current_exe="cur")["ok"] is True
+    sigs["upd"] = {"status": "Valid", "subject": "CN=Mallory"}
+    assert updater.check_update_signature("upd", current_exe="cur")["ok"] is False
+    sigs["upd"] = {"status": "NotSigned", "subject": ""}
+    assert updater.check_update_signature("upd", current_exe="cur")["ok"] is False
+    sigs["cur"] = {"status": "NotSigned", "subject": ""}
+    assert updater.check_update_signature("upd", current_exe="cur")["ok"] is True
+    sigs["upd"] = {"status": "HashMismatch", "subject": "CN=Roy"}
+    assert updater.check_update_signature("upd", current_exe="cur")["ok"] is False
+
+
+def test_launch_rejects_file_changed_after_verification(tmp_path: Path, monkeypatch):
+    import sys
+    import app.updater as updater
+
+    setup_exe = tmp_path / "DriveSweep-Setup-99.0.0.exe"
+    setup_exe.write_bytes(b"MZ-swapped")
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(updater, "_lock_file_against_writes", lambda _p: 1)
+    monkeypatch.setattr(updater, "_release_file_lock", lambda _h: None)
+    monkeypatch.setattr(updater, "_launch_windows_setup", lambda *_a: (_ for _ in ()).throw(AssertionError("must not launch")))
+    res = updater.launch_downloaded_update(str(setup_exe), install_kind="setup", expected_sha256="0" * 64)
+    assert res["ok"] is False
+    assert not setup_exe.exists()

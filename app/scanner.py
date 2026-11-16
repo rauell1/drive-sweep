@@ -136,6 +136,29 @@ class DirNode:
     is_dev_bloat: bool = False
 
 
+
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r", "\uff1d", "\uff0b", "\uff0d", "\uff20")
+
+
+def csv_safe_cell(value):
+    """Neutralize spreadsheet formula injection (a file named =HYPERLINK(...) etc.).
+
+    Text cells that start with a formula trigger get a leading apostrophe so Excel,
+    LibreOffice and Google Sheets show them as plain text. Numbers are left alone.
+    """
+    if isinstance(value, str) and value.startswith(_CSV_FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
+
+class _SafeCsvWriter:
+    def __init__(self, writer) -> None:
+        self._writer = writer
+
+    def writerow(self, row) -> None:
+        self._writer.writerow([csv_safe_cell(v) for v in row])
+
+
 class DriveScanner:
     """Indexes a drive or folder into a single-copy tree with age & size queries."""
 
@@ -1124,7 +1147,7 @@ class DriveScanner:
             dest.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         else:
             with dest.open("w", newline="", encoding="utf-8-sig") as fh:
-                writer = csv.writer(fh)
+                writer = _SafeCsvWriter(csv.writer(fh))
                 writer.writerow(["Type", "Name", "Path", "Size (Bytes)", "Size", "Files / Age", "Safety"])
                 for n in folders_sorted:
                     writer.writerow([

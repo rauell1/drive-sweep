@@ -18,13 +18,19 @@ from app.updater import cleanup_stale_updates
 
 
 def ensure_admin_or_relaunch(argv: list[str] | None = None) -> bool:
-    """Ensure DriveSweep runs elevated on Windows unless explicitly bypassed for testing.
+    """Run with least privilege: only ask Windows for Administrator rights when requested.
+
+    DriveSweep starts as a standard user. Admin rights are needed only for system level
+    tasks (Windows Temp, DISM, hibernation, virtual disks); the user turns them on with
+    "Restart as Admin" in the app, or by launching with --elevate.
 
     Returns True if the current process should continue running, or False if an
     elevated child process was launched and this parent process should exit.
     """
     args = sys.argv[1:] if argv is None else argv
     if "--no-elevate" in args or os.environ.get("DRIVESWEEP_NO_ELEVATE") == "1":
+        return True
+    if "--elevate" not in args:
         return True
     if sys.platform != "win32" or is_admin():
         return True

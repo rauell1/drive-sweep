@@ -13,7 +13,9 @@ from app.safety import format_bytes
 
 def get_app_data_dir() -> Path:
     """Return platform-appropriate per-user data directory for DriveSweep."""
-    override = os.environ.get("DRIVESWEEP_DATA_DIR")
+    # The override exists for tests and development only. Packaged builds ignore it so an
+    # environment variable can never point the elevated app at attacker controlled settings.
+    override = None if getattr(sys, "frozen", False) else os.environ.get("DRIVESWEEP_DATA_DIR")
     if override:
         base = Path(override)
     elif os.name == "nt":
@@ -80,7 +82,8 @@ def load_settings() -> dict:
         "exclusions": [],
         "default_delete_mode": "recycle",
         "theme": "dark",
-        "auto_check_updates": True,
+        "auto_check_updates": False,
+        "disclaimer_accepted_version": "",
         "custom_presets": [],
         "language": "en",
         "reminder_enabled": False,
@@ -116,7 +119,8 @@ def load_settings() -> dict:
             "exclusions": [str(x) for x in exclusions if x],
             "default_delete_mode": mode,
             "theme": theme,
-            "auto_check_updates": bool(data.get("auto_check_updates", True)),
+            "auto_check_updates": bool(data.get("auto_check_updates", False)),
+            "disclaimer_accepted_version": str(data.get("disclaimer_accepted_version", "") or "")[:32],
             "custom_presets": _clean_custom_presets(data.get("custom_presets", [])),
             "language": lang,
             "reminder_enabled": bool(data.get("reminder_enabled", False)),
@@ -149,7 +153,8 @@ def save_settings(settings: dict) -> dict:
         "exclusions": list(dict.fromkeys(str(x) for x in settings.get("exclusions", []) if x)),
         "default_delete_mode": mode,
         "theme": theme,
-        "auto_check_updates": bool(settings.get("auto_check_updates", True)),
+        "auto_check_updates": bool(settings.get("auto_check_updates", False)),
+        "disclaimer_accepted_version": str(settings.get("disclaimer_accepted_version", "") or "")[:32],
         "custom_presets": _clean_custom_presets(settings.get("custom_presets", [])),
         "language": lang,
         "reminder_enabled": bool(settings.get("reminder_enabled", False)),
@@ -207,6 +212,17 @@ def set_default_delete_mode(mode: str) -> dict:
     settings = load_settings()
     if mode in ("recycle", "permanent"):
         settings["default_delete_mode"] = mode
+    return save_settings(settings)
+
+
+# Bump when the first run notice text changes in a way users must see again.
+DISCLAIMER_VERSION = "1"
+
+
+def accept_disclaimer(auto_check_updates: bool) -> dict:
+    settings = load_settings()
+    settings["disclaimer_accepted_version"] = DISCLAIMER_VERSION
+    settings["auto_check_updates"] = bool(auto_check_updates)
     return save_settings(settings)
 
 

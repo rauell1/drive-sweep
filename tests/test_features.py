@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 import csv
 import json
 import os
@@ -44,6 +46,9 @@ from app.system_tools import (
     set_hibernation_enabled,
 )
 
+
+
+WINDOWS_ONLY = pytest.mark.skipif(os.name != "nt", reason="Uses Windows drive letters and path semantics")
 
 def _wait_scan(scanner: DriveScanner) -> dict:
     deadline = time.monotonic() + 5.0
@@ -176,6 +181,7 @@ def _build_file_record(
     return bytes(rec)
 
 
+@WINDOWS_ONLY
 def test_ntfs_boot_runs_usa_and_synthetic_mft_scan(tmp_path: Path):
     boot = _build_boot_sector()
     geom = parse_ntfs_boot_sector(boot)
@@ -340,6 +346,7 @@ def test_treemap_drilldown_and_csv_json_exports(tmp_path: Path):
     assert payload["largest_files"][0]["name"] == "video.mp4"
 
 
+@WINDOWS_ONLY
 def test_custom_presets_language_and_scheduler(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
 
@@ -458,6 +465,7 @@ def test_large_spaces_and_redirected_downloads_selection(tmp_path: Path, monkeyp
     assert isinstance(get_known_folder_path("downloads"), Path)
 
 
+@WINDOWS_ONLY
 def test_ntfs_fragmented_mft_attribute_list_and_4kn_stride():
     # Native 4Kn boot sector (bytes_per_sector=4096, sectors_per_cluster=1, cluster_size=4096)
     boot = bytearray(512)
@@ -571,8 +579,10 @@ def test_ntfs_fragmented_mft_attribute_list_and_4kn_stride():
     assert nodes["X:\\CacheDir"].files[0][0] == "big.bin"
 
 
+@WINDOWS_ONLY
 def test_explain_path_human_and_classification():
-    vhdx = classify_path_risk("C:\\Users\\demo\\AppData\\Local\\Docker\\wsl\\disk\\docker_data.vhdx", is_dir=False)
+    # Must be inside the current user's profile: other accounts' profiles are now blocked as critical.
+    vhdx = classify_path_risk(str(Path.home() / "AppData" / "Local" / "Docker" / "wsl" / "disk" / "docker_data.vhdx"), is_dir=False)
     assert vhdx["risk_level"] == "caution"
     assert "Shrink Disk" in vhdx["risk_reason"]
 
@@ -597,6 +607,7 @@ def test_explain_path_human_and_classification():
     assert sys_crit["risk_level"] == "critical"
 
 
+@WINDOWS_ONLY
 def test_one_click_windows_workflows_and_dwm_helper(tmp_path: Path, monkeypatch):
     vhdx = tmp_path / "ext4.vhdx"
     vhdx.write_bytes(b"VHDX" * 2048)  # 8192 bytes
@@ -666,6 +677,7 @@ def test_one_click_windows_workflows_and_dwm_helper(tmp_path: Path, monkeypatch)
     assert isinstance(apply_windows11_frame_styling(dark_mode=True, window_title="NonExistentDriveSweepTestWindow"), bool)
 
 
+@WINDOWS_ONLY
 def test_benchmark_parity_category_search_windows_old_and_lifetime_stats(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("DRIVESWEEP_DATA_DIR", str(tmp_path / "ds_data"))
 

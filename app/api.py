@@ -14,7 +14,7 @@ import webview
 
 from app import __version__
 from app.duplicates import find_duplicates
-from app.logger import get_log_path, get_logger, open_log_file, read_recent_logs, setup_logging
+from app.logger import clear_logs, get_log_path, get_logger, open_log_file, read_recent_logs, setup_logging
 from app.presets import scan_large_spaces, scan_smart_presets
 from app.safety import (
     delete_targets,
@@ -33,6 +33,8 @@ from app.scheduler import (
     show_low_disk_notification,
 )
 from app.storage import (
+    DISCLAIMER_VERSION,
+    accept_disclaimer,
     add_custom_preset,
     add_exclusion,
     append_history,
@@ -133,6 +135,7 @@ class DriveSweepAPI:
             "theme": settings["theme"],
             "language": settings["language"],
             "auto_check_updates": settings["auto_check_updates"],
+            "disclaimer_accepted": settings.get("disclaimer_accepted_version") == DISCLAIMER_VERSION,
             "reminder_enabled": settings["reminder_enabled"],
             "reminder_frequency": settings["reminder_frequency"],
             "reminder_threshold_pct": rem_pct,
@@ -148,6 +151,13 @@ class DriveSweepAPI:
 
     def set_language(self, language: str) -> dict:
         return set_language(language)
+
+    def accept_disclaimer(self, auto_check_updates: bool = False) -> dict:
+        saved = accept_disclaimer(bool(auto_check_updates))
+        return {"ok": True, "auto_check_updates": saved["auto_check_updates"]}
+
+    def clear_logs(self) -> dict:
+        return clear_logs()
 
     def set_auto_check_updates(self, enabled: bool) -> dict:
         return set_auto_check_updates(bool(enabled))
@@ -178,7 +188,7 @@ class DriveSweepAPI:
         dl = download_and_verify_update(asset_url, asset_name, sha256_url)
         if not dl.get("ok"):
             return dl
-        launch = launch_downloaded_update(dl["file_path"])
+        launch = launch_downloaded_update(dl["file_path"], expected_sha256=dl.get("sha256", ""))
         if not launch.get("ok"):
             return launch
         if launch.get("should_exit"):
@@ -244,7 +254,7 @@ class DriveSweepAPI:
                     self._update_state["sha256"] = dl.get("sha256", "")
                     self._update_state["message"] = "Verified checksum. Opening Windows installer..."
 
-                launch = launch_downloaded_update(dl["file_path"])
+                launch = launch_downloaded_update(dl["file_path"], expected_sha256=dl.get("sha256", ""))
                 if not launch.get("ok"):
                     with self._update_lock:
                         self._update_state["status"] = "error"
@@ -454,7 +464,7 @@ class DriveSweepAPI:
         include_docker_prune: bool = False,
     ) -> dict:
         drives_before = {d["path"]: d["free_bytes"] for d in list_drives()}
-        result = delete_targets(targets, mode=mode)
+        result = delete_targets(targets, mode=mode, exclusions=get_exclusions())
         docker_result = run_docker_builder_prune() if include_docker_prune else None
         return self._finalize_cleanup(targets, result, docker_result, drives_before)
 
@@ -497,6 +507,7 @@ class DriveSweepAPI:
                     mode=mode,
                     progress_cb=on_progress,
                     cancel_event=self._cleanup_cancel,
+                    exclusions=get_exclusions(),
                 )
                 docker_result = None
                 if include_docker_prune and not self._cleanup_cancel.is_set():

@@ -290,7 +290,7 @@ sandbox.window.pywebview = {{
         if (prop === "get_app_info") {{
           return {{
             version: "0.3.0", os: "Windows", is_admin: true, theme: "dark", language: "es",
-            auto_check_updates: false, exclusions: [], custom_presets: [], history_count: 0,
+            auto_check_updates: false, disclaimer_accepted: true, exclusions: [], custom_presets: [], history_count: 0,
             drives: [{{ path: "C:\\\\", name: "C:", fstype: "NTFS", total_human: "500 GB", free_human: "50 GB", used_percent: 90 }}],
             low_disk_alerts: {{ has_alerts: true, threshold_free_pct: 15, alerts: [{{ drive: "C:\\\\", free_human: "50 GB", free_pct: 10, severity: "warning" }}] }},
           }};

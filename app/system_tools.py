@@ -7,12 +7,20 @@ import os
 import re
 import string
 import subprocess
+import sys
 import tempfile
 import time
 from ctypes import wintypes
 from pathlib import Path
 
-from .safety import format_bytes, get_known_folder_path, is_admin, sanitized_subprocess_env
+from .safety import (
+    find_link_in_path,
+    format_bytes,
+    get_known_folder_path,
+    is_admin,
+    sanitized_subprocess_env,
+    secure_work_dir,
+)
 
 _CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 _SHERB_NOCONFIRMATION = 0x00000001
@@ -499,11 +507,19 @@ def compact_virtual_disk(vhdx_path: str) -> dict:
     if not raw or not raw.lower().endswith((".vhdx", ".vhd")):
         return {"ok": False, "status": "error", "error": "Please select a valid .vhdx or .vhd virtual disk file."}
 
-    target = Path(raw)
+    target = Path(os.path.abspath(raw))
     if not target.exists() or not target.is_file():
         return {"ok": False, "status": "error", "error": f"Virtual disk file does not exist: {raw}"}
+    if find_link_in_path(target) is not None:
+        return {
+            "ok": False,
+            "status": "error",
+            "error": "This virtual disk path goes through a folder link (junction or symbolic link). Open the real file location instead.",
+        }
+    if any(ch in str(target) for ch in ('"', "\n", "\r", "\x00")):
+        return {"ok": False, "status": "error", "error": "This virtual disk path contains characters DriveSweep cannot pass safely."}
 
-    if os.name != "nt":
+    if sys.platform != "win32":
         return {"ok": False, "status": "error", "error": "Virtual disk compaction is only supported on Windows."}
     if not is_admin():
         return {
@@ -531,7 +547,9 @@ def compact_virtual_disk(vhdx_path: str) -> dict:
         pass
 
     method_used = "Optimize-VHD"
-    ps_escaped = str(target).replace("'", "''")
+    # The path is handed over in an environment variable, never spliced into the command text,
+    # so no quote character in a file name (including curly quotes) can change the command.
+    ps_env = sanitized_subprocess_env({"DS_VHD_PATH": str(target)})
     try:
         ps_proc = subprocess.run(
             [
@@ -539,12 +557,12 @@ def compact_virtual_disk(vhdx_path: str) -> dict:
                 "-NoProfile",
                 "-NonInteractive",
                 "-Command",
-                f"Optimize-VHD -Path '{ps_escaped}' -Mode Full",
+                "Optimize-VHD -LiteralPath $env:DS_VHD_PATH -Mode Full",
             ],
             capture_output=True,
             text=True,
             timeout=600,
-            env=clean_env,
+            env=ps_env,
             creationflags=_CREATE_NO_WINDOW,
         )
         ps_ok = ps_proc.returncode == 0
@@ -558,9 +576,8 @@ def compact_virtual_disk(vhdx_path: str) -> dict:
     if not ps_ok:
         # Fallback to built-in diskpart.exe (present on Windows Home & Pro without Hyper-V RSAT)
         method_used = "diskpart"
-        safe_path = str(target).replace('"', "")
         script_text = (
-            f'select vdisk file="{safe_path}"\n'
+            f'select vdisk file="{target}"\n'
             "attach vdisk readonly\n"
             "compact vdisk\n"
             "detach vdisk\n"
@@ -568,12 +585,14 @@ def compact_virtual_disk(vhdx_path: str) -> dict:
         )
         tmp_path: str | None = None
         try:
+            # Elevated diskpart reads this script, so it lives in an Administrators only folder.
             with tempfile.NamedTemporaryFile(
                 mode="w",
                 suffix=".txt",
                 prefix="ds_compact_",
                 delete=False,
                 encoding="utf-8",
+                dir=str(secure_work_dir("Scripts")),
             ) as tf:
                 tf.write(script_text)
                 tmp_path = tf.name

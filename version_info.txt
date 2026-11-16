@@ -14,7 +14,8 @@ VSVersionInfo(
       StringTable(
         u'040904B0',
         [
-          StringStruct(u'CompanyName', u'DriveSweep'),
+          StringStruct(u'CompanyName', u'Roy Otieno'),
+          StringStruct(u'LegalCopyright', u'Copyright (c) 2026 Roy Otieno. MIT License.'),
           StringStruct(u'FileDescription', u'DriveSweep: PC Storage Cleaner & Drive Scanner'),
           StringStruct(u'FileVersion', u'0.6.0.0'),
           StringStruct(u'InternalName', u'DriveSweep'),

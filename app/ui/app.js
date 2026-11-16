@@ -21,7 +21,7 @@ const state = {
   activeTab: "smart",
   dataDir: "",
   installKind: "source",
-  autoCheckUpdates: true,
+  autoCheckUpdates: false,
   reminderEnabled: false,
   reminderFrequency: "weekly",
   reminderThresholdPct: 15,
@@ -65,10 +65,11 @@ function api() {
   return window.pywebview.api;
 }
 
+const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;", "`": "&#96;" };
+
+// Escapes text for both element content and quoted attribute values (data-path="...", title="...").
 function escapeHtml(text) {
-  const div = document.createElement("div");
-  div.textContent = text ?? "";
-  return div.innerHTML;
+  return String(text ?? "").replace(/[&<>"'`]/g, (ch) => HTML_ESCAPES[ch]);
 }
 
 function formatBytes(bytes) {
@@ -749,7 +750,7 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
     <label class="review-row" style="cursor:pointer;margin-bottom:12px;">
       <div>
         <div style="font-weight:600;font-size:13px;">Check GitHub Releases on startup</div>
-        <div class="muted small-text">Uses a read-only GET to public GitHub Releases. Never sends logs or device info.</div>
+        <div class="muted small-text">Off by default. Sends a read-only web request to GitHub, which sees your IP address and the DriveSweep version. Never sends logs, file names or scan data.</div>
       </div>
       <label class="toggle-switch">
         <input id="chk-auto-updates" type="checkbox" ${state.autoCheckUpdates ? "checked" : ""} />
@@ -761,7 +762,10 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
       <h4>Diagnostics &amp; Crash Log</h4>
       <div class="settings-row">
         <div class="muted small-text">Version v${escapeHtml(state.version)} | ${escapeHtml(state.osName)} | ${state.isAdmin ? "Administrator" : "Standard Mode"}</div>
-        <button id="btn-open-diag-log" class="btn btn-soft btn-xs">${escapeHtml(tr("view_log_file", "Open Diagnostics Log"))}</button>
+        <div style="display:flex;gap:6px;">
+          <button id="btn-open-diag-log" class="btn btn-soft btn-xs">${escapeHtml(tr("view_log_file", "Open Diagnostics Log"))}</button>
+          <button id="btn-clear-diag-log" class="btn btn-ghost btn-xs" title="Logs can contain file and folder paths">Clear Logs</button>
+        </div>
       </div>
     </div>
 
@@ -927,6 +931,14 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
 
   document.getElementById("btn-open-data-dir")?.addEventListener("click", () => api().open_data_dir());
   document.getElementById("btn-open-diag-log")?.addEventListener("click", () => api().open_log_file());
+  document.getElementById("btn-clear-diag-log")?.addEventListener("click", async () => {
+    try {
+      await api().clear_logs();
+      showToast("Diagnostics logs cleared", "good");
+    } catch (err) {
+      showToast(String(err), "danger");
+    }
+  });
   document.getElementById("chk-auto-updates")?.addEventListener("change", async (e) => {
     state.autoCheckUpdates = !!e.target.checked;
     await api().set_auto_check_updates(state.autoCheckUpdates);
@@ -1382,6 +1394,17 @@ function bindWindowsToolsEvents(data, { inModal = false } = {}) {
         }
         return;
       }
+      const wslWarning =
+        `To shrink ${vhdxName}, DriveSweep runs "wsl --shutdown", which immediately closes every running ` +
+        "Linux distribution and Docker Desktop's engine. Save any open work in Linux apps or containers first.";
+      const proceed = inModal
+        ? window.confirm(`Shut down WSL and Docker?\n\n${wslWarning}`)
+        : await confirmAction(
+            "Shrink virtual disk?",
+            `<div class="caution-box"><strong>This will shut down WSL and Docker.</strong> ${escapeHtml(wslWarning)}</div>`,
+            "Shut Down WSL and Shrink"
+          );
+      if (!proceed) return;
       const allShrinkBtns = Array.from(document.querySelectorAll(".btn-compact-vhdx"));
       allShrinkBtns.forEach((b) => (b.disabled = true));
       btn.textContent = "Shrinking...";
@@ -2712,6 +2735,7 @@ function setModalFooterButtons(footerButtons) {
 
 function showModal(title, bodyHtml, footerButtons) {
   state.modalToken += 1;
+  state.onModalDismiss = null;
   document.getElementById("modal-title").textContent = title;
   document.getElementById("modal-body").innerHTML = bodyHtml;
   setModalFooterButtons(footerButtons);
@@ -2722,6 +2746,10 @@ function showModal(title, bodyHtml, footerButtons) {
 function closeModal() {
   state.modalToken += 1;
   document.getElementById("modal-backdrop").classList.add("hidden");
+  // Lets promise based dialogs settle when closed with the X button or Escape.
+  const hook = state.onModalDismiss;
+  state.onModalDismiss = null;
+  if (typeof hook === "function") hook();
 }
 
 function openReviewModal() {
@@ -2760,6 +2788,24 @@ function openReviewModal() {
   });
 }
 
+// Promise based confirmation built on the shared modal. Resolves true only if the user confirms.
+function confirmAction(title, bodyHtml, confirmText, confirmCls = "btn-danger") {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      closeModal();
+      resolve(value);
+    };
+    showModal(title, bodyHtml, [
+      { text: "Cancel", cls: "btn-soft", onClick: () => finish(false) },
+      { text: confirmText, cls: confirmCls, onClick: () => finish(true) },
+    ]);
+    state.onModalDismiss = () => finish(false);
+  });
+}
+
 function openConfirmCleanModal() {
   const { items } = getEffectiveSelectedItems();
   if (items.length === 0) return;
@@ -2768,11 +2814,17 @@ function openConfirmCleanModal() {
   const totalBytes = items.reduce((acc, it) => acc + Number(it.size_bytes || 0), 0);
   const isPerm = mode === "permanent";
   const cautionItems = items.filter((it) => it.risk_level === "caution");
-  const isDangerous = isPerm || cautionItems.length > 0;
+  const hasWindowsOld = items.some((it) => /(^|[\\/])windows\.old[\\/]?$/i.test(String(it.path || "")));
+  const isDangerous = isPerm || cautionItems.length > 0 || hasWindowsOld;
 
   const warningHtml = isPerm
     ? `<div class="warning-box"><strong>Permission Required (Permanent Delete):</strong> Selected items will bypass the Recycle Bin and cannot be recovered.</div>`
-    : `<div class="summary-strip">Safe mode: Items will be moved to your <strong>Recycle Bin / Trash</strong> so you can restore them if needed.</div>`;
+    : `<div class="summary-strip">Recycle Bin mode: Items are moved to your <strong>Recycle Bin / Trash</strong> so you can usually restore them. Network and removable drives have no Recycle Bin, so DriveSweep skips those items instead. Windows may permanently delete an item that is too large for the Recycle Bin.</div>`;
+
+  const winOldItem = items.find((it) => /(^|[\\/])windows\.old[\\/]?$/i.test(String(it.path || "")));
+  const winOldHtml = winOldItem
+    ? `<div class="caution-box"><strong>Windows.old selected:</strong> This is your previous Windows installation. Removing it means you can no longer roll back to your earlier Windows version (Settings &gt; System &gt; Recovery &gt; Go back). Only continue if your current Windows works well.</div>`
+    : "";
 
   const cautionHtml = cautionItems.length
     ? `<div class="caution-box"><strong>Caution Items Flagged (${cautionItems.length}):</strong> You selected personal, active project, or sensitive files. Please verify you intend to remove them.</div>`
@@ -2786,6 +2838,7 @@ function openConfirmCleanModal() {
     isDangerous ? "Permission Required: Confirm Cleanup" : "Confirm Move to Recycle Bin",
     `
       ${warningHtml}
+      ${winOldHtml}
       ${cautionHtml}
       <p>Ready to clean <strong>${items.length}</strong> selected item(s) totaling <strong>${formatBytes(totalBytes)}</strong>.</p>
       <div class="review-list">
@@ -3512,6 +3565,44 @@ function selectAllExtraDuplicates() {
   renderDuplicateResults();
 }
 
+// One time notice: what DriveSweep does, its limits, and an opt in for update checks.
+function showFirstRunNotice() {
+  return new Promise((resolve) => {
+    showModal(
+      "Before you start",
+      `
+        <p>DriveSweep finds and removes files you choose. Please read this once:</p>
+        <ul class="notice-list">
+          <li><strong>Back up anything important first.</strong> DriveSweep is free, open source software provided "as is" under the MIT License, without warranty of any kind.</li>
+          <li><strong>The Recycle Bin is not a guarantee.</strong> Network and removable drives have no Recycle Bin, very long paths cannot go there, and Windows may permanently delete items that are too large for it. <strong>Delete Forever</strong> cannot be undone.</li>
+          <li><strong>Protections reduce risk, they do not remove it.</strong> System folders, other accounts and your Always Keep list are guarded, and personal folders are never selected automatically, but you are responsible for what you choose to remove.</li>
+          <li><strong>Your data stays on this PC.</strong> Scans, settings, logs and history are stored locally and never uploaded.</li>
+        </ul>
+        <label class="ack-box"><input id="chk-firstrun-updates" type="checkbox" /><span>Check GitHub for new versions when DriveSweep starts. This sends a standard web request (your IP address and the DriveSweep version) to GitHub, under GitHub's privacy statement. You can change this anytime in Settings.</span></label>
+        <p class="muted small-text">DriveSweep is an independent project and is not affiliated with Microsoft, Google, Mozilla, or any other company whose apps it can clean.</p>
+      `,
+      [
+        {
+          id: "btn-firstrun-ok",
+          text: "I Understand",
+          cls: "btn-primary",
+          onClick: async () => {
+            const opted = !!document.getElementById("chk-firstrun-updates")?.checked;
+            state.onModalDismiss = null;
+            closeModal();
+            try {
+              await api().accept_disclaimer(opted);
+            } catch (_e) {}
+            resolve(opted);
+          },
+        },
+      ]
+    );
+    // Closed without accepting: continue with update checks off and show the notice next launch.
+    state.onModalDismiss = () => resolve(false);
+  });
+}
+
 async function initApp() {
   window.addEventListener("error", (ev) => {
     try {
@@ -3537,7 +3628,7 @@ async function initApp() {
   state.version = info.version || "0.3.1";
   state.dataDir = info.data_dir || "";
   state.installKind = info.install_kind || "source";
-  state.autoCheckUpdates = info.auto_check_updates !== false;
+  state.autoCheckUpdates = info.auto_check_updates === true;
   state.reminderEnabled = !!info.reminder_enabled;
   state.reminderFrequency = info.reminder_frequency || "weekly";
   state.reminderThresholdPct = Number(info.reminder_threshold_pct || 15);
@@ -3556,6 +3647,9 @@ async function initApp() {
   }
 
   renderDrives(info.drives);
+  if (!info.disclaimer_accepted) {
+    state.autoCheckUpdates = await showFirstRunNotice();
+  }
   await loadSmartScan();
 
   if (state.autoCheckUpdates) {
