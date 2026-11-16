@@ -352,10 +352,15 @@ def test_updater_semver_sha256_and_url_verification(tmp_path: Path, monkeypatch)
         {"name": "DriveSweep-Setup-0.2.1.exe", "browser_download_url": "https://github.com/a/DriveSweep-Setup-0.2.1.exe"},
         {"name": "SHA256SUMS.txt", "browser_download_url": "https://github.com/a/SHA256SUMS.txt"},
     ]
+    # Each install kind updates the copy the user actually runs
     assert updater.pick_release_asset(assets, "setup")["name"] == "DriveSweep-Setup-0.2.1.exe"
+    assert updater.pick_release_asset(assets, "source")["name"] == "DriveSweep-Setup-0.2.1.exe"
+    assert updater.pick_release_asset(assets, "onefile_exe")["name"] == "DriveSweep.exe"
+    # No zip in this release: the folder version falls back to Setup
     assert updater.pick_release_asset(assets, "onedir_zip")["name"] == "DriveSweep-Setup-0.2.1.exe"
-    assert updater.pick_release_asset(assets, "onefile_exe")["name"] == "DriveSweep-Setup-0.2.1.exe"
-    assert updater.pick_release_asset(assets, "onefile_exe", prefer_setup=False)["name"] == "DriveSweep.exe"
+    with_zip = assets + [{"name": "DriveSweep-win64.zip", "browser_download_url": "https://github.com/a/DriveSweep-win64.zip"}]
+    assert updater.pick_release_asset(with_zip, "onedir_zip")["name"] == "DriveSweep-win64.zip"
+    assert updater.pick_release_asset(assets, "onefile_exe", prefer_setup=True)["name"] == "DriveSweep-Setup-0.2.1.exe"
 
     payload = b"MZ-mock-installer-binary"
     good_hash = hashlib.sha256(payload).hexdigest()

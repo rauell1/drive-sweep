@@ -252,7 +252,11 @@ class DriveSweepAPI:
                     self._update_state["stage"] = "launching"
                     self._update_state["percent"] = 100
                     self._update_state["sha256"] = dl.get("sha256", "")
-                    self._update_state["message"] = "Verified checksum. Opening Windows installer..."
+                    self._update_state["message"] = (
+                        "Verified checksum. Opening Windows installer..."
+                        if dl.get("update_method", "setup") == "setup"
+                        else "Verified checksum. Preparing to replace DriveSweep with the new version..."
+                    )
 
                 launch = launch_downloaded_update(dl["file_path"], expected_sha256=dl.get("sha256", ""))
                 if not launch.get("ok"):
@@ -264,7 +268,11 @@ class DriveSweepAPI:
 
                 with self._update_lock:
                     self._update_state["mode"] = launch.get("mode", "setup")
-                    self._update_state["message"] = "Installer started. Closing DriveSweep to upgrade..."
+                    self._update_state["message"] = (
+                        "Installer started. Closing DriveSweep to upgrade..."
+                        if launch.get("mode") == "setup"
+                        else "Closing DriveSweep to swap in the new version. It will reopen in a few seconds..."
+                    )
 
                 if launch.get("should_exit"):
                     self._schedule_clean_exit(0.1)

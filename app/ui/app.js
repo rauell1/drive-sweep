@@ -17,7 +17,7 @@ const ICON_MOON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" s
 const state = {
   theme: "dark",
   language: "en",
-  version: "0.6.0",
+  version: "0.7.0",
   activeTab: "smart",
   dataDir: "",
   installKind: "source",
@@ -793,7 +793,7 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
           <span class="muted small-text">${escapeHtml(u.asset_name || "GitHub Release")}${escapeHtml(pkgSize)}</span>
         </div>
         <div class="muted small-text" style="margin-top:6px;">
-          Downloads the verified installer package from GitHub, checks its SHA-256 signature, updates via Setup, and relaunches DriveSweep automatically.
+          ${escapeHtml(describeUpdateMethod(u))}
         </div>
       </div>`;
   };
@@ -2804,6 +2804,18 @@ function confirmAction(title, bodyHtml, confirmText, confirmCls = "btn-danger") 
     ]);
     state.onModalDismiss = () => finish(false);
   });
+}
+
+// Plain explanation of how this copy of DriveSweep will be updated.
+function describeUpdateMethod(u) {
+  const folder = u.update_folder ? ` in ${u.update_folder}` : "";
+  if (u.update_method === "replace_exe") {
+    return `Downloads the new DriveSweep.exe from GitHub into the same folder${folder}, verifies its SHA-256 checksum, then closes DriveSweep, replaces this DriveSweep.exe with the new version (keeping a backup until the new version starts) and reopens it.`;
+  }
+  if (u.update_method === "replace_folder") {
+    return `Downloads the new DriveSweep-win64.zip from GitHub into the same folder${folder}, verifies its SHA-256 checksum, unpacks it, then closes DriveSweep, replaces the program files with the new version (keeping a backup until the new version starts) and reopens it.`;
+  }
+  return "Downloads the new DriveSweep Setup from GitHub, verifies its SHA-256 checksum, upgrades your installed copy and reopens DriveSweep.";
 }
 
 function openConfirmCleanModal() {
