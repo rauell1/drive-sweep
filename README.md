@@ -66,8 +66,22 @@ Click **Windows Tools** on the left sidebar to open the dedicated Windows Space 
 - **Cleanup Log:** Shows a local record of past cleanups on your PC and includes an **Open Recycle Bin** button for quick restoration.
 - **Settings & Updates:** Switch UI language (`English`, `Espanol`, `Francais`, `Deutsch`, `Portugues`), configure an optional Windows Task Scheduler low-disk space reminder, verify local storage privacy, and check or install updates via GitHub Releases Setup.
 
-### 5. Automatic Updates via Setup
-Open **Settings & Updates** (left sidebar) -> **Check for Updates**. DriveSweep checks GitHub Releases over HTTPS, shows live download progress for the verified Setup installer package, checks `SHA256SUMS.txt` before installing, closes DriveSweep cleanly so Setup can upgrade files in place, and relaunches the updated app automatically. Before running Setup, DriveSweep locks the downloaded file, checks its SHA-256 again and checks its Authenticode signature (once DriveSweep builds are signed, updates must be signed by the same publisher). Only official `github.com/rauell1/drive-sweep` release downloads newer than your current version are accepted. Checking on startup is **off by default**; you can turn it on during first run or in Settings.
+### 5. Updates
+Open **Settings & Updates** (left sidebar) -> **Check for Updates**. DriveSweep checks GitHub Releases over HTTPS and updates **the copy you are running**:
+
+| How you run DriveSweep | What gets downloaded | What happens |
+| --- | --- | --- |
+| Installed with Setup | `DriveSweep-Setup-x.y.z.exe` | Setup upgrades your installed copy in place and reopens DriveSweep. |
+| Portable `DriveSweep.exe` | `DriveSweep.exe` | The new file is saved in the **same folder** as your `DriveSweep.exe`. DriveSweep closes, swaps the new version in (keeping `DriveSweep.exe.old` as a backup), and reopens. |
+| Folder version from `DriveSweep-win64.zip` | `DriveSweep-win64.zip` | The zip is saved and unpacked in the **same folder**. DriveSweep closes, replaces its program files with the new ones (keeping a backup in `_update_old`), and reopens. Other files you keep in that folder are left alone. |
+
+Every update is checked before anything is replaced:
+- Only official `github.com/rauell1/drive-sweep` release downloads newer than your current version are accepted.
+- The file's SHA-256 must match `SHA256SUMS.txt`, and it is checked again right before the swap.
+- The Authenticode signature is checked. Once DriveSweep builds are signed, updates must be signed by the same publisher.
+- If the swap fails, the previous version is restored. The backup is deleted automatically the next time the new version starts.
+
+A portable copy must be in a folder you can write to (for example not inside `Program Files`); otherwise DriveSweep asks you to move it or use Setup. Checking on startup is **off by default**; you can turn it on during first run or in Settings.
 
 ---
 

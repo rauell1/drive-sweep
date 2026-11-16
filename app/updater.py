@@ -6,12 +6,14 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 from pathlib import Path
 from typing import Callable
 
@@ -59,7 +61,15 @@ def verify_https_github_url(url: str) -> bool:
 
 
 RELEASE_DOWNLOAD_PREFIX = f"/{GITHUB_OWNER}/{GITHUB_REPO}/releases/download/"
-_ALLOWED_UPDATE_NAME = re.compile(r"^(drivesweep-setup-[0-9][0-9a-z.\-]*\.exe|drivesweep\.exe|sha256sums\.txt)$")
+_ALLOWED_UPDATE_NAME = re.compile(
+    r"^(drivesweep-setup-[0-9][0-9a-z.\-]*\.exe|drivesweep\.exe|drivesweep-win64\.zip|sha256sums\.txt)$"
+)
+PORTABLE_EXE_NAME = "drivesweep.exe"
+PORTABLE_ZIP_NAME = "drivesweep-win64.zip"
+# Folders used while the folder (zip) version replaces itself; they live inside the app folder.
+UPDATE_STAGING_DIRNAME = "_update_staging"
+UPDATE_BACKUP_DIRNAME = "_update_old"
+_MAX_ZIP_UNPACKED_BYTES = 2 * 1024 * 1024 * 1024
 
 
 def parse_release_download_url(url: str) -> tuple[str, str] | None:
@@ -122,31 +132,58 @@ def parse_sha256sums(text: str) -> dict[str, str]:
 def pick_release_asset(
     assets: list[dict],
     install_kind: str,
-    prefer_setup: bool = True,
+    prefer_setup: bool = False,
 ) -> dict | None:
-    """Choose the best downloadable Windows asset for updating DriveSweep.
+    """Choose the release file that updates the copy of DriveSweep the user actually runs.
 
-    Setup installers (DriveSweep-Setup-*.exe) are preferred by default across all
-    Windows install kinds so updates install cleanly via Setup and relaunch.
+    * Installed with Setup  -> the new DriveSweep-Setup-*.exe (upgrades Program Files in place).
+    * Portable DriveSweep.exe -> the new DriveSweep.exe, swapped into the same folder.
+    * Folder version from the zip -> the new DriveSweep-win64.zip, unpacked into the same folder.
+    * Running from source, or a portable file is missing from the release -> Setup.
     """
     valid = [a for a in assets if isinstance(a, dict) and a.get("name") and a.get("browser_download_url")]
     setup_assets = [
         a for a in valid
         if a["name"].lower().endswith(".exe") and "setup" in a["name"].lower()
     ]
-    portable_assets = [
-        a for a in valid
-        if a["name"].lower() == "drivesweep.exe"
-    ]
+    portable_assets = [a for a in valid if a["name"].lower() == PORTABLE_EXE_NAME]
+    zip_assets = [a for a in valid if a["name"].lower() == PORTABLE_ZIP_NAME]
     if prefer_setup and setup_assets:
         return setup_assets[0]
     if install_kind == "onefile_exe" and portable_assets:
         return portable_assets[0]
+    if install_kind == "onedir_zip" and zip_assets:
+        return zip_assets[0]
     if setup_assets:
         return setup_assets[0]
     if portable_assets:
         return portable_assets[0]
     return None
+
+
+def update_method_for(asset_name: str) -> str:
+    """Return how a release file is applied: 'setup', 'replace_exe' or 'replace_folder'."""
+    name = os.path.basename(str(asset_name or "")).lower()
+    if name == PORTABLE_EXE_NAME:
+        return "replace_exe"
+    if name == PORTABLE_ZIP_NAME:
+        return "replace_folder"
+    return "setup"
+
+
+def app_install_dir() -> Path:
+    """Folder that holds the running DriveSweep.exe (or the source tree when not frozen)."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent
+
+
+def folder_is_writable(folder: Path) -> bool:
+    try:
+        with tempfile.NamedTemporaryFile(dir=str(folder), prefix=".ds_write_test_", delete=True):
+            return True
+    except OSError:
+        return False
 
 
 def cleanup_stale_updates() -> None:
@@ -159,9 +196,41 @@ def cleanup_stale_updates() -> None:
             continue
         try:
             for entry in update_dir.iterdir():
-                if entry.is_file() and entry.suffix.lower() in {".exe", ".part", ".tmp"}:
+                if entry.is_file() and entry.suffix.lower() in {".exe", ".zip", ".part", ".tmp"}:
                     entry.unlink(missing_ok=True)
         except Exception:
+            pass
+    cleanup_in_place_update_leftovers()
+
+
+def cleanup_in_place_update_leftovers(app_dir: Path | None = None, exe_name: str | None = None) -> None:
+    """Remove backups and partial files left in the app folder by an in place update.
+
+    Runs at startup of the new version, which proves the swap worked, so the backup of the
+    previous version is no longer needed.
+    """
+    if app_dir is None:
+        if not getattr(sys, "frozen", False):
+            return
+        app_dir = app_install_dir()
+        exe_name = Path(sys.executable).name
+    exe_name = exe_name or "DriveSweep.exe"
+    for suffix in (".old", ".new", ".new.part"):
+        try:
+            (app_dir / f"{exe_name}{suffix}").unlink(missing_ok=True)
+        except OSError:
+            pass
+    for dirname in (UPDATE_BACKUP_DIRNAME, UPDATE_STAGING_DIRNAME):
+        leftover = app_dir / dirname
+        try:
+            if leftover.is_dir() and not leftover.is_symlink():
+                shutil.rmtree(leftover, ignore_errors=True)
+        except OSError:
+            pass
+    for leftover_zip in ("DriveSweep-win64.zip.download", "DriveSweep-win64.zip.download.part"):
+        try:
+            (app_dir / leftover_zip).unlink(missing_ok=True)
+        except OSError:
             pass
 
 
@@ -202,7 +271,12 @@ def _check_updates_via_web_redirect(
         return None
 
     latest_ver = tag.lstrip("vV") or current_version
-    asset_name = f"DriveSweep-Setup-{latest_ver}.exe"
+    if install_kind == "onefile_exe":
+        asset_name = "DriveSweep.exe"
+    elif install_kind == "onedir_zip":
+        asset_name = "DriveSweep-win64.zip"
+    else:
+        asset_name = f"DriveSweep-Setup-{latest_ver}.exe"
     asset_url = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases/download/{tag}/{asset_name}"
     sha256_url = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases/download/{tag}/SHA256SUMS.txt"
     return {
@@ -214,6 +288,7 @@ def _check_updates_via_web_redirect(
         "release_url": f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases/tag/{tag}",
         "release_notes": "",
         "asset_name": asset_name,
+        "update_method": update_method_for(asset_name),
         "asset_url": asset_url,
         "asset_size": 0,
         "sha256_url": sha256_url,
@@ -274,6 +349,8 @@ def check_for_updates(current_version: str = __version__, timeout: float = 8.0) 
         "release_url": str(payload.get("html_url") or f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases"),
         "release_notes": str(payload.get("body") or "")[:2000],
         "asset_name": str(chosen.get("name")) if chosen else "",
+        "update_method": update_method_for(str(chosen.get("name"))) if chosen else "",
+        "update_folder": str(app_install_dir()) if chosen and update_method_for(str(chosen.get("name"))) != "setup" else "",
         "asset_url": str(chosen.get("browser_download_url")) if chosen else "",
         "asset_size": int(chosen.get("size") or 0) if chosen else 0,
         "sha256_url": str(sha_asset.get("browser_download_url")) if sha_asset else "",
@@ -290,7 +367,7 @@ def download_and_verify_update(
 ) -> dict:
     """Download an official release package and verify its SHA-256 against SHA256SUMS.txt."""
     safe_name = os.path.basename(str(asset_name or "")).strip()
-    if not safe_name or not safe_name.lower().endswith(".exe"):
+    if not safe_name or not (safe_name.lower().endswith(".exe") or safe_name.lower() == PORTABLE_ZIP_NAME):
         return {"ok": False, "error": "Unsupported update file type."}
     asset_info = parse_release_download_url(asset_url)
     sums_info = parse_release_download_url(sha256_url)
@@ -317,9 +394,27 @@ def download_and_verify_update(
     if not expected_hash:
         return {"ok": False, "error": f"Checksum for {safe_name} was not found in SHA256SUMS.txt."}
 
-    update_dir = secure_work_dir("Updates")
-    dest_path = update_dir / safe_name
-    part_path = update_dir / f"{safe_name}.part"
+    method = update_method_for(safe_name)
+    if method == "setup":
+        update_dir = secure_work_dir("Updates")
+        dest_path = update_dir / safe_name
+    else:
+        # Portable copies are updated where they live: the new file is saved in the same
+        # folder as the running DriveSweep.exe, then swapped in after DriveSweep closes.
+        update_dir = app_install_dir()
+        if not folder_is_writable(update_dir):
+            return {
+                "ok": False,
+                "error": (
+                    f"DriveSweep cannot write to its folder ({update_dir}). Move DriveSweep to a folder "
+                    "you can write to, or install it with DriveSweep Setup."
+                ),
+            }
+        if method == "replace_exe":
+            dest_path = update_dir / f"{Path(sys.executable).name if getattr(sys, 'frozen', False) else 'DriveSweep.exe'}.new"
+        else:
+            dest_path = update_dir / f"{safe_name}.download"
+    part_path = dest_path.with_name(dest_path.name + ".part")
     part_path.unlink(missing_ok=True)
 
     hasher = hashlib.sha256()
@@ -369,7 +464,7 @@ def download_and_verify_update(
         part_path.unlink(missing_ok=True)
         return {"ok": False, "error": f"Could not finalize update package: {exc}"}
 
-    return {"ok": True, "file_path": str(dest_path), "sha256": actual_hash}
+    return {"ok": True, "file_path": str(dest_path), "sha256": actual_hash, "update_method": method}
 
 
 def _pyinstaller_bootloader_ppid() -> int:
@@ -558,14 +653,15 @@ def _launch_locked_update(target: Path, kind: str, name_lower: str, expected_sha
                 return {"ok": False, "error": "Update file changed after verification. It was removed and not run."}
         except OSError as exc:
             return {"ok": False, "error": f"Could not re-verify update file: {exc}"}
-    sig = check_update_signature(target)
-    if not sig.get("ok"):
-        return sig
+
+    is_zip = name_lower.endswith(".zip") or name_lower.endswith(".zip.download")
+    if not is_zip:
+        sig = check_update_signature(target)
+        if not sig.get("ok"):
+            return sig
 
     try:
-        clean_env = sanitized_subprocess_env()
         creation_flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-        no_window_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | creation_flags
 
         if "setup" in name_lower and name_lower.endswith(".exe"):
             resolved_setup = target.resolve()
@@ -582,38 +678,188 @@ def _launch_locked_update(target: Path, kind: str, name_lower: str, expected_sha
                 }
             return {"ok": True, "should_exit": True, "mode": "setup"}
 
-        if kind == "onefile_exe" and getattr(sys, "frozen", False):
-            env = sanitized_subprocess_env({
-                "DRIVESWEEP_OLD_EXE": str(Path(sys.executable).resolve()),
-                "DRIVESWEEP_NEW_EXE": str(target.resolve()),
-                "DRIVESWEEP_PID": str(os.getpid()),
-            })
-            ps_script = (
-                "$p=[int]$env:DRIVESWEEP_PID; "
-                "while (Get-Process -Id $p -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 250 }; "
-                "Start-Sleep -Milliseconds 350; "
-                "Get-ChildItem Env:_PYI_* -ErrorAction SilentlyContinue | Remove-Item -ErrorAction SilentlyContinue; "
-                "Remove-Item Env:_MEIPASS2 -ErrorAction SilentlyContinue; "
-                "for ($i=0; $i -lt 10; $i++) { "
-                "  try { Move-Item -Force -Path $env:DRIVESWEEP_NEW_EXE -Destination $env:DRIVESWEEP_OLD_EXE -ErrorAction Stop; break } "
-                "  catch { Start-Sleep -Milliseconds 300 } "
-                "}; "
-                "Start-Process -FilePath $env:DRIVESWEEP_OLD_EXE"
-            )
-            subprocess.Popen(
-                ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_script],
-                env=env,
-                creationflags=no_window_flags,
-                close_fds=True,
-            )
-            return {"ok": True, "should_exit": True, "mode": "portable_swap"}
+        if is_zip:
+            return _start_folder_swap(target)
+
+        if name_lower.endswith(".exe.new") or (kind == "onefile_exe" and getattr(sys, "frozen", False)):
+            return _start_exe_swap(target, expected_sha256 or _sha256_file(target))
 
         subprocess.Popen(
             [str(target)],
-            env=clean_env,
+            env=sanitized_subprocess_env(),
             creationflags=creation_flags,
             close_fds=True,
         )
         return {"ok": True, "should_exit": True, "mode": "launch"}
     except Exception as exc:
-        return {"ok": False, "error": f"Failed to start installer: {exc}"}
+        return {"ok": False, "error": f"Failed to start the update: {exc}"}
+
+
+# Runs after DriveSweep exits. It checks the new exe's SHA-256 once more, keeps the current exe
+# as DriveSweep.exe.old, moves the new one into place (restoring the old one if that fails),
+# and starts DriveSweep again. The new version deletes the .old backup when it starts.
+_EXE_SWAP_SCRIPT = r"""
+$ErrorActionPreference = 'Stop'
+foreach ($p in ($env:DS_WAIT_PIDS -split ',' | Where-Object { $_ })) {
+  while (Get-Process -Id ([int]$p) -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 250 }
+}
+Start-Sleep -Milliseconds 400
+Get-ChildItem Env:_PYI_* -ErrorAction SilentlyContinue | Remove-Item -ErrorAction SilentlyContinue
+Remove-Item Env:_MEIPASS2 -ErrorAction SilentlyContinue
+$old = $env:DS_OLD_EXE; $new = $env:DS_NEW_EXE; $bak = "$old.old"
+$hash = (Get-FileHash -LiteralPath $new -Algorithm SHA256).Hash.ToLower()
+if ($hash -ne $env:DS_SHA256) {
+  Remove-Item -LiteralPath $new -Force -ErrorAction SilentlyContinue
+  Start-Process -FilePath $old
+  exit 1
+}
+$swapped = $false
+for ($i = 0; $i -lt 20 -and -not $swapped; $i++) {
+  try {
+    if (Test-Path -LiteralPath $bak) { Remove-Item -LiteralPath $bak -Force }
+    Move-Item -LiteralPath $old -Destination $bak -Force
+    try {
+      Move-Item -LiteralPath $new -Destination $old -Force
+      $swapped = $true
+    } catch {
+      Move-Item -LiteralPath $bak -Destination $old -Force
+      throw
+    }
+  } catch { Start-Sleep -Milliseconds 300 }
+}
+Start-Process -FilePath $old
+"""
+
+# Runs after DriveSweep exits. Moves the current app files that the new version replaces into _update_old, moves the
+# unpacked new version from _update_staging into the app folder, restores the old files if
+# anything fails, and starts DriveSweep again.
+_FOLDER_SWAP_SCRIPT = r"""
+$ErrorActionPreference = 'Stop'
+foreach ($p in ($env:DS_WAIT_PIDS -split ',' | Where-Object { $_ })) {
+  while (Get-Process -Id ([int]$p) -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 250 }
+}
+Start-Sleep -Milliseconds 400
+Get-ChildItem Env:_PYI_* -ErrorAction SilentlyContinue | Remove-Item -ErrorAction SilentlyContinue
+Remove-Item Env:_MEIPASS2 -ErrorAction SilentlyContinue
+$app = $env:DS_APP_DIR
+$stage = Join-Path $app $env:DS_STAGE_NAME
+$old = Join-Path $app $env:DS_BACKUP_NAME
+$exe = Join-Path $app $env:DS_EXE_NAME
+$skip = @($env:DS_STAGE_NAME, $env:DS_BACKUP_NAME, $env:DS_ZIP_NAME)
+$placed = @()
+try {
+  if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Recurse -Force }
+  New-Item -ItemType Directory -Path $old | Out-Null
+  # Only items the new version ships are replaced; anything else in the folder is left alone.
+  $incoming = @(Get-ChildItem -LiteralPath $stage -Force | ForEach-Object { $_.Name })
+  Get-ChildItem -LiteralPath $app -Force | Where-Object { ($skip -notcontains $_.Name) -and ($incoming -contains $_.Name) } | ForEach-Object {
+    Move-Item -LiteralPath $_.FullName -Destination $old -Force
+  }
+  Get-ChildItem -LiteralPath $stage -Force | ForEach-Object {
+    Move-Item -LiteralPath $_.FullName -Destination $app -Force
+    $placed += $_.Name
+  }
+  Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath (Join-Path $app $env:DS_ZIP_NAME) -Force -ErrorAction SilentlyContinue
+} catch {
+  foreach ($n in $placed) { Remove-Item -LiteralPath (Join-Path $app $n) -Recurse -Force -ErrorAction SilentlyContinue }
+  Get-ChildItem -LiteralPath $old -Force | ForEach-Object {
+    Move-Item -LiteralPath $_.FullName -Destination $app -Force -ErrorAction SilentlyContinue
+  }
+}
+Start-Process -FilePath $exe -WorkingDirectory $app
+"""
+
+
+def _wait_pids() -> str:
+    pids = [str(os.getpid())]
+    boot = _pyinstaller_bootloader_ppid()
+    if boot:
+        pids.append(str(boot))
+    return ",".join(pids)
+
+
+def _spawn_hidden_powershell(script: str, extra_env: dict[str, str], cwd: str | None = None) -> None:
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    subprocess.Popen(
+        ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-Command", script],
+        env=sanitized_subprocess_env(extra_env),
+        creationflags=flags,
+        close_fds=True,
+        cwd=cwd,
+    )
+
+
+def _start_exe_swap(new_exe: Path, sha256: str) -> dict:
+    """Replace the running portable DriveSweep.exe with the verified new one after exit."""
+    current = Path(sys.executable).resolve() if getattr(sys, "frozen", False) else app_install_dir() / "DriveSweep.exe"
+    _spawn_hidden_powershell(
+        _EXE_SWAP_SCRIPT,
+        {
+            "DS_OLD_EXE": str(current),
+            "DS_NEW_EXE": str(new_exe.resolve()),
+            "DS_SHA256": sha256.lower(),
+            "DS_WAIT_PIDS": _wait_pids(),
+        },
+        cwd=str(current.parent.parent if current.parent.parent != current.parent else current.parent),
+    )
+    return {"ok": True, "should_exit": True, "mode": "portable_swap", "target": str(current)}
+
+
+def extract_update_zip(zip_path: Path, staging: Path) -> dict:
+    """Safely unpack the folder version into staging, rejecting unsafe or unexpected archives."""
+    if staging.exists():
+        shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True)
+    root = staging.resolve()
+    total = 0
+    try:
+        with zipfile.ZipFile(zip_path) as zf:
+            members = zf.infolist()
+            names = {m.filename.replace("\\", "/").lower() for m in members}
+            if "drivesweep.exe" not in names:
+                return {"ok": False, "error": "The update archive does not contain DriveSweep.exe at its top level."}
+            for m in members:
+                name = m.filename.replace("\\", "/")
+                if name.startswith("/") or ":" in name or any(part == ".." for part in name.split("/")):
+                    return {"ok": False, "error": f"Unsafe path in update archive: {m.filename}"}
+                if (m.external_attr >> 16) & 0o170000 == 0o120000:
+                    return {"ok": False, "error": f"Links are not allowed in the update archive: {m.filename}"}
+                total += m.file_size
+                if total > _MAX_ZIP_UNPACKED_BYTES:
+                    return {"ok": False, "error": "The update archive is unexpectedly large."}
+                dest = (staging / name).resolve()
+                if dest != root and root not in dest.parents:
+                    return {"ok": False, "error": f"Unsafe path in update archive: {m.filename}"}
+            zf.extractall(staging)
+    except (zipfile.BadZipFile, OSError) as exc:
+        shutil.rmtree(staging, ignore_errors=True)
+        return {"ok": False, "error": f"Could not unpack the update: {exc}"}
+    return {"ok": True, "exe": str(staging / "DriveSweep.exe")}
+
+
+def _start_folder_swap(zip_path: Path) -> dict:
+    """Unpack the verified zip next to the running app and swap the folder contents after exit."""
+    app_dir = app_install_dir()
+    staging = app_dir / UPDATE_STAGING_DIRNAME
+    unpacked = extract_update_zip(zip_path, staging)
+    if not unpacked.get("ok"):
+        return unpacked
+    sig = check_update_signature(unpacked["exe"])
+    if not sig.get("ok"):
+        shutil.rmtree(staging, ignore_errors=True)
+        return sig
+    exe_name = Path(sys.executable).name if getattr(sys, "frozen", False) else "DriveSweep.exe"
+    _spawn_hidden_powershell(
+        _FOLDER_SWAP_SCRIPT,
+        {
+            "DS_APP_DIR": str(app_dir),
+            "DS_STAGE_NAME": UPDATE_STAGING_DIRNAME,
+            "DS_BACKUP_NAME": UPDATE_BACKUP_DIRNAME,
+            "DS_ZIP_NAME": zip_path.name,
+            "DS_EXE_NAME": exe_name,
+            "DS_WAIT_PIDS": _wait_pids(),
+        },
+        cwd=str(app_dir.parent if app_dir.parent != app_dir else app_dir),
+    )
+    return {"ok": True, "should_exit": True, "mode": "folder_swap", "target": str(app_dir)}
