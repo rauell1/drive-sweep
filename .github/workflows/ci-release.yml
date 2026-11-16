@@ -102,7 +102,7 @@ jobs:
       # so the DriveSweep.exe that ends up installed on users' PCs is signed too.
       - name: Sign executables (Azure Trusted Signing)
         if: steps.signing.outputs.azure == 'true'
-        uses: azure/trusted-signing-action@bb15ca63eb5548cc306f4f335c5617bb414abcad # v0.5.9
+        uses: azure/trusted-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
         with:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -146,7 +146,7 @@ jobs:
       # Stage 4: sign the installer itself.
       - name: Sign installer (Azure Trusted Signing)
         if: steps.signing.outputs.azure == 'true'
-        uses: azure/trusted-signing-action@bb15ca63eb5548cc306f4f335c5617bb414abcad # v0.5.9
+        uses: azure/trusted-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
         with:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
