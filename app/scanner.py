@@ -44,10 +44,30 @@ DEV_BLOAT_NAMES = {
     ".mypy_cache",
     ".ruff_cache",
     ".next",
+    ".nuxt",
+    ".svelte-kit",
+    ".angular",
     ".turbo",
     ".parcel-cache",
+    ".gradle",
+    ".tox",
+    ".nox",
+    ".terraform",
+    ".dart_tool",
+    "zig-cache",
+    "zig-out",
+    "CMakeFiles",
     "target",
 }
+
+
+def _category_extensions_map() -> tuple[dict[str, set[str]], set[str]]:
+    cat_map: dict[str, set[str]] = {}
+    all_known: set[str] = set()
+    for name, exts, _color in FILE_CATEGORIES:
+        cat_map[name] = exts
+        all_known |= exts
+    return cat_map, all_known
 
 
 def _format_mtime(ts: float) -> tuple[str, int]:
@@ -685,6 +705,7 @@ class DriveScanner:
         sort_by: str = "size",
         offset: int = 0,
         limit: int = 200,
+        category: str = "",
     ) -> dict:
         """Search and paginate across ALL scanned files without duplicating file storage."""
         with self._lock:
@@ -692,6 +713,10 @@ class DriveScanner:
             ext_norm = ext.strip().lower()
             if ext_norm and not ext_norm.startswith("."):
                 ext_norm = "." + ext_norm
+            cat_name = str(category or "").strip()
+            cat_map, all_known_exts = _category_extensions_map()
+            cat_exts = cat_map.get(cat_name) if cat_name and cat_name != "Other Files" else None
+            match_other_cat = cat_name == "Other Files"
             min_bytes = int(max(0.0, min_size_mb) * 1024 * 1024)
             cutoff_ts = (time.time() - (min_age_days * 86400)) if min_age_days > 0 else None
 
@@ -702,6 +727,10 @@ class DriveScanner:
                     if fsize < min_bytes:
                         continue
                     if ext_norm and fext != ext_norm:
+                        continue
+                    if match_other_cat and fext in all_known_exts:
+                        continue
+                    if cat_exts is not None and fext not in cat_exts:
                         continue
                     if cutoff_ts is not None and (not fmtime or fmtime > cutoff_ts):
                         continue

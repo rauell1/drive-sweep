@@ -24,8 +24,10 @@ from app.scanner import DEV_BLOAT_NAMES, DirNode, DriveScanner
 from app.scheduler import build_schtasks_create_command, evaluate_low_disk_alerts
 from app.storage import (
     add_custom_preset,
+    append_history,
     get_custom_presets,
     get_language,
+    get_lifetime_stats,
     load_settings,
     remove_custom_preset,
     set_language,
@@ -35,6 +37,7 @@ from app.system_tools import (
     apply_windows11_frame_styling,
     compact_virtual_disk,
     find_old_download_installers,
+    find_windows_old_info,
     find_wsl_docker_vhdx,
     get_recycle_bin_info,
     parse_dism_analyze_output,
@@ -661,3 +664,56 @@ def test_one_click_windows_workflows_and_dwm_helper(tmp_path: Path, monkeypatch)
 
     # DWM frame helper returns bool cleanly even without a matching window
     assert isinstance(apply_windows11_frame_styling(dark_mode=True, window_title="NonExistentDriveSweepTestWindow"), bool)
+
+
+def test_benchmark_parity_category_search_windows_old_and_lifetime_stats(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("DRIVESWEEP_DATA_DIR", str(tmp_path / "ds_data"))
+
+    # Create sample workspace with Archive, Media, Other file, and expanded dev bloat (.terraform, .gradle)
+    ws = tmp_path / "ws"
+    (ws / "infra" / ".terraform").mkdir(parents=True)
+    (ws / "infra" / ".terraform" / "provider.bin").write_bytes(b"T" * 4096)
+    (ws / "archive.zip").write_bytes(b"Z" * 2048)
+    (ws / "clip.mp4").write_bytes(b"M" * 1024)
+    (ws / "custom.xyz").write_bytes(b"O" * 512)
+
+    scanner = DriveScanner()
+    scanner.start_scan(str(ws), force=True)
+    assert _wait_scan(scanner)["status"] == "done"
+
+    archives = scanner.search_all_files(category="Archives & Images")
+    assert archives["total_matches"] == 1
+    assert archives["items"][0]["name"] == "archive.zip"
+
+    media = scanner.search_all_files(category="Media & Video")
+    assert media["total_matches"] == 1
+    assert media["items"][0]["name"] == "clip.mp4"
+
+    other = scanner.search_all_files(category="Other Files")
+    assert any(it["name"] == "custom.xyz" for it in other["items"])
+    assert not any(it["name"] == "archive.zip" for it in other["items"])
+
+    dev_hits = scanner.get_dev_artifacts(limit=20, min_age_days=0)
+    assert any(d["name"] == ".terraform" for d in dev_hits)
+
+    # Windows.old inspection on synthetic drive root
+    fake_c = tmp_path / "FakeC"
+    win_old_sys = fake_c / "Windows.old" / "Windows"
+    win_old_sys.mkdir(parents=True)
+    (win_old_sys / "old_file.bin").write_bytes(b"W" * 5000)
+    wo = find_windows_old_info(system_drive=str(fake_c))
+    assert wo["present"] is True
+    assert wo["size_bytes"] == 5000
+    assert find_windows_old_info(system_drive=str(tmp_path / "EmptyC"))["present"] is False
+
+    # Lifetime stats across multiple recorded cleanup runs
+    append_history({"action": "Quick Clean", "mode": "recycle", "freed_bytes": 1000, "freed_human": "1000 B", "deleted_count": 2})
+    append_history({"action": "Virtual Disk Shrink", "mode": "system", "freed_bytes": 2500, "freed_human": "2.44 KB", "deleted_count": 1})
+    stats = get_lifetime_stats()
+    assert stats["total_runs"] == 2
+    assert stats["lifetime_freed_bytes"] == 3500
+    assert "KB" in stats["lifetime_freed_human"]
+
+    api = DriveSweepAPI()
+    info = api.get_app_info()
+    assert info["lifetime_stats"]["lifetime_freed_bytes"] == 3500

@@ -20,7 +20,7 @@
           </svg>
         </div>
         <div class="brand-meta">
-          <div class="brand-name">DriveSweep <span id="app-version" class="ver-chip">v0.5.0</span></div>
+          <div class="brand-name">DriveSweep <span id="app-version" class="ver-chip">v0.6.0</span></div>
           <div class="brand-tag" data-i18n="app_subtitle">Storage Analyzer</div>
         </div>
         <button id="btn-theme-toggle" class="theme-toggle-btn" title="Switch Light / Dark theme" aria-label="Toggle Light or Dark Mode">
@@ -407,6 +407,15 @@
               <div class="browser-bar">
                 <div class="browser-filters wrap">
                   <input id="allfiles-query" type="search" class="input" placeholder="Search filename or path across drive..." />
+                  <select id="allfiles-category" class="select">
+                    <option value="">All Categories</option>
+                    <option value="Archives &amp; Images">Archives &amp; Images</option>
+                    <option value="Media &amp; Video">Media &amp; Video</option>
+                    <option value="Code &amp; Packages">Code &amp; Packages</option>
+                    <option value="Documents &amp; Data">Documents &amp; Data</option>
+                    <option value="Logs, Cache &amp; Temp">Logs, Cache &amp; Temp</option>
+                    <option value="Other Files">Other Files</option>
+                  </select>
                   <input id="allfiles-ext" type="text" class="input input-xs" placeholder="Ext (.zip)" />
                   <input id="allfiles-minmb" type="number" min="0" step="1" class="input input-xs" placeholder="Min MB" />
                   <select id="allfiles-age" class="select">
@@ -475,7 +484,8 @@
             <!-- Subview: Project Caches -->
             <div id="subview-devbloat" class="subview">
               <div class="browser-bar">
-                <div class="browser-filters">
+                <div class="browser-filters wrap">
+                  <input id="devbloat-query" type="search" class="input input-sm" placeholder="Filter project or cache..." />
                   <label class="muted small-text" for="devbloat-age">Unused for:</label>
                   <select id="devbloat-age" class="select">
                     <option value="0">All Project Caches</option>
@@ -484,6 +494,7 @@
                     <option value="180">Untouched &gt; 180 days</option>
                     <option value="365">Untouched &gt; 1 year</option>
                   </select>
+                  <button id="btn-devbloat-select-inactive" class="btn btn-soft btn-sm" type="button">Select Inactive (&gt; 30d)</button>
                 </div>
                 <div id="devbloat-meta" class="muted small-text"></div>
               </div>
@@ -509,11 +520,17 @@
             <div id="subview-duplicates" class="subview">
               <div class="browser-bar">
                 <div class="browser-filters wrap">
+                  <input id="dup-query" type="search" class="input input-sm" placeholder="Filter duplicate name..." />
                   <select id="dup-min-size" class="select">
                     <option value="100">Files &ge; 100 KB</option>
                     <option value="1024">Files &ge; 1 MB</option>
                     <option value="10240">Files &ge; 10 MB</option>
                     <option value="51200">Files &ge; 50 MB</option>
+                  </select>
+                  <select id="dup-keep-strategy" class="select" title="Choose which copy to keep per duplicate group">
+                    <option value="newest" selected>Keep Newest Copy</option>
+                    <option value="oldest">Keep Oldest Copy</option>
+                    <option value="shortest">Keep Shortest Path</option>
                   </select>
                   <button id="btn-find-dups" class="btn btn-primary btn-sm" data-i18n="dup_find_btn">Find Duplicates</button>
                   <button id="btn-cancel-dups" class="btn btn-danger btn-sm hidden">Cancel</button>

@@ -17,7 +17,7 @@ const ICON_MOON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" s
 const state = {
   theme: "dark",
   language: "en",
-  version: "0.5.0",
+  version: "0.6.0",
   activeTab: "smart",
   dataDir: "",
   installKind: "source",
@@ -51,9 +51,14 @@ const state = {
   isUpdating: false,
   isCheckingUpdates: false,
   modalToken: 0,
+  lifetimeStats: { total_runs: 0, lifetime_freed_bytes: 0, lifetime_freed_human: "0 B" },
   browseState: { path: null, sort: "size", query: "", offset: 0, limit: 250 },
-  allFilesState: { query: "", ext: "", minMb: 0, minAgeDays: 0, sort: "size", offset: 0, limit: 200 },
+  allFilesState: { query: "", category: "", ext: "", minMb: 0, minAgeDays: 0, sort: "size", offset: 0, limit: 200 },
   devBloatMinAgeDays: 0,
+  devBloatQuery: "",
+  devBloatItems: [],
+  dupQuery: "",
+  dupKeepStrategy: "newest",
 };
 
 function api() {
@@ -163,7 +168,7 @@ function buildSvgDonut(segments, centerTop, centerBottom, activeLabel = null, cl
     .slice(0, 6)
     .map(
       (s) => `
-      <div class="donut-list-row ${clickable ? "is-clickable" : ""} ${activeLabel === s.label ? "is-active" : ""}" data-cat="${escapeHtml(s.label)}">
+      <div class="donut-list-row ${clickable ? "is-clickable" : ""} ${activeLabel === s.label ? "is-active" : ""}" data-cat="${escapeHtml(s.rawCategory || s.label)}">
         <span class="donut-list-name">
           <span class="legend-dot" style="background:${s.color};"></span>
           <span>${escapeHtml(s.label)}</span>
@@ -484,7 +489,24 @@ function updateDriveHealthPill() {
   }
 
   const freeLabel = `${formatBytes(totalFreeBytes)} total free across ${drives.length} drive${drives.length === 1 ? "" : "s"}`;
-  text.textContent = reclaimBytes > 0 ? `${freeLabel} | ${formatBytes(reclaimBytes)} safe caches found` : freeLabel;
+  const lifeBytes = Number(state.lifetimeStats?.lifetime_freed_bytes || 0);
+  const parts = [freeLabel];
+  if (reclaimBytes > 0) parts.push(`${formatBytes(reclaimBytes)} safe caches found`);
+  if (lifeBytes > 0) parts.push(`${formatBytes(lifeBytes)} reclaimed total`);
+  text.textContent = parts.join(" | ");
+}
+
+function recordLifetimeCleanup(freedBytes) {
+  const b = Math.max(0, Number(freedBytes || 0));
+  if (!state.lifetimeStats) {
+    state.lifetimeStats = { total_runs: 0, lifetime_freed_bytes: 0, lifetime_freed_human: "0 B" };
+  }
+  if (b > 0) {
+    state.lifetimeStats.total_runs = Number(state.lifetimeStats.total_runs || 0) + 1;
+    state.lifetimeStats.lifetime_freed_bytes = Number(state.lifetimeStats.lifetime_freed_bytes || 0) + b;
+    state.lifetimeStats.lifetime_freed_human = formatBytes(state.lifetimeStats.lifetime_freed_bytes);
+    updateDriveHealthPill();
+  }
 }
 
 function updateHeaderCounts(exclusions, historyCount) {
@@ -583,6 +605,17 @@ async function openHistoryModal() {
   const entries = await api().get_history(50);
   updateHeaderCounts(undefined, entries.length);
 
+  const entrySum = entries.reduce((acc, h) => acc + Math.max(0, Number(h.freed_bytes || 0)), 0);
+  const lifeBytes = Math.max(entrySum, Number(state.lifetimeStats?.lifetime_freed_bytes || 0));
+  const lifeRuns = Math.max(entries.length, Number(state.lifetimeStats?.total_runs || 0));
+  const summaryHtml =
+    lifeRuns > 0
+      ? `<div class="summary-strip" style="margin-bottom:10px;">
+           <div>Lifetime reclaimed: <strong class="accent-good">${escapeHtml(formatBytes(lifeBytes))}</strong></div>
+           <div class="muted small-text">Across ${lifeRuns.toLocaleString()} cleanup run${lifeRuns === 1 ? "" : "s"}</div>
+         </div>`
+      : "";
+
   const rows = entries
     .map((h) => {
       const dateLabel = h.timestamp ? new Date(h.timestamp).toLocaleString() : "Unknown";
@@ -610,7 +643,7 @@ async function openHistoryModal() {
 
   showModal(
     `Cleanup Log (${entries.length})`,
-    `<div class="review-list">${rows || "<p class='muted'>No cleanup runs recorded yet.</p>"}</div>`,
+    `${summaryHtml}<div class="review-list">${rows || "<p class='muted'>No cleanup runs recorded yet.</p>"}</div>`,
     [
       {
         text: tr("open_recycle_bin", "Open Recycle Bin"),
@@ -635,6 +668,8 @@ async function openHistoryModal() {
                       cls: "btn-danger",
                       onClick: async () => {
                         await api().clear_history();
+                        state.lifetimeStats = { total_runs: 0, lifetime_freed_bytes: 0, lifetime_freed_human: "0 B" };
+                        updateDriveHealthPill();
                         updateHeaderCounts(undefined, 0);
                         openHistoryModal();
                       },
@@ -1014,6 +1049,7 @@ function buildWindowsToolsHtml(data, isPageView = true) {
   const rb = data.recycle_bin || {};
   const rbDrives = Array.isArray(data.recycle_bin_drives) ? data.recycle_bin_drives : [];
   const oldInst = data.old_installers || { count: 0, total_human: "0 B", items: [] };
+  const winOld = data.windows_old || { present: false, path: "C:\\Windows.old", size_bytes: 0, size_human: "0 B" };
   const hib = data.hibernation || {};
   const vhdx = data.virtual_disks || { count: 0, total_human: "0 B", items: [] };
   const ageDays = Number(state.windowsAgeDays || 30);
@@ -1021,6 +1057,7 @@ function buildWindowsToolsHtml(data, isPageView = true) {
   const totalKnownBytes =
     Number(rb.size_bytes || 0) +
     Number(oldInst.total_bytes || 0) +
+    Number(winOld.size_bytes || 0) +
     Number(hib.size_bytes || 0) +
     Number(vhdx.total_bytes || 0);
 
@@ -1158,6 +1195,13 @@ function buildWindowsToolsHtml(data, isPageView = true) {
             <button id="btn-sys-winsxs-clean" class="btn btn-primary btn-xs">Clean Old Updates</button>
           </div>
         </div>
+        <div class="summary-strip" style="padding:8px 11px;">
+          <div class="small-text">
+            Previous Windows backup (<code>Windows.old</code>):
+            <strong>${winOld.present ? escapeHtml(winOld.size_human || "0 B") : "Not present (0 B)"}</strong>
+          </div>
+          ${winOld.present ? `<div style="display:flex;gap:6px;"><button id="btn-sys-queue-winold" class="btn btn-primary btn-xs" data-path="${escapeHtml(winOld.path)}" data-size="${winOld.size_bytes || 0}" data-human="${escapeHtml(winOld.size_human || "0 B")}">Queue</button><button id="btn-sys-open-winold" class="btn btn-soft btn-xs" data-path="${escapeHtml(winOld.path)}">Reveal</button></div>` : `<span class="badge badge-good">Clean</span>`}
+        </div>
         <div id="winsxs-output" class="tool-output-box ${state.winsxsAnalysis ? "" : "hidden"}">${winsxsHtml}</div>
       </div>
 
@@ -1194,6 +1238,7 @@ function bindWindowsToolsEvents(data, { inModal = false } = {}) {
     if (msgEl) msgEl.textContent = "Emptying Windows Recycle Bin...";
     const res = await api().empty_recycle_bin(null);
     if (res.ok) {
+      if (res.freed_bytes) recordLifetimeCleanup(res.freed_bytes);
       if (res.drives_after) renderDrives(res.drives_after);
       if (typeof res.history_count === "number") updateHeaderCounts(undefined, res.history_count);
       const lbl = document.getElementById("rb-size-label");
@@ -1249,6 +1294,29 @@ function bindWindowsToolsEvents(data, { inModal = false } = {}) {
     openReviewModal();
   });
 
+  document.getElementById("btn-sys-open-winold")?.addEventListener("click", (e) => {
+    api().open_in_explorer(e.currentTarget.dataset.path || "C:\\Windows.old");
+  });
+  document.getElementById("btn-sys-queue-winold")?.addEventListener("click", (e) => {
+    const btn = e.currentTarget;
+    setItemSelected(
+      {
+        path: btn.dataset.path || "C:\\Windows.old",
+        label: "Windows.old (Previous Windows Backup)",
+        size_bytes: Number(btn.dataset.size || 0),
+        size_human: btn.dataset.human || "0 B",
+        contents_only: false,
+        risk_level: "caution",
+        risk_reason: "Previous Windows version backup. Safe to remove if your current Windows update is working well.",
+        source: "explorer",
+      },
+      true
+    );
+    btn.textContent = "Queued";
+    btn.disabled = true;
+    showToast("Queued Windows.old for cleanup", "info");
+  });
+
   document.querySelectorAll(".btn-open-vhdx").forEach((b) => {
     b.addEventListener("click", () => api().open_in_explorer(b.dataset.path));
   });
@@ -1285,6 +1353,7 @@ function bindWindowsToolsEvents(data, { inModal = false } = {}) {
         hibBtn.textContent = prevLabel;
         return;
       }
+      if (!enable && res.freed_bytes) recordLifetimeCleanup(res.freed_bytes);
       if (res.drives_after) renderDrives(res.drives_after);
       if (typeof res.history_count === "number") updateHeaderCounts(undefined, res.history_count);
       showToast(res.message || "Updated Windows hibernation", "good");
@@ -1329,6 +1398,7 @@ function bindWindowsToolsEvents(data, { inModal = false } = {}) {
           btn.textContent = "Shrink Disk";
           return;
         }
+        if (res.freed_bytes) recordLifetimeCleanup(res.freed_bytes);
         if (res.drives_after) renderDrives(res.drives_after);
         if (typeof res.history_count === "number") updateHeaderCounts(undefined, res.history_count);
         showToast(res.message || `Compacted ${vhdxName}`, "good");
@@ -1975,27 +2045,63 @@ async function loadAnalytics() {
   // Interactive Proportional Zoomable Treemap
   await loadTreemap(state.treemapPath || state.browseState.path);
 
-  // Category Donut Chart
+  // Category Donut Chart (click any category to drill down into Find Any File)
   const catSegs = (data.by_category || []).map((c) => ({
     label: `${c.name} (${c.percent}%)`,
+    rawCategory: c.name,
     value: c.size_bytes,
     valueLabel: c.size_human,
     color: c.color,
   }));
-  document.getElementById("category-chart-wrap").innerHTML = buildSvgDonut(
+  const catWrap = document.getElementById("category-chart-wrap");
+  catWrap.innerHTML = buildSvgDonut(
     catSegs,
     data.total_human || "0 B",
-    "Total"
+    "Total",
+    null,
+    true
   );
+  catWrap.querySelectorAll(".donut-list-row[data-cat]").forEach((row) => {
+    row.addEventListener("click", () => {
+      const cat = row.dataset.cat || "";
+      state.allFilesState.query = "";
+      state.allFilesState.ext = "";
+      state.allFilesState.minMb = 0;
+      state.allFilesState.minAgeDays = 0;
+      state.allFilesState.category = cat;
+      state.allFilesState.offset = 0;
+      const qEl = document.getElementById("allfiles-query");
+      const extEl = document.getElementById("allfiles-ext");
+      const minMbEl = document.getElementById("allfiles-minmb");
+      const ageEl = document.getElementById("allfiles-age");
+      const catEl = document.getElementById("allfiles-category");
+      if (qEl) qEl.value = "";
+      if (extEl) extEl.value = "";
+      if (minMbEl) minMbEl.value = "";
+      if (ageEl) ageEl.value = "0";
+      if (catEl) catEl.value = cat;
+      switchExplorerSubView("allfiles");
+      loadAllFiles();
+    });
+  });
 
-  // Age Bar Chart
+  // Age Bar Chart (click any age bar to drill down into Find Any File)
   const ageList = data.by_age || [];
   const maxAgeBytes = Math.max(1, ...ageList.map((a) => Number(a.size_bytes || 0)));
-  document.getElementById("age-chart-wrap").innerHTML = ageList
+  const ageMinDaysForLabel = (name) => {
+    const s = String(name || "").toLowerCase();
+    if (s.includes("year")) return 365;
+    if (s.includes("90 to")) return 90;
+    if (s.includes("30 to")) return 30;
+    return 0;
+  };
+  const ageWrap = document.getElementById("age-chart-wrap");
+  ageWrap.innerHTML = ageList
     .map((a) => {
       const w = Math.min(100, (Number(a.size_bytes || 0) / maxAgeBytes) * 100);
+      const minAge = ageMinDaysForLabel(a.name);
       return `
-        <div class="bar-row">
+        <div class="bar-row is-clickable" data-min-age="${minAge}" title="Click to browse files in this age bracket">
           <div class="bar-row-top">
             <span><strong>${escapeHtml(a.name)}</strong> <span class="muted">(${a.file_count.toLocaleString()} files)</span></span>
             <span><strong>${escapeHtml(a.size_human)}</strong> <span class="muted">(${a.percent}%)</span></span>
@@ -2004,6 +2110,29 @@ async function loadAnalytics() {
         </div>`;
     })
     .join("");
+  ageWrap.querySelectorAll(".bar-row[data-min-age]").forEach((row) => {
+    row.addEventListener("click", () => {
+      const minAge = Number(row.dataset.minAge || 0);
+      state.allFilesState.query = "";
+      state.allFilesState.ext = "";
+      state.allFilesState.minMb = 0;
+      state.allFilesState.category = "";
+      state.allFilesState.minAgeDays = minAge;
+      state.allFilesState.offset = 0;
+      const qEl = document.getElementById("allfiles-query");
+      const extEl = document.getElementById("allfiles-ext");
+      const minMbEl = document.getElementById("allfiles-minmb");
+      const catEl = document.getElementById("allfiles-category");
+      const ageEl = document.getElementById("allfiles-age");
+      if (qEl) qEl.value = "";
+      if (extEl) extEl.value = "";
+      if (minMbEl) minMbEl.value = "";
+      if (catEl) catEl.value = "";
+      if (ageEl) ageEl.value = String(minAge);
+      switchExplorerSubView("allfiles");
+      loadAllFiles();
+    });
+  });
 
   // Simple Summary Table
   const topFolders = data.top_folders || [];
@@ -2154,7 +2283,7 @@ async function loadBrowseFolder() {
 
 async function loadAllFiles() {
   const a = state.allFilesState;
-  const res = await api().search_all_files(a.query, a.minMb, a.minAgeDays, a.ext, a.sort, a.offset, a.limit);
+  const res = await api().search_all_files(a.query, a.minMb, a.minAgeDays, a.ext, a.sort, a.offset, a.limit, a.category || "");
   document.getElementById("allfiles-meta").textContent =
     `${res.total_matches.toLocaleString()} files matched (${res.total_matched_human})`;
 
@@ -2374,7 +2503,17 @@ function renderExplorerFolderRows(tbody, items) {
 }
 
 async function loadDevArtifacts() {
-  const items = await api().get_dev_artifacts(200, state.devBloatMinAgeDays);
+  state.devBloatItems = (await api().get_dev_artifacts(250, state.devBloatMinAgeDays)) || [];
+  renderDevArtifacts();
+}
+
+function renderDevArtifacts() {
+  const q = (state.devBloatQuery || "").trim().toLowerCase();
+  const items = (state.devBloatItems || []).filter((item) => {
+    if (!q) return true;
+    const hay = `${item.name || ""} ${item.parent_name || ""} ${item.path || ""}`.toLowerCase();
+    return hay.includes(q);
+  });
   const totalBytes = items.reduce((acc, i) => acc + Number(i.size_bytes || 0), 0);
   document.getElementById("devbloat-meta").textContent =
     `${items.length} project cache folder(s) | ${formatBytes(totalBytes)}`;
@@ -2383,7 +2522,7 @@ async function loadDevArtifacts() {
   const tbody = document.getElementById("devbloat-tbody");
   tbody.innerHTML = "";
 
-  for (const item of items || []) {
+  for (const item of items) {
     const tr = document.createElement("tr");
     const excluded = isPathExcludedLocal(item.path);
     const disabled = item.is_protected || excluded;
@@ -2438,6 +2577,38 @@ async function loadDevArtifacts() {
     tr.querySelector(".btn-open").addEventListener("click", () => api().open_in_explorer(item.path));
     tbody.appendChild(tr);
   }
+}
+
+function selectInactiveDevArtifacts(minAgeDays = 30) {
+  let added = 0;
+  const q = (state.devBloatQuery || "").trim().toLowerCase();
+  for (const item of state.devBloatItems || []) {
+    if (item.is_protected || isPathExcludedLocal(item.path)) continue;
+    if (Number(item.age_days || 0) < minAgeDays) continue;
+    if (q) {
+      const hay = `${item.name || ""} ${item.parent_name || ""} ${item.path || ""}`.toLowerCase();
+      if (!hay.includes(q)) continue;
+    }
+    setItemSelected(
+      {
+        path: item.path,
+        label: `${item.parent_name}/${item.name}`,
+        size_bytes: item.size_bytes,
+        size_human: item.size_human,
+        contents_only: false,
+        risk_level: item.risk_level || "safe",
+        risk_reason: item.risk_reason || "",
+        source: "explorer",
+      },
+      true
+    );
+    added += 1;
+  }
+  renderDevArtifacts();
+  showToast(
+    added > 0 ? `Selected ${added} inactive project cache${added === 1 ? "" : "s"} (> ${minAgeDays}d)` : `No inactive caches older than ${minAgeDays} days found`,
+    added > 0 ? "good" : "info"
+  );
 }
 
 function renderFileRows(tbody, items) {
@@ -2747,6 +2918,7 @@ async function runCleanup(items, mode) {
   }
 
   renderDrives(res.drives_after);
+  if (res.freed_bytes) recordLifetimeCleanup(res.freed_bytes);
 
   const hist = await api().get_history(50);
   updateHeaderCounts(undefined, hist.length);
@@ -3000,19 +3172,35 @@ function bindEvents() {
     loadBrowseFolder();
   });
 
-  document.getElementById("btn-allfiles-search").addEventListener("click", () => {
+  const runAllFilesQuery = () => {
     state.allFilesState.query = document.getElementById("allfiles-query").value;
+    state.allFilesState.category = document.getElementById("allfiles-category")?.value || "";
     state.allFilesState.ext = document.getElementById("allfiles-ext").value;
     state.allFilesState.minMb = Number(document.getElementById("allfiles-minmb").value || 0);
     state.allFilesState.minAgeDays = Number(document.getElementById("allfiles-age").value || 0);
     state.allFilesState.sort = document.getElementById("allfiles-sort").value;
     state.allFilesState.offset = 0;
     loadAllFiles();
+  };
+
+  document.getElementById("btn-allfiles-search").addEventListener("click", runAllFilesQuery);
+  document.getElementById("allfiles-category")?.addEventListener("change", runAllFilesQuery);
+  document.getElementById("allfiles-age")?.addEventListener("change", runAllFilesQuery);
+  document.getElementById("allfiles-sort")?.addEventListener("change", runAllFilesQuery);
+  document.getElementById("allfiles-query")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") runAllFilesQuery();
   });
 
+  document.getElementById("devbloat-query")?.addEventListener("input", (e) => {
+    state.devBloatQuery = e.target.value || "";
+    renderDevArtifacts();
+  });
   document.getElementById("devbloat-age").addEventListener("change", (e) => {
     state.devBloatMinAgeDays = Number(e.target.value || 0);
     loadDevArtifacts();
+  });
+  document.getElementById("btn-devbloat-select-inactive")?.addEventListener("click", () => {
+    selectInactiveDevArtifacts(Math.max(30, Number(state.devBloatMinAgeDays || 30)));
   });
 
   document.getElementById("btn-windows-refresh")?.addEventListener("click", () => loadWindowsToolsView(true));
@@ -3044,6 +3232,14 @@ function bindEvents() {
   document.getElementById("btn-find-dups")?.addEventListener("click", startDuplicateScan);
   document.getElementById("btn-cancel-dups")?.addEventListener("click", () => api().cancel_duplicate_scan());
   document.getElementById("btn-dup-select-extra")?.addEventListener("click", selectAllExtraDuplicates);
+  document.getElementById("dup-query")?.addEventListener("input", (e) => {
+    state.dupQuery = e.target.value || "";
+    renderDuplicateResults();
+  });
+  document.getElementById("dup-keep-strategy")?.addEventListener("change", (e) => {
+    state.dupKeepStrategy = e.target.value || "newest";
+    renderDuplicateResults();
+  });
 
   document.getElementById("btn-review-queue").addEventListener("click", openReviewModal);
   document.getElementById("btn-clean-now").addEventListener("click", openConfirmCleanModal);
@@ -3163,6 +3359,24 @@ async function pollDuplicateStatus() {
   renderDuplicateResults();
 }
 
+function getOrderedDuplicateCopies(copies) {
+  const strat = state.dupKeepStrategy || "newest";
+  const sorted = [...(copies || [])].sort((a, b) => {
+    if (strat === "oldest") {
+      const mdiff = Number(a.mtime || 0) - Number(b.mtime || 0);
+      if (mdiff !== 0) return mdiff;
+    } else if (strat === "shortest") {
+      const ldiff = String(a.path || "").length - String(b.path || "").length;
+      if (ldiff !== 0) return ldiff;
+    } else {
+      const mdiff = Number(b.mtime || 0) - Number(a.mtime || 0);
+      if (mdiff !== 0) return mdiff;
+    }
+    return String(a.path || "").localeCompare(String(b.path || ""));
+  });
+  return sorted.map((c, idx) => ({ ...c, _keepThis: idx === 0 }));
+}
+
 function renderDuplicateResults() {
   const container = document.getElementById("dup-groups");
   const meta = document.getElementById("dup-meta");
@@ -3177,11 +3391,27 @@ function renderDuplicateResults() {
     return;
   }
 
-  meta.textContent = `${res.total_groups} duplicate group(s) | ${res.reclaimable_human} reclaimable if extra copies are cleaned`;
-  selAllBtn?.classList.remove("hidden");
+  const q = (state.dupQuery || "").trim().toLowerCase();
+  const visibleGroups = (res.groups || []).filter((grp) => {
+    if (!q) return true;
+    if (String(grp.name || "").toLowerCase().includes(q)) return true;
+    return (grp.copies || []).some((c) => String(c.path || "").toLowerCase().includes(q));
+  });
+
+  meta.textContent = `${visibleGroups.length} duplicate group(s) | ${res.reclaimable_human} reclaimable if extra copies are cleaned`;
+  selAllBtn?.classList.toggle("hidden", visibleGroups.length === 0);
   container.innerHTML = "";
 
-  for (const grp of res.groups) {
+  if (visibleGroups.length === 0) {
+    container.innerHTML = `<div class="muted small-text" style="padding:14px;">No duplicate groups match "${escapeHtml(state.dupQuery)}".</div>`;
+    return;
+  }
+
+  const strat = state.dupKeepStrategy || "newest";
+  const keepLabel =
+    strat === "oldest" ? "Keep Oldest" : strat === "shortest" ? "Keep Shortest" : tr("dup_keep_newest", "Keep Newest");
+
+  for (const grp of visibleGroups) {
     const card = document.createElement("div");
     card.className = "group-card";
     card.innerHTML = `
@@ -3199,7 +3429,7 @@ function renderDuplicateResults() {
       <div class="group-body"></div>
     `;
     const body = card.querySelector(".group-body");
-    for (const copy of grp.copies) {
+    for (const copy of getOrderedDuplicateCopies(grp.copies)) {
       const excluded = !!copy.excluded || isPathExcludedLocal(copy.path);
       const disabled = !!copy.is_protected || excluded;
       const checked = !disabled && isItemSelected(copy.path, false);
@@ -3214,7 +3444,7 @@ function renderDuplicateResults() {
         <div class="preset-main">
           <div class="preset-title-line">
             <span class="preset-title">${escapeHtml(copy.name)}</span>
-            ${copy.keep_recommended ? `<span class="badge badge-good">${escapeHtml(tr("dup_keep_newest", "Keep Original"))}</span>` : `<span class="badge badge-warn">${escapeHtml(tr("dup_extra_copy", "Extra Copy"))}</span>`}
+            ${copy._keepThis ? `<span class="badge badge-good">${escapeHtml(keepLabel)}</span>` : `<span class="badge badge-warn">${escapeHtml(tr("dup_extra_copy", "Extra Copy"))}</span>`}
             ${renderRiskBadge(copy.risk_level || "safe", copy.risk_reason || "")}
           </div>
           <div class="preset-path" title="${escapeHtml(copy.path)}">${escapeHtml(copy.path)}</div>
@@ -3252,9 +3482,16 @@ function renderDuplicateResults() {
 function selectAllExtraDuplicates() {
   const res = state.dupResult;
   if (!res || !res.groups) return;
+  const q = (state.dupQuery || "").trim().toLowerCase();
   for (const grp of res.groups) {
-    for (const copy of grp.copies) {
-      if (copy.keep_recommended || copy.is_protected || copy.excluded || isPathExcludedLocal(copy.path)) {
+    if (q) {
+      const hit =
+        String(grp.name || "").toLowerCase().includes(q) ||
+        (grp.copies || []).some((c) => String(c.path || "").toLowerCase().includes(q));
+      if (!hit) continue;
+    }
+    for (const copy of getOrderedDuplicateCopies(grp.copies)) {
+      if (copy._keepThis || copy.is_protected || copy.excluded || isPathExcludedLocal(copy.path)) {
         continue;
       }
       setItemSelected(
@@ -3305,6 +3542,7 @@ async function initApp() {
   state.reminderFrequency = info.reminder_frequency || "weekly";
   state.reminderThresholdPct = Number(info.reminder_threshold_pct || 15);
   state.lowDiskAlerts = info.low_disk_alerts || null;
+  state.lifetimeStats = info.lifetime_stats || { total_runs: 0, lifetime_freed_bytes: 0, lifetime_freed_human: "0 B" };
   document.getElementById("app-version").textContent = `v${state.version}`;
   updateHeaderCounts(info.exclusions || [], info.history_count || 0);
   renderLowDiskBanner();

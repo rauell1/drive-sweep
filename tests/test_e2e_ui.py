@@ -245,10 +245,10 @@ const requiredIds = [
   "btn-explorer-rescan","btn-explorer-largest-files","btn-explorer-largest-folders","largest-meta","risk-cards-row","treemap-controls",
   "treemap-grid","category-chart-wrap","age-chart-wrap","top-folders-table-wrap",
   "windows-header-toolbar","windows-installer-age","btn-windows-refresh","windows-content","toast-container",
-  "breadcrumbs","browse-query","browse-sort","browse-tbody","browse-pager","allfiles-query",
+  "breadcrumbs","browse-query","browse-sort","browse-tbody","browse-pager","allfiles-query","allfiles-category",
   "allfiles-ext","allfiles-minmb","allfiles-age","allfiles-sort","btn-allfiles-search",
-  "allfiles-meta","allfiles-tbody","allfiles-pager","devbloat-age","devbloat-meta","devbloat-tbody",
-  "dup-min-size","btn-find-dups","btn-cancel-dups","btn-dup-select-extra","dup-meta",
+  "allfiles-meta","allfiles-tbody","allfiles-pager","devbloat-query","devbloat-age","btn-devbloat-select-inactive","devbloat-meta","devbloat-tbody",
+  "dup-query","dup-min-size","dup-keep-strategy","btn-find-dups","btn-cancel-dups","btn-dup-select-extra","dup-meta",
   "dup-progress","dup-status-label","dup-stats-text","dup-progress-fill","dup-groups",
   "dock-bar","selected-size","selected-count","dedup-note","btn-review-queue","btn-clean-now",
   "modal-backdrop","modal-title","modal-body","modal-footer","modal-close","low-disk-banner",
@@ -304,6 +304,7 @@ sandbox.window.pywebview = {{
             recycle_bin: {{ size_human: "10 MB", item_count: 2, size_bytes: 10485760 }},
             recycle_bin_drives: [{{ drive: "C:\\\\", size_human: "10 MB", item_count: 2 }}],
             old_installers: {{ count: 1, total_human: "50 MB", items: [] }},
+            windows_old: {{ present: true, path: "C:\\\\Windows.old", size_bytes: 1073741824, size_human: "1.00 GB" }},
             hibernation: {{ present: true, size_human: "4.00 GB", size_bytes: 4294967296 }},
             virtual_disks: {{ count: 1, total_human: "6.00 GB", items: [{{ name: "ext4.vhdx", parent: "Ubuntu", path: "C:\\\\wsl\\\\ext4.vhdx", size_bytes: 6442450944, size_human: "6.00 GB" }}] }},
           }};
@@ -316,8 +317,12 @@ sandbox.window.pywebview = {{
               caution: {{ size_human: "20 GB", file_count: 20, percent: 20 }},
               safe: {{ size_human: "20 GB", file_count: 30, percent: 20 }},
             }},
-            by_category: [],
-            by_age: [],
+            by_category: [
+              {{ name: "Archives & Images", size_bytes: 50000000, size_human: "47.68 MB", file_count: 3, percent: 50, color: "#8b5cf6" }}
+            ],
+            by_age: [
+              {{ name: "> 1 year", size_bytes: 40000000, size_human: "38.15 MB", file_count: 2, percent: 40, color: "#ef4444" }}
+            ],
             top_folders: [
               {{ name: "Users", path: "C:\\\\Users", risk_level: "caution", file_count: 10, size_human: "20 GB", percent: 20 }},
             ],
@@ -415,6 +420,8 @@ for (const lang of ["en", "es", "fr", "de", "pt"]) {{
   sandbox.switchExplorerSubView("duplicates");
   await sandbox.loadAnalytics();
   assert(elementMap.get("risk-cards-row").innerHTML.includes("risk-quiet-bar"), "Missing calm risk summary bar");
+  assert(elementMap.get("category-chart-wrap").innerHTML.includes('data-cat="Archives &amp; Images"'), "Missing clickable category drilldown attribute");
+  assert(elementMap.get("age-chart-wrap").innerHTML.includes('data-min-age="365"'), "Missing clickable age drilldown attribute");
   assert(elementMap.get("top-folders-table-wrap").innerHTML.includes("Users"), "Missing Top Space Users row");
   assert(elementMap.get("treemap-grid").innerHTML.includes("space-seg-bar"), "Missing segmented storage bar");
   assert(elementMap.get("treemap-grid").innerHTML.includes("space-map-row"), "Missing folder breakdown row");
@@ -424,6 +431,27 @@ for (const lang of ["en", "es", "fr", "de", "pt"]) {{
   assert(elementMap.get("windows-content").innerHTML.includes("windows-summary-strip"), "Windows summary strip missing");
   assert(elementMap.get("windows-content").innerHTML.includes("btn-compact-vhdx"), "Missing 1-click Shrink Disk button");
   assert(elementMap.get("windows-content").innerHTML.includes("btn-sys-hiber-toggle"), "Missing 1-click Hibernation toggle button");
+  assert(elementMap.get("windows-content").innerHTML.includes("btn-sys-queue-winold"), "Missing Windows.old queue button");
+  const orderedOldest = sandbox.getOrderedDuplicateCopies([
+    {{ path: "C:\\\\a\\\\longer\\\\new.zip", mtime: 200 }},
+    {{ path: "C:\\\\old.zip", mtime: 50 }},
+  ]);
+  assert.strictEqual(orderedOldest[0].path, "C:\\\\a\\\\longer\\\\new.zip");
+  const stratEl = elementMap.get("dup-keep-strategy");
+  stratEl.value = "oldest";
+  for (const fn of stratEl._listeners.get("change") || []) fn({{ target: stratEl }});
+  const orderedByOldest = sandbox.getOrderedDuplicateCopies([
+    {{ path: "C:\\\\a\\\\longer\\\\new.zip", mtime: 200 }},
+    {{ path: "C:\\\\old.zip", mtime: 50 }},
+  ]);
+  assert.strictEqual(orderedByOldest[0].path, "C:\\\\old.zip");
+  stratEl.value = "shortest";
+  for (const fn of stratEl._listeners.get("change") || []) fn({{ target: stratEl }});
+  const orderedByShortest = sandbox.getOrderedDuplicateCopies([
+    {{ path: "C:\\\\a\\\\longer\\\\new.zip", mtime: 200 }},
+    {{ path: "C:\\\\s.zip", mtime: 50 }},
+  ]);
+  assert.strictEqual(orderedByShortest[0].path, "C:\\\\s.zip");
   await sandbox.openSystemToolsModal();
   assert(elementMap.get("modal-title").textContent.includes("Windows Space"), "Windows Tools modal failed");
   await sandbox.openUpdatesPrivacyModal(false);

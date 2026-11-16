@@ -41,6 +41,7 @@ from app.storage import (
     get_custom_presets,
     get_exclusions,
     get_history,
+    get_lifetime_stats,
     get_theme,
     load_settings,
     remove_custom_preset,
@@ -128,6 +129,7 @@ class DriveSweepAPI:
             "exclusions": settings["exclusions"],
             "custom_presets": settings["custom_presets"],
             "history_count": len(get_history(limit=200)),
+            "lifetime_stats": get_lifetime_stats(),
             "theme": settings["theme"],
             "language": settings["language"],
             "auto_check_updates": settings["auto_check_updates"],
@@ -351,6 +353,7 @@ class DriveSweepAPI:
         sort_by: str = "size",
         offset: int = 0,
         limit: int = 200,
+        category: str = "",
     ) -> dict:
         return self.scanner.search_all_files(
             query=query,
@@ -360,6 +363,7 @@ class DriveSweepAPI:
             sort_by=sort_by,
             offset=offset,
             limit=limit,
+            category=str(category or ""),
         )
 
     def get_largest_files(self, limit: int = 200) -> list[dict]:

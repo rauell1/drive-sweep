@@ -286,13 +286,55 @@ def _get_per_drive_recycle_bins() -> list[dict]:
     return drives
 
 
+def find_windows_old_info(system_drive: str | None = None) -> dict:
+    """Inspect whether C:\\Windows.old exists and measure its approximate size quickly."""
+    drive = (system_drive or os.environ.get("SystemDrive") or "C:").rstrip("\\/") + "\\"
+    win_old_path = os.path.join(drive, "Windows.old")
+    if not os.path.isdir(win_old_path):
+        return {"present": False, "path": win_old_path, "size_bytes": 0, "size_human": "0 B"}
+
+    total_bytes = 0
+    entries_seen = 0
+    stack: list[tuple[str, int]] = [(win_old_path, 0)]
+    while stack:
+        current, depth = stack.pop()
+        if depth > 3 or entries_seen >= 4000:
+            continue
+        try:
+            with os.scandir(current) as it:
+                for entry in it:
+                    entries_seen += 1
+                    if entries_seen > 4000:
+                        break
+                    try:
+                        if entry.is_symlink():
+                            continue
+                        if entry.is_file(follow_symlinks=False):
+                            total_bytes += int(entry.stat(follow_symlinks=False).st_size)
+                        elif entry.is_dir(follow_symlinks=False) and depth < 3:
+                            stack.append((entry.path, depth + 1))
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+
+    return {
+        "present": True,
+        "path": win_old_path,
+        "size_bytes": total_bytes,
+        "size_human": format_bytes(total_bytes),
+        "capped": entries_seen >= 4000,
+    }
+
+
 def inspect_system_space(max_installer_age_days: int = 30) -> dict:
-    """Return a consolidated overview of Windows Recycle Bin, old installers, hiberfil, and WSL2/Docker VHDX."""
+    """Return a consolidated overview of Windows Recycle Bin, old installers, hiberfil, Windows.old, and WSL2/Docker VHDX."""
     return {
         "is_admin": is_admin(),
         "recycle_bin": get_recycle_bin_info(),
         "recycle_bin_drives": _get_per_drive_recycle_bins(),
         "old_installers": find_old_download_installers(max_age_days=max_installer_age_days),
+        "windows_old": find_windows_old_info(),
         "hibernation": find_hibernation_info(),
         "virtual_disks": find_wsl_docker_vhdx(),
     }

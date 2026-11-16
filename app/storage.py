@@ -8,6 +8,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from app.safety import format_bytes
+
 
 def get_app_data_dir() -> Path:
     """Return platform-appropriate per-user data directory for DriveSweep."""
@@ -312,6 +314,34 @@ def get_history(limit: int = 50) -> list[dict]:
         return []
     entries.reverse()
     return entries[:limit]
+
+
+def get_lifetime_stats() -> dict:
+    """Compute total cleanup runs and cumulative freed bytes from local history."""
+    path = _history_path()
+    if not path.exists():
+        return {"total_runs": 0, "lifetime_freed_bytes": 0, "lifetime_freed_human": "0 B"}
+    total_runs = 0
+    total_freed = 0
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    total_runs += 1
+                    total_freed += max(0, int(rec.get("freed_bytes", 0) or 0))
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    continue
+    except OSError:
+        return {"total_runs": 0, "lifetime_freed_bytes": 0, "lifetime_freed_human": "0 B"}
+    return {
+        "total_runs": total_runs,
+        "lifetime_freed_bytes": total_freed,
+        "lifetime_freed_human": format_bytes(total_freed),
+    }
 
 
 def clear_history() -> None:
