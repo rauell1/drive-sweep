@@ -3,9 +3,10 @@
 **Free up disk space safely on Windows.** DriveSweep scans your PC for temporary files, leftover app caches, browser caches, and oversized old files, then lets you review everything in plain visual charts before moving anything to the Recycle Bin.
 
 - **Works on any Windows PC:** Automatically finds Windows temporary files, Windows Update leftovers, Microsoft Store app caches, browser caches (Edge, Chrome, Firefox, Brave, Opera), everyday app caches (Teams, Discord, Spotify, Slack, Zoom, Steam, Epic Games, Office), and any installed desktop app caches on your computer. Optional coding and AI caches are also detected automatically only if you use those tools.
-- **Built for safety first:** Personal folders (`Downloads`, `OneDrive`, `Documents`, `Pictures`, `Videos`, `Music`, `Desktop`) are never auto-selected by Quick Clean. Use the **Large Files & Folders** view to inspect big files and folders across `Downloads`, user spaces, and all drives where every item stays unchecked until you manually select it. System files are locked so they cannot be removed accidentally, important files ask for your confirmation first, and cleanup defaults to **Recycle Bin (Safe)** so you can restore files anytime.
+- **Designed for safety:** Personal folders (`Downloads`, `OneDrive`, `Documents`, `Pictures`, `Videos`, `Music`, `Desktop`) are never auto-selected by Quick Clean. Use the **Large Files & Folders** view to inspect big files and folders across `Downloads`, user spaces, and all drives where every item stays unchecked until you manually select it. Windows system folders and other user accounts are blocked, important files ask for your confirmation first, and cleanup defaults to the **Recycle Bin** so you can usually restore files (see [Limits](#limits-please-read)).
 - **Light and Dark Mode:** Switch themes anytime from the top-left corner.
-- **100% private and offline:** Every scan, setting, and cleanup record stays on your own computer. Nothing is uploaded anywhere.
+- **Private by design:** Every scan, setting, and cleanup record stays on your own computer. Nothing is uploaded. The only network use is the optional update check, which is off by default (see [Privacy](#privacy)).
+- **Least privilege:** DriveSweep runs as a standard user. It asks for Administrator rights only when you choose **Restart as Admin** for system level tasks.
 
 ---
 
@@ -19,16 +20,16 @@ Choose **Option A** (standard Windows installer, recommended for most users) or 
 2. Under the latest release (**Assets** section at the bottom), click **`DriveSweep-Setup-0.6.0.exe`** (or the newest version listed) to download it.
 3. Open your `Downloads` folder and double-click the downloaded `DriveSweep-Setup-...exe` file.
 4. **If Windows shows a "Windows protected your PC" (SmartScreen) blue popup:**
-   - This appears on new open-source Windows apps until code signing is complete. You can verify the file checksum against `SHA256SUMS.txt` on the Releases page if you wish.
+   - This appears on new open source Windows apps until they are code signed. Before running, you can verify the file's SHA-256 against `SHA256SUMS.txt` on the Releases page, and its build provenance with `gh attestation verify DriveSweep-Setup-...exe --repo rauell1/drive-sweep`.
    - Click **More info**, then click **Run anyway**.
-5. **Accept the Administrator prompt (UAC):** Click **Yes** when Windows asks if the app can make changes to your device. DriveSweep needs Administrator access so it can clean system-level temp folders (such as `C:\Windows\Temp` and Windows Update download caches) and read full drive sizes accurately.
+5. **Accept the Administrator prompt (UAC):** Click **Yes** when Windows asks if Setup can make changes to your device. Setup needs this to install into `Program Files`. The app itself then runs as a standard user.
 6. Follow the setup wizard (**Next -> Install -> Finish**). Leave **Launch DriveSweep** checked to open the app right away, or open **DriveSweep** anytime from your Start Menu or Desktop shortcut.
 
 ### Option B: Portable Version (No Installer)
 
 1. Open the **[GitHub Releases](https://github.com/rauell1/drive-sweep/releases)** page.
 2. Under **Assets**, download **`DriveSweep.exe`** (single-file app) or **`DriveSweep-win64.zip`** (unzip it to any folder you like).
-3. Double-click **`DriveSweep.exe`**, click **More info -> Run anyway** if SmartScreen appears, and click **Yes** on the Administrator prompt.
+3. Double-click **`DriveSweep.exe`** and click **More info -> Run anyway** if SmartScreen appears. No Administrator prompt appears until you choose **Restart as Admin** inside the app.
 
 ---
 
@@ -40,10 +41,11 @@ Choose **Option A** (standard Windows installer, recommended for most users) or 
 3. Click **+ Add Custom Folder** anytime to save any custom cleanup folder to your **Custom Folders** list (critical Windows system folders stay blocked).
 4. Turn toggles on or off for any item you want to clean or skip. Click **Open Folder** on any row to inspect the actual folder in Windows Explorer before deleting.
 5. Look at the bottom bar: keep **Recycle Bin (Safe)** selected (recommended), then click the blue **Clean** button and confirm.
+6. Windows system temp folders (such as `C:\Windows\Temp` and Windows Update downloads) need Administrator rights. Click **Restart as Admin** in the sidebar when you want to include them.
 
 ### 2. Drive Scanner, Interactive Disk Map & Duplicate Finder
-1. Click **Drive Scanner** on the left sidebar, then click any drive (`Drive C:`, `Drive D:`, etc.) or **Scan Custom Folder...** to analyze a specific folder. When running as Administrator on a local NTFS drive root, DriveSweep automatically uses fast NTFS Master File Table (MFT) scanning and falls back seamlessly to standard multi-threaded scanning otherwise.
-2. Export full scan summaries anytime via **Export CSV** or **Export JSON**.
+1. Click **Drive Scanner** on the left sidebar, then click any drive (`Drive C:`, `Drive D:`, etc.) or **Scan Custom Folder...** to analyze a specific folder. When running as Administrator on a local NTFS drive root, DriveSweep uses fast NTFS Master File Table (MFT) scanning; otherwise it uses standard multi-threaded scanning.
+2. Export full scan summaries anytime via **Export CSV** or **Export JSON**. CSV cells that start with `=`, `+`, `-` or `@` are prefixed with `'` so spreadsheet apps never run them as formulas.
 3. Explore the 6 tabs:
    - **Visual Summary:** Features an interactive **Folder Space Breakdown** (segmented storage bar + proportional folder rows with click-to-explore drill-down and breadcrumbs), **What Takes Up Space**, **How Old Your Files Are**, and **Top Space Users**, plus calm safety indicators (**System Files**, **Important Files**, **Standard Files**).
    - **Folders:** Browse folders from largest to smallest, check items to clean, or click **Keep** to protect a folder permanently.
@@ -57,7 +59,7 @@ Click **Windows Tools** on the left sidebar to open the dedicated Windows Space 
 - **Windows Recycle Bin:** View total size, per-drive Recycle Bin breakdown chips, and item count, open Recycle Bin directly, or empty it after confirmation (and record the cleanup in Cleanup Log).
 - **Old Download Installers (14 / 30 / 90 days):** Filter old `.exe`, `.msi`, `.zip`, `.iso`, and archive installers in `Downloads` and queue selected items for cleanup.
 - **WinSxS Component Store (DISM):** Safely analyze and trim superseded Windows Update backups with structured KPI readouts and Administrator Cleanup Log recording.
-- **Hibernation & Virtual Disks:** View `hiberfil.sys` size, enable/disable Windows hibernation in one click, inspect WSL2 / Docker `.vhdx` virtual disks with proportional usage bars, reveal files in Explorer, and run one-click **Shrink Disk** compaction right inside the app.
+- **Hibernation & Virtual Disks:** View `hiberfil.sys` size, enable/disable Windows hibernation in one click, inspect WSL2 / Docker `.vhdx` virtual disks with proportional usage bars, reveal files in Explorer, and run one-click **Shrink Disk** compaction right inside the app. Shrinking first runs `wsl --shutdown`, which closes every running Linux distribution and Docker Desktop's engine, so DriveSweep asks you to confirm first.
 
 ### 4. Always Keep, Cleanup Log & Scheduled Low-Disk Reminders
 - **Always Keep:** Protect any folder or file from deletion across Quick Clean, Large Files & Folders, Drive Scanner, and Duplicates by clicking **Keep** on any row, or by opening **Always Keep** in the sidebar and clicking **+ Add Folder...**. You can remove protected paths from this list anytime.
@@ -65,40 +67,61 @@ Click **Windows Tools** on the left sidebar to open the dedicated Windows Space 
 - **Settings & Updates:** Switch UI language (`English`, `Espanol`, `Francais`, `Deutsch`, `Portugues`), configure an optional Windows Task Scheduler low-disk space reminder, verify local storage privacy, and check or install updates via GitHub Releases Setup.
 
 ### 5. Automatic Updates via Setup
-Open **Settings & Updates** (left sidebar) -> **Check for Updates**. DriveSweep checks GitHub Releases over HTTPS, shows live download progress for the verified Setup installer package, checks `SHA256SUMS.txt` before installing, closes DriveSweep cleanly so Setup can upgrade files in place, and relaunches the updated app automatically. Auto-checking on startup can be turned on or off anytime.
+Open **Settings & Updates** (left sidebar) -> **Check for Updates**. DriveSweep checks GitHub Releases over HTTPS, shows live download progress for the verified Setup installer package, checks `SHA256SUMS.txt` before installing, closes DriveSweep cleanly so Setup can upgrade files in place, and relaunches the updated app automatically. Before running Setup, DriveSweep locks the downloaded file, checks its SHA-256 again and checks its Authenticode signature (once DriveSweep builds are signed, updates must be signed by the same publisher). Only official `github.com/rauell1/drive-sweep` release downloads newer than your current version are accepted. Checking on startup is **off by default**; you can turn it on during first run or in Settings.
 
 ---
 
 ## Safety Protections Built In
 
-- **Personal folders protected automatically:** Quick Clean never selects your `Downloads`, `OneDrive`, `CrossDevice`, `Documents`, `Desktop`, `Pictures`, `Music`, or `Videos` folders.
-- **Critical system files locked:** Essential Windows folders (`Windows\System32`, `Program Files`, `Boot`, and similar) cannot be deleted in DriveSweep.
-- **Permission prompt on important items:** Deleting databases, code repositories, executables, or selecting **Delete Forever** always asks for explicit confirmation first.
+- **Personal folders are never auto-selected:** Quick Clean never selects your `Downloads`, `OneDrive`, `CrossDevice`, `Documents`, `Desktop`, `Pictures`, `Music`, or `Videos` folders.
+- **System and other accounts blocked:** Essential Windows folders (`Windows`, `Program Files`, `ProgramData\Microsoft`, `Boot`, `Recovery`, and similar), the `Users` folder itself, and other user accounts' profiles (including `Public` and `Default`) are blocked from deletion.
+- **Folder links are never followed:** If a path goes through a junction, symbolic link or mount point, DriveSweep refuses to clean through it. Deleting a link removes only the link, never the folder it points to.
+- **Always Keep is enforced twice:** Your Always Keep list is checked in the interface and again by the cleanup engine right before anything is removed.
+- **Permission prompt on important items:** Deleting databases, code repositories, executables, `Windows.old`, or selecting **Delete Forever** always asks for explicit confirmation first.
 - **Clean parent/child math:** Selecting both a folder and files inside it never counts or deletes anything twice.
+
+### Limits (please read)
+
+These protections reduce risk; they do not remove it. You decide what is removed, so **back up anything important first**.
+
+- **The Recycle Bin is not a guarantee.** Network and removable drives have no Recycle Bin (DriveSweep skips those items in Recycle Bin mode instead of deleting them), paths longer than about 255 characters cannot go there, and Windows may permanently delete an item that is too large for the Recycle Bin.
+- **Delete Forever cannot be undone.**
+- **Removing `Windows.old`** ends your ability to roll back to your previous Windows version.
 
 ---
 
 ## Diagnostics & Winget Packaging
 
-- **Crash & Diagnostics Log:** Rotating logs (`drivesweep.log`, up to 1 MB x 3 backups) are stored in `%LOCALAPPDATA%\DriveSweep\drivesweep.log` and capture unhandled Python exceptions and UI `window.onerror` / `unhandledrejection` events. Open it anytime from **Settings & Updates -> Open Diagnostics Log**.
+- **Crash & Diagnostics Log:** Rotating logs (`drivesweep.log`, up to 1 MB x 3 backups) are stored in `%LOCALAPPDATA%\DriveSweep\drivesweep.log` and capture unhandled Python exceptions and UI `window.onerror` / `unhandledrejection` events. Logs can contain file and folder paths. Open them from **Settings & Updates -> Open Diagnostics Log**, or erase them with **Clear Logs**.
 - **Winget Manifests:** Release manifest templates live under `packaging/winget/` (`rauell1.DriveSweep.yaml`, `rauell1.DriveSweep.installer.yaml`, `rauell1.DriveSweep.locale.en-US.yaml`).
 
 ## Code Signing Policy
 
-Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+**Current status: DriveSweep releases are not code signed yet.** Each release states whether its files are signed. Until then, verify downloads with `SHA256SUMS.txt` and the GitHub build provenance attestation (`gh attestation verify <file> --repo rauell1/drive-sweep`).
+
+The project has applied for free code signing from [SignPath Foundation](https://signpath.org). Once approved, signed releases will carry this notice: _Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org)._
 
 ### Project Team & Roles
 - **Authors / Maintainers / Approvers:** [Roy Otieno (@rauell1)](https://github.com/rauell1)
-- All source code changes are committed to the public repository and built cleanly through GitHub Actions workflows in [.github/workflows/ci-release.yml](https://github.com/rauell1/drive-sweep/blob/main/.github/workflows/ci-release.yml).
-- Once SignPath Foundation approves the project, add `SIGNPATH_API_TOKEN`, `SIGNPATH_ORGANIZATION_ID`, `SIGNPATH_PROJECT_SLUG`, and `SIGNPATH_SIGNING_POLICY_SLUG` to GitHub repository Actions secrets to enable automatic Authenticode signing on every release tag.
+- All source code changes are committed to the public repository and built through the GitHub Actions workflow in [.github/workflows/ci-release.yml](https://github.com/rauell1/drive-sweep/blob/main/.github/workflows/ci-release.yml). Every third party action is pinned to a commit SHA and every Python dependency is installed from the hash-locked `requirements-dev.lock`.
+- The pipeline signs in the correct order: the app executables first, then the zip and installer are built from the signed files, then the installer itself is signed.
+- To enable signing, add these GitHub Actions secrets:
+  - SignPath: `SIGNPATH_API_TOKEN`, `SIGNPATH_ORGANIZATION_ID`, `SIGNPATH_PROJECT_SLUG`, `SIGNPATH_SIGNING_POLICY_SLUG`, and create two artifact configurations in SignPath named `executables` (signs `DriveSweep.exe` and `DriveSweep-win64/DriveSweep.exe`) and `installer` (signs `DriveSweep-Setup-*.exe`).
+  - Or Azure Trusted Signing: `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT`, `AZURE_SIGNING_PROFILE`.
 
 ---
 
-## Privacy Policy
+## Privacy
 
-DriveSweep runs completely offline on your local computer. It does not collect, transmit, sell, or share any personal data, file listings, or telemetry with any external server or with the project author. Settings (`settings.json`), exclusion paths, and local cleanup logs (`history.jsonl`) are stored strictly in `%LOCALAPPDATA%\DriveSweep` (or `~/.config/DriveSweep`) on your own device.
+DriveSweep has no accounts, analytics, telemetry or ads. Scans, settings, history and logs stay in `%LOCALAPPDATA%\DriveSweep` on your own device and are never uploaded. The only network use is the **optional** update check (off by default), which sends a standard HTTPS request to GitHub; GitHub sees your IP address and the DriveSweep version, under GitHub's own privacy statement. Read the full [Privacy Policy](PRIVACY.md).
 
-The only optional network connection happens when you check for app updates against the public GitHub Releases API (`api.github.com` / `github.com`), which receives only a standard HTTPS request with no personal data or scan history.
+---
+
+## License, Warranty & Trademarks
+
+- DriveSweep is released under the [MIT License](LICENSE) and is provided **"as is", without warranty of any kind**. The authors are not liable for lost data or other damage arising from its use.
+- Bundled third party components and their licenses are listed in [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt), which also ships with every release.
+- DriveSweep is an independent project and is not affiliated with or endorsed by Microsoft, Google, Mozilla, Valve, or any other company whose software it can clean. Product names are trademarks of their owners and are used only to describe compatibility.
 
 ---
 
@@ -108,19 +131,20 @@ The only optional network connection happens when you check for app updates agai
 git clone https://github.com/rauell1/drive-sweep.git
 cd drive-sweep
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install --require-hashes -r requirements-dev.lock
 .\.venv\Scripts\python.exe main.py
 ```
 
-- Run UI without triggering Windows UAC elevation during development:
+- DriveSweep starts as a standard user. To start it elevated directly:
   ```powershell
-  .\.venv\Scripts\python.exe main.py --no-elevate
+  .\.venv\Scripts\python.exe main.py --elevate
   ```
 - Run automated tests:
   ```powershell
   .\.venv\Scripts\python.exe -m pytest -v
   ```
-- Build Windows portable executables and checksums (and the Inno Setup installer if `ISCC.exe` is installed):
+- Build Windows portable executables and checksums (and the Inno Setup installer if `ISCC.exe` is installed). CI runs the same script in stages (`-Stage Binaries`, `Package`, `Checksums`) so it can sign in between:
   ```powershell
   .\build.ps1
   ```
+- After changing `requirements.txt` or `requirements-dev.txt`, regenerate the lock file with the command at the top of `requirements-dev.lock`, and regenerate `THIRD_PARTY_NOTICES.txt` with `python scripts\collect_licenses.py`.

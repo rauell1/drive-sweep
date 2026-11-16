@@ -1,0 +1,15 @@
+DriveSweep: please read before installing
+
+DriveSweep finds files and folders that take up space on your PC and removes the ones you choose.
+
+1. Back up anything important first. DriveSweep is free, open source software provided "as is" under the MIT License, without warranty of any kind. The authors are not liable for lost data or other damage.
+
+2. The Recycle Bin is not a guarantee. Network and removable drives have no Recycle Bin, paths longer than about 255 characters cannot go there, and Windows may permanently delete items that are too large for it. "Delete Forever" cannot be undone.
+
+3. Protections reduce risk; they do not remove it. Windows system folders, other user accounts and your Always Keep list are guarded, and personal folders are never selected automatically, but you decide what is removed.
+
+4. Privacy. Scans, settings, history and logs stay on this PC. Nothing is uploaded. Update checks are off by default; if you turn them on, DriveSweep contacts GitHub (which sees your IP address and the app version).
+
+5. Administrator rights. DriveSweep runs as a standard user. It asks for Administrator rights only when you choose "Restart as Admin" for system level tasks.
+
+DriveSweep is an independent project and is not affiliated with or endorsed by Microsoft, Google, Mozilla, Valve, or any other company whose software it can clean. Product names are used only to describe compatibility.

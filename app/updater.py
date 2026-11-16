@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Callable
 
 from app import __version__
-from app.safety import sanitized_subprocess_env
+from app.safety import sanitized_subprocess_env, secure_work_dir
 
 GITHUB_OWNER = "rauell1"
 GITHUB_REPO = "drive-sweep"
@@ -56,6 +56,38 @@ def verify_https_github_url(url: str) -> bool:
         return host in allowed_suffixes or host.endswith(".githubusercontent.com")
     except Exception:
         return False
+
+
+RELEASE_DOWNLOAD_PREFIX = f"/{GITHUB_OWNER}/{GITHUB_REPO}/releases/download/"
+_ALLOWED_UPDATE_NAME = re.compile(r"^(drivesweep-setup-[0-9][0-9a-z.\-]*\.exe|drivesweep\.exe|sha256sums\.txt)$")
+
+
+def parse_release_download_url(url: str) -> tuple[str, str] | None:
+    """Return (tag, file_name) for an official DriveSweep release download URL, else None.
+
+    Only https://github.com/<owner>/<repo>/releases/download/<tag>/<file> is accepted, so a
+    caller can never point the elevated updater at a file hosted in any other repository.
+    """
+    try:
+        parsed = urllib.parse.urlparse(str(url or ""))
+    except Exception:
+        return None
+    if parsed.scheme != "https" or (parsed.hostname or "").lower() != "github.com":
+        return None
+    if parsed.port not in (None, 443) or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        return None
+    path = parsed.path
+    if not path.startswith(RELEASE_DOWNLOAD_PREFIX):
+        return None
+    rest = path[len(RELEASE_DOWNLOAD_PREFIX):].split("/")
+    if len(rest) != 2 or not rest[0] or not rest[1]:
+        return None
+    tag, fname = urllib.parse.unquote(rest[0]), urllib.parse.unquote(rest[1])
+    if not re.fullmatch(r"[vV]?[0-9][0-9A-Za-z.\-]*", tag):
+        return None
+    if not _ALLOWED_UPDATE_NAME.fullmatch(fname.lower()):
+        return None
+    return tag, fname
 
 
 def detect_install_kind() -> str:
@@ -119,15 +151,18 @@ def pick_release_asset(
 
 def cleanup_stale_updates() -> None:
     """Remove leftover temporary installer files from completed or aborted updates."""
-    update_dir = Path(tempfile.gettempdir()) / "DriveSweep-Updates"
-    if not update_dir.exists():
-        return
-    try:
-        for entry in update_dir.iterdir():
-            if entry.is_file() and entry.suffix.lower() in {".exe", ".part", ".tmp"}:
-                entry.unlink(missing_ok=True)
-    except Exception:
-        pass
+    candidates = [Path(tempfile.gettempdir()) / "DriveSweep-Updates"]
+    if os.name == "nt":
+        candidates.append(Path(os.environ.get("ProgramData", "C:\\ProgramData")) / "DriveSweep" / "Updates")
+    for update_dir in candidates:
+        if not update_dir.exists():
+            continue
+        try:
+            for entry in update_dir.iterdir():
+                if entry.is_file() and entry.suffix.lower() in {".exe", ".part", ".tmp"}:
+                    entry.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 LATEST_RELEASE_WEB = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
@@ -257,8 +292,16 @@ def download_and_verify_update(
     safe_name = os.path.basename(str(asset_name or "")).strip()
     if not safe_name or not safe_name.lower().endswith(".exe"):
         return {"ok": False, "error": "Unsupported update file type."}
-    if not verify_https_github_url(asset_url) or not verify_https_github_url(sha256_url):
-        return {"ok": False, "error": "Update URL must use HTTPS on GitHub."}
+    asset_info = parse_release_download_url(asset_url)
+    sums_info = parse_release_download_url(sha256_url)
+    if asset_info is None or sums_info is None:
+        return {"ok": False, "error": "Update URL must be an official DriveSweep GitHub release download."}
+    if asset_info[1].lower() != safe_name.lower() or sums_info[1].lower() != "sha256sums.txt":
+        return {"ok": False, "error": "Update file name does not match the release download."}
+    if asset_info[0] != sums_info[0]:
+        return {"ok": False, "error": "Installer and checksum file must come from the same release."}
+    if not is_newer_version(asset_info[0], __version__):
+        return {"ok": False, "error": "Refusing to install a release that is not newer than this version."}
 
     if progress_cb is not None:
         progress_cb("checksum", 0, max(0, int(expected_size or 0)), "Checking release checksums...")
@@ -274,8 +317,7 @@ def download_and_verify_update(
     if not expected_hash:
         return {"ok": False, "error": f"Checksum for {safe_name} was not found in SHA256SUMS.txt."}
 
-    update_dir = Path(tempfile.gettempdir()) / "DriveSweep-Updates"
-    update_dir.mkdir(parents=True, exist_ok=True)
+    update_dir = secure_work_dir("Updates")
     dest_path = update_dir / safe_name
     part_path = update_dir / f"{safe_name}.part"
     part_path.unlink(missing_ok=True)
@@ -379,8 +421,116 @@ def _launch_windows_setup(setup_exe: Path, setup_args: str) -> tuple[bool, int]:
     return rc > 32, rc
 
 
-def launch_downloaded_update(file_path: str, install_kind: str | None = None) -> dict:
-    """Launch the verified Setup package directly (instant UAC) and signal DriveSweep to exit."""
+_FILE_SHARE_READ = 0x00000001
+_GENERIC_READ = 0x80000000
+_OPEN_EXISTING = 3
+
+
+def _lock_file_against_writes(path: Path) -> int | None:
+    """Open path with read only sharing so no process can modify, rename or delete it while held."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    import ctypes.wintypes as wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+        wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE,
+    ]
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    handle = kernel32.CreateFileW(str(path), _GENERIC_READ, _FILE_SHARE_READ, None, _OPEN_EXISTING, 0, None)
+    value = int(handle or 0) if handle is not None else 0
+    if value in (0, ctypes.c_void_p(-1).value, -1):
+        return None
+    return value
+
+
+def _release_file_lock(handle: int | None) -> None:
+    if handle is None or sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.kernel32.CloseHandle(ctypes.c_void_p(handle))
+    except Exception:
+        pass
+
+
+def _sha256_file(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest().lower()
+
+
+def get_authenticode_info(path: str | Path) -> dict:
+    """Return {'status', 'subject', 'thumbprint'} of a file's Authenticode signature on Windows."""
+    if sys.platform != "win32":
+        return {"status": "Unsupported", "subject": "", "thumbprint": ""}
+    script = (
+        "$s = Get-AuthenticodeSignature -LiteralPath $env:DS_SIG_PATH; "
+        "[pscustomobject]@{ Status = [string]$s.Status; "
+        "Subject = [string]$s.SignerCertificate.Subject; "
+        "Thumbprint = [string]$s.SignerCertificate.Thumbprint } | ConvertTo-Json -Compress"
+    )
+    try:
+        proc = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=sanitized_subprocess_env({"DS_SIG_PATH": str(path)}),
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        data = json.loads((proc.stdout or "").strip() or "{}")
+        return {
+            "status": str(data.get("Status") or "Unknown"),
+            "subject": str(data.get("Subject") or ""),
+            "thumbprint": str(data.get("Thumbprint") or ""),
+        }
+    except Exception:
+        return {"status": "Unknown", "subject": "", "thumbprint": ""}
+
+
+def check_update_signature(update_path: str | Path, current_exe: str | None = None) -> dict:
+    """Decide whether a downloaded installer's Authenticode signature is acceptable.
+
+    Rules:
+    * A signature that is present but broken (tampered, revoked, untrusted) is always rejected.
+    * If the running DriveSweep is signed, the update must be validly signed by the same publisher.
+    * If the running build is unsigned (before code signing is live), an unsigned update is allowed
+      because the SHA-256 checksum has already been verified.
+    """
+    update_sig = get_authenticode_info(update_path)
+    status = update_sig["status"]
+    if status not in ("Valid", "NotSigned", "Unsupported", "Unknown"):
+        return {"ok": False, "error": f"Update signature check failed ({status}). The file was not run."}
+
+    current_sig = {"status": "NotSigned", "subject": ""}
+    exe = current_exe if current_exe is not None else (sys.executable if getattr(sys, "frozen", False) else "")
+    if exe:
+        current_sig = get_authenticode_info(exe)
+    if current_sig["status"] == "Valid":
+        if status != "Valid":
+            return {"ok": False, "error": "This DriveSweep build is signed, but the update is not. The file was not run."}
+        if update_sig["subject"] != current_sig["subject"]:
+            return {"ok": False, "error": "The update is signed by a different publisher. The file was not run."}
+    return {"ok": True, "status": status, "subject": update_sig["subject"]}
+
+
+def launch_downloaded_update(
+    file_path: str,
+    install_kind: str | None = None,
+    expected_sha256: str = "",
+) -> dict:
+    """Launch the verified Setup package directly (instant UAC) and signal DriveSweep to exit.
+
+    The file is locked against writes, its SHA-256 is checked again, and its Authenticode
+    signature is checked, all immediately before it starts, so it cannot be swapped after
+    verification.
+    """
     target = Path(file_path)
     if not target.exists():
         return {"ok": False, "error": "Downloaded update file does not exist."}
@@ -390,6 +540,27 @@ def launch_downloaded_update(file_path: str, install_kind: str | None = None) ->
 
     if sys.platform != "win32":
         return {"ok": False, "error": "Self-install updates are currently supported on Windows."}
+
+    lock = _lock_file_against_writes(target)
+    if lock is None:
+        return {"ok": False, "error": "Could not lock the update file for verification. Try again."}
+    try:
+        return _launch_locked_update(target, kind, name_lower, expected_sha256)
+    finally:
+        _release_file_lock(lock)
+
+
+def _launch_locked_update(target: Path, kind: str, name_lower: str, expected_sha256: str) -> dict:
+    if expected_sha256:
+        try:
+            if _sha256_file(target) != expected_sha256.lower():
+                target.unlink(missing_ok=True)
+                return {"ok": False, "error": "Update file changed after verification. It was removed and not run."}
+        except OSError as exc:
+            return {"ok": False, "error": f"Could not re-verify update file: {exc}"}
+    sig = check_update_signature(target)
+    if not sig.get("ok"):
+        return sig
 
     try:
         clean_env = sanitized_subprocess_env()

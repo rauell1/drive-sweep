@@ -125,3 +125,36 @@ def open_log_file() -> dict:
         return {"ok": True, "path": str(path)}
     except Exception as exc:
         return {"ok": False, "error": str(exc), "path": str(path)}
+
+
+def clear_logs() -> dict:
+    """Erase the diagnostics log and its rotated backups (they can contain file paths)."""
+    logger = logging.getLogger(_LOGGER_NAME)
+    for h in list(logger.handlers):
+        if isinstance(h, RotatingFileHandler):
+            try:
+                h.acquire()
+                if h.stream:
+                    h.stream.seek(0)
+                    h.stream.truncate()
+                    h.stream.flush()
+            except Exception:
+                pass
+            finally:
+                h.release()
+    log_path = get_log_path()
+    removed = 0
+    for idx in range(1, 10):
+        backup = Path(f"{log_path}.{idx}")
+        try:
+            if backup.exists():
+                backup.unlink()
+                removed += 1
+        except OSError:
+            pass
+    try:
+        if log_path.exists() and not any(isinstance(h, RotatingFileHandler) for h in logger.handlers):
+            log_path.write_text("", encoding="utf-8")
+    except OSError:
+        pass
+    return {"ok": True, "removed_backups": removed}

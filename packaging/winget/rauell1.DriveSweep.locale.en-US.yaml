@@ -9,12 +9,14 @@ PackageName: DriveSweep
 PackageUrl: https://github.com/rauell1/drive-sweep
 License: MIT
 LicenseUrl: https://github.com/rauell1/drive-sweep/blob/main/LICENSE
-ShortDescription: Safe Windows disk cleaner, fast NTFS drive analyzer, duplicate finder, and visual space treemap.
+PrivacyUrl: https://github.com/rauell1/drive-sweep/blob/main/PRIVACY.md
+Copyright: Copyright (c) 2026 Roy Otieno
+ShortDescription: Windows disk cleaner, fast NTFS drive analyzer, duplicate finder, and visual space treemap.
 Description: >-
-  DriveSweep helps Windows users reclaim disk space safely by cleaning temporary app caches,
-  browser caches, and old Download installers while protecting personal folders and OS files.
-  Includes an interactive zoomable disk treemap, duplicate file finder, Recycle Bin and WinSxS tools,
-  optional low-disk scheduled alerts, and 100% offline local storage.
+  DriveSweep helps Windows users reclaim disk space by cleaning temporary app caches,
+  browser caches, and old Download installers, with guards for personal folders and OS files.
+  Includes an interactive disk breakdown, duplicate file finder, Recycle Bin and WinSxS tools,
+  optional low-disk scheduled alerts, and local-only data storage (update checks are optional and off by default).
 Moniker: drivesweep
 Tags:
   - disk-cleanup

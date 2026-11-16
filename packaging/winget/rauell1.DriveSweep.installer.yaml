@@ -1,3 +1,4 @@
+# Template: CI replaces InstallerSha256 with the real hash of the signed installer when a release is published.
 PackageIdentifier: rauell1.DriveSweep
 PackageVersion: 0.6.0
 Platform:

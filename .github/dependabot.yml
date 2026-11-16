@@ -1,0 +1,12 @@
+# Weekly update pull requests for pinned GitHub Actions and Python dependencies.
+# After a Python update, regenerate requirements-dev.lock (see the command at the top of that file).
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
