@@ -107,7 +107,7 @@ These protections reduce risk; they do not remove it. You decide what is removed
 ## Diagnostics & Winget Packaging
 
 - **Crash & Diagnostics Log:** Rotating logs (`drivesweep.log`, up to 1 MB x 3 backups) are stored in `%LOCALAPPDATA%\DriveSweep\drivesweep.log` and capture unhandled Python exceptions and UI `window.onerror` / `unhandledrejection` events. Logs can contain file and folder paths. Open them from **Settings & Updates -> Open Diagnostics Log**, or erase them with **Clear Logs**.
-- **Winget Manifests:** Release manifest templates live under `packaging/winget/` (`rauell1.DriveSweep.yaml`, `rauell1.DriveSweep.installer.yaml`, `rauell1.DriveSweep.locale.en-US.yaml`).
+- **Winget:** manifests live in `packaging/winget/` (schema 1.12.0). See [packaging/winget/README.md](packaging/winget/README.md) for how to submit DriveSweep to the winget community repository so users can run `winget install rauell1.DriveSweep`.
 
 ## Code Signing Policy
 
