@@ -119,9 +119,8 @@ The project has applied for free code signing from [SignPath Foundation](https:/
 - **Authors / Maintainers / Approvers:** [Roy Otieno (@rauell1)](https://github.com/rauell1)
 - All source code changes are committed to the public repository and built through the GitHub Actions workflow in [.github/workflows/ci-release.yml](https://github.com/rauell1/drive-sweep/blob/main/.github/workflows/ci-release.yml). Every third party action is pinned to a commit SHA and every Python dependency is installed from the hash-locked `requirements-dev.lock`.
 - The pipeline signs in the correct order: the app executables first, then the zip and installer are built from the signed files, then the installer itself is signed.
-- To enable signing, add these GitHub Actions secrets:
-  - SignPath: `SIGNPATH_API_TOKEN`, `SIGNPATH_ORGANIZATION_ID`, `SIGNPATH_PROJECT_SLUG`, `SIGNPATH_SIGNING_POLICY_SLUG`, and create two artifact configurations in SignPath named `executables` (signs `DriveSweep.exe` and `DriveSweep-win64/DriveSweep.exe`) and `installer` (signs `DriveSweep-Setup-*.exe`).
-  - Or Azure Trusted Signing: `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT`, `AZURE_SIGNING_PROFILE`.
+- Step by step setup for SignPath Foundation (recommended, free for open source) or Azure Trusted Signing: [docs/CODE_SIGNING.md](docs/CODE_SIGNING.md). The SignPath artifact configurations live in [`.signpath/artifact-configurations/`](.signpath/artifact-configurations/).
+- Tagged releases are never published with SignPath's test certificate; test signing runs only through **Run workflow**.
 
 ---
 

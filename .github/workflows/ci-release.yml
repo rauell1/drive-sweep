@@ -85,9 +85,18 @@ jobs:
         env:
           HAS_AZURE: ${{ secrets.AZURE_CLIENT_ID != '' }}
           HAS_SIGNPATH: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+          SIGNPATH_RELEASE_POLICY: ${{ secrets.SIGNPATH_SIGNING_POLICY_SLUG == 'release-signing' }}
+          IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
         run: |
           "azure=$env:HAS_AZURE" >> $env:GITHUB_OUTPUT
           "signpath=$env:HAS_SIGNPATH" >> $env:GITHUB_OUTPUT
+          "signpath_release=$env:SIGNPATH_RELEASE_POLICY" >> $env:GITHUB_OUTPUT
+          # A test certificate is not trusted by Windows, and DriveSweep's updater rejects
+          # updates whose signature is invalid. Never publish a tagged release signed with it.
+          if ($env:IS_TAG -eq 'true' -and $env:HAS_SIGNPATH -eq 'true' -and $env:SIGNPATH_RELEASE_POLICY -ne 'true') {
+            Write-Error "SIGNPATH_SIGNING_POLICY_SLUG is not 'release-signing'. Test signing is only for manual (workflow_dispatch) runs; set the release-signing policy before tagging a release."
+            exit 1
+          }
 
       - name: Install Inno Setup
         shell: pwsh
@@ -136,6 +145,8 @@ jobs:
           artifact-configuration-slug: executables
           github-artifact-id: ${{ steps.upload-unsigned-exes.outputs.artifact-id }}
           wait-for-completion: true
+          # SignPath Foundation release signing waits for a person to approve each request.
+          wait-for-completion-timeout-in-seconds: 7200
           output-artifact-directory: dist
 
       # Stage 3: zip the signed bundle and build Setup into dist\setup\.
@@ -179,6 +190,7 @@ jobs:
           artifact-configuration-slug: installer
           github-artifact-id: ${{ steps.upload-unsigned-setup.outputs.artifact-id }}
           wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 7200
           output-artifact-directory: dist/setup
 
       # Stage 5: checksums, winget hash, SBOM.
@@ -232,7 +244,7 @@ jobs:
             * `DriveSweep-sbom.cdx.json` lists every bundled Python package (CycloneDX format).
 
             ### Code signing
-            ${{ steps.signing.outputs.signpath == 'true' && 'Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).' || (steps.signing.outputs.azure == 'true' && 'Executables are signed with Azure Trusted Signing.' || 'These builds are not code signed yet, so Windows SmartScreen may warn on first run. Verify the checksum and provenance above before running.') }}
+            ${{ steps.signing.outputs.signpath_release == 'true' && 'Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).' || (steps.signing.outputs.azure == 'true' && 'Executables are signed with Azure Trusted Signing.' || 'These builds are not code signed yet, so Windows SmartScreen may warn on first run. Verify the checksum and provenance above before running.') }}
 
             Provided "as is" under the MIT License, without warranty. Back up important files before cleaning.
           files: |

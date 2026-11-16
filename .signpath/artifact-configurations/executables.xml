@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SignPath artifact configuration "executables" (slug: executables).
+  Signs the two DriveSweep.exe files that CI uploads BEFORE the zip and installer are built,
+  so the exe that ends up inside DriveSweep-win64.zip and inside Setup is signed too.
+  GitHub Actions artifacts always arrive as a zip, so the root element is zip-file.
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file path="DriveSweep.exe">
+      <authenticode-sign />
+    </pe-file>
+    <pe-file path="DriveSweep-win64/DriveSweep.exe">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>
