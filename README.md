@@ -42,7 +42,7 @@ DriveSweep runs on 64 bit Windows 10 (1809 or later) and Windows 11, including W
 ### Option A: Windows Installer (Recommended)
 
 1. Open the **[GitHub Releases](https://github.com/rauell1/drive-sweep/releases)** page.
-2. Under the latest release (**Assets** section at the bottom), click **`DriveSweep-Setup-0.7.4.exe`** (or the newest version listed) to download it.
+2. Under the latest release (**Assets** section at the bottom), click **`DriveSweep-Setup-0.7.5.exe`** (or the newest version listed) to download it.
 3. Open your `Downloads` folder and double-click the downloaded `DriveSweep-Setup-...exe` file.
 4. **If Windows shows a "Windows protected your PC" (SmartScreen) blue popup:**
    - DriveSweep releases are not code signed yet (see [Code Signing Policy](#code-signing-policy)), so Windows shows this for a publisher it does not know. Before running, you can [verify the download](#verifying-downloads) against `SHA256SUMS.txt` and its build provenance.
@@ -148,11 +148,11 @@ Every release includes three ways to check that a file is genuine and unchanged:
 
 1. **Checksum.** In PowerShell, compare the file's hash with the matching line in `SHA256SUMS.txt` from the same release:
    ```powershell
-   (Get-FileHash .\DriveSweep-Setup-0.7.4.exe -Algorithm SHA256).Hash.ToLower()
+   (Get-FileHash .\DriveSweep-Setup-0.7.5.exe -Algorithm SHA256).Hash.ToLower()
    ```
 2. **Build provenance.** Proves the file was built by this repository's GitHub Actions workflow from a specific commit (requires the [GitHub CLI](https://cli.github.com)):
    ```powershell
-   gh attestation verify .\DriveSweep-Setup-0.7.4.exe --repo rauell1/drive-sweep
+   gh attestation verify .\DriveSweep-Setup-0.7.5.exe --repo rauell1/drive-sweep
    ```
 3. **Software bill of materials.** `DriveSweep-sbom.cdx.json` lists every bundled Python package and version.
 

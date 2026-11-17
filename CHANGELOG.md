@@ -6,6 +6,11 @@ When you release, `scripts/bump_version.py` turns the **Unreleased** section int
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-11-17
+
+### Fixed
+- Fixed table layout clipping on the right edge (`Keep` / `Open Folder` buttons, `Size`, and `Space` columns) when displaying long unbroken filenames in **Large Files & Folders** and **Drive Scanner** by using `table-layout: fixed`, proper word wrapping on item names, and single-line badges/sizes.
+
 ## [0.7.4] - 2026-11-17
 
 ### Added
@@ -84,7 +89,8 @@ When you release, `scripts/bump_version.py` turns the **Unreleased** section int
 ## 0.2.0 to 0.2.8 - 2026-11-15
 - First public release with Administrator mode and CI (0.2.0), then local only privacy guarantees, a SHA-256 verified updater, wider cache detection and interface polish.
 
-[Unreleased]: https://github.com/rauell1/drive-sweep/compare/v0.7.4...HEAD
+[Unreleased]: https://github.com/rauell1/drive-sweep/compare/v0.7.5...HEAD
+[0.7.5]: https://github.com/rauell1/drive-sweep/compare/v0.7.4...v0.7.5
 [0.7.4]: https://github.com/rauell1/drive-sweep/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/rauell1/drive-sweep/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/rauell1/drive-sweep/compare/v0.7.1...v0.7.2
