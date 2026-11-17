@@ -14,6 +14,8 @@
 
 Choose **Option A** (standard Windows installer, recommended for most users) or **Option B** (portable app with no installation).
 
+DriveSweep runs on 64 bit Windows 10 (1809 or later) and Windows 11, including Windows 11 on ARM through Windows' built in x64 emulation. See [docs/PLATFORMS.md](docs/PLATFORMS.md) for ARM and Microsoft Store notes.
+
 ### Option A: Windows Installer (Recommended)
 
 1. Open the **[GitHub Releases](https://github.com/rauell1/drive-sweep/releases)** page.
@@ -79,7 +81,7 @@ Every update is checked before anything is replaced:
 - Only official `github.com/rauell1/drive-sweep` release downloads newer than your current version are accepted.
 - The file's SHA-256 must match `SHA256SUMS.txt`, and it is checked again right before the swap.
 - The Authenticode signature is checked. Once DriveSweep builds are signed, updates must be signed by the same publisher.
-- If the swap fails, the previous version is restored. The backup is deleted automatically the next time the new version starts.
+- If the swap fails, or the new version closes without opening its window, the previous version is restored and started again automatically. The backup is deleted once the new version's window has opened.
 
 A portable copy must be in a folder you can write to (for example not inside `Program Files`); otherwise DriveSweep asks you to move it or use Setup. Checking on startup is **off by default**; you can turn it on during first run or in Settings.
 
@@ -156,6 +158,13 @@ DriveSweep has no accounts, analytics, telemetry or ads. Scans, settings, histor
 
 ---
 
+## Contributing and Security
+
+- Bug reports, ideas, translations and pull requests are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md).
+- Found a security problem? Please report it privately as described in [SECURITY.md](SECURITY.md), not in a public issue.
+
+---
+
 ## Building from Source (For Developers)
 
 ```powershell
@@ -178,4 +187,5 @@ python -m venv .venv
   ```powershell
   .\build.ps1
   ```
-- After changing `requirements.txt` or `requirements-dev.txt`, regenerate the lock file with the command at the top of `requirements-dev.lock`, and regenerate `THIRD_PARTY_NOTICES.txt` with `python scripts\collect_licenses.py`.
+- Maintainer guide (branch protection, releasing with `scripts\bump_version.py`, dependency updates): [docs/MAINTAINING.md](docs/MAINTAINING.md). Changes are listed in [CHANGELOG.md](CHANGELOG.md).
+- After changing `requirements.txt` or `requirements-dev.txt`, regenerate the lock file with `python scripts\refresh_lock.py` (needs uv), and regenerate `THIRD_PARTY_NOTICES.txt` with `python scripts\collect_licenses.py`.

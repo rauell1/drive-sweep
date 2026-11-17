@@ -1,0 +1,22 @@
+name: Feature request
+description: Suggest an idea or improvement
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: For example, which files or folders take up space that DriveSweep does not handle yet.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like DriveSweep to do?
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Could this ever delete something a user wants to keep?
+      description: Optional, but it helps to think about how the feature stays safe.

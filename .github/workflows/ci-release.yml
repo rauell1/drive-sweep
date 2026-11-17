@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -33,7 +33,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -52,18 +52,15 @@ jobs:
         shell: pwsh
         run: .\.venv\Scripts\python.exe -m pytest -v
 
-  release:
-    name: Build, sign and publish
-    needs: [audit, test]
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+  build-check:
+    name: Build and smoke test (unsigned)
+    # Catches packaging problems on every pull request and push to main, long before a release tag.
+    needs: [test]
+    if: "!startsWith(github.ref, 'refs/tags/v')"
     runs-on: windows-latest
-    permissions:
-      contents: write      # publish the GitHub Release
-      id-token: write      # build provenance attestation and Azure OIDC
-      attestations: write  # build provenance attestation
     steps:
       - name: Checkout repository
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -77,6 +74,138 @@ jobs:
         run: |
           python -m venv .venv
           .\.venv\Scripts\python.exe -m pip install --require-hashes -r requirements-dev.lock
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Build executables, zip and installer
+        shell: pwsh
+        run: .\build.ps1
+
+      - name: Smoke test the portable exe and the folder version
+        shell: pwsh
+        run: |
+          function Test-DriveSweep([string]$exe, [string]$label) {
+            $report = Join-Path $env:RUNNER_TEMP "selftest-$label.json"
+            $proc = Start-Process -FilePath $exe -ArgumentList @('--self-test', "`"$report`"") -Wait -PassThru
+            if (-not (Test-Path $report)) { throw "${label}: no self-test report was written (exit code $($proc.ExitCode))" }
+            Get-Content $report -Raw | Write-Host
+            $data = Get-Content $report -Raw | ConvertFrom-Json
+            if ($proc.ExitCode -ne 0 -or -not $data.ok) { throw "${label}: self-test failed" }
+          }
+          Test-DriveSweep "dist\DriveSweep.exe" "onefile"
+          Test-DriveSweep "dist\DriveSweep-win64\DriveSweep.exe" "onedir"
+
+      - name: Smoke test silent install, installed app and uninstall
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem "dist\DriveSweep-Setup-*.exe" | Select-Object -First 1
+          $dir = Join-Path $env:RUNNER_TEMP "DriveSweepInstall"
+          $p = Start-Process -FilePath $setup.FullName -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`"") -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Setup exited with code $($p.ExitCode)" }
+          if (-not (Test-Path "$dir\DriveSweep.exe")) { throw "DriveSweep.exe was not installed" }
+
+          $key = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{7E8F3E52-3F2A-4D28-9E93-B9F5C2C4F612}_is1'
+          $entry = Get-ItemProperty $key
+          Write-Host "Installed apps entry: $($entry.DisplayName) $($entry.DisplayVersion) by $($entry.Publisher)"
+          if ($entry.DisplayName -ne 'DriveSweep') { throw "Unexpected Installed apps name: $($entry.DisplayName)" }
+
+          $report = Join-Path $env:RUNNER_TEMP "selftest-installed.json"
+          $t = Start-Process -FilePath "$dir\DriveSweep.exe" -ArgumentList @('--self-test', "`"$report`"") -Wait -PassThru
+          Get-Content $report -Raw | Write-Host
+          if ($t.ExitCode -ne 0) { throw "Installed app self-test failed" }
+
+          # The Inno uninstaller relaunches itself from a temp copy and returns at once, so wait for it.
+          Start-Process -FilePath "$dir\unins000.exe" -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait
+          for ($i = 0; $i -lt 60 -and ((Test-Path "$dir\DriveSweep.exe") -or (Test-Path $key)); $i++) { Start-Sleep -Seconds 1 }
+          if (Test-Path "$dir\DriveSweep.exe") { throw "Uninstall left DriveSweep.exe behind" }
+          if (Test-Path $key) { throw "Uninstall left the Installed apps entry behind" }
+          Write-Host "Install, run and uninstall all worked."
+
+      - name: Upload test build (7 days, unsigned, for manual testing)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: drivesweep-test-build
+          retention-days: 7
+          path: |
+            dist/DriveSweep.exe
+            dist/DriveSweep-win64.zip
+            dist/DriveSweep-Setup-*.exe
+            dist/SHA256SUMS.txt
+
+  arm64-check:
+    name: Runs on Windows on ARM (x64 build under emulation)
+    # DriveSweep ships x64 builds; Windows 11 on ARM runs them through its built in x64 emulation.
+    # This installs and self-tests the exact test build on a real ARM64 runner.
+    needs: [build-check]
+    runs-on: windows-11-arm
+    steps:
+      - name: Download test build
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: drivesweep-test-build
+          path: build
+
+      - name: Self-test portable exe, then install, self-test and uninstall Setup
+        shell: pwsh
+        run: |
+          Write-Host "Runner architecture: $env:PROCESSOR_ARCHITECTURE"
+          function Test-DriveSweep([string]$exe, [string]$label) {
+            $report = Join-Path $env:RUNNER_TEMP "selftest-$label.json"
+            $proc = Start-Process -FilePath $exe -ArgumentList @('--self-test', "`"$report`"") -Wait -PassThru
+            if (-not (Test-Path $report)) { throw "${label}: no self-test report was written (exit code $($proc.ExitCode))" }
+            Get-Content $report -Raw | Write-Host
+            if ($proc.ExitCode -ne 0 -or -not (Get-Content $report -Raw | ConvertFrom-Json).ok) { throw "${label}: self-test failed" }
+          }
+          Test-DriveSweep "build\DriveSweep.exe" "onefile-arm64"
+
+          $setup = Get-ChildItem "build\DriveSweep-Setup-*.exe" | Select-Object -First 1
+          $dir = Join-Path $env:RUNNER_TEMP "DriveSweepInstall"
+          $p = Start-Process -FilePath $setup.FullName -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`"") -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Setup exited with code $($p.ExitCode)" }
+          Test-DriveSweep "$dir\DriveSweep.exe" "installed-arm64"
+          Start-Process -FilePath "$dir\unins000.exe" -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait
+          for ($i = 0; $i -lt 60 -and (Test-Path "$dir\DriveSweep.exe"); $i++) { Start-Sleep -Seconds 1 }
+          if (Test-Path "$dir\DriveSweep.exe") { throw "Uninstall left DriveSweep.exe behind" }
+          Write-Host "The x64 build installs, starts its interface engine and uninstalls on Windows on ARM."
+
+  release:
+    name: Build, sign and publish
+    needs: [audit, test]
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    permissions:
+      contents: write      # publish the GitHub Release
+      id-token: write      # build provenance attestation and Azure OIDC
+      attestations: write  # build provenance attestation
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Install hash locked dependencies
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install --require-hashes -r requirements-dev.lock
+
+      - name: Check the tag matches the app version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          .\.venv\Scripts\python.exe scripts\bump_version.py --check
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $appVersion = (Select-String -Path app\__init__.py -Pattern '__version__ = "(.+)"').Matches[0].Groups[1].Value
+          if ("v$appVersion" -ne $env:TAG) { Write-Error "Tag $env:TAG does not match app version $appVersion. Run scripts/bump_version.py before tagging."; exit 1 }
 
       # Only true/false flags leave this step; secret values stay inside the signing steps.
       - name: Detect signing configuration
@@ -111,7 +240,7 @@ jobs:
       # so the DriveSweep.exe that ends up installed on users' PCs is signed too.
       - name: Sign executables (Azure Trusted Signing)
         if: steps.signing.outputs.azure == 'true'
-        uses: azure/trusted-signing-action@bb15ca63eb5548cc306f4f335c5617bb414abcad # v0.5.9
+        uses: azure/trusted-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
         with:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -127,7 +256,7 @@ jobs:
       - name: Upload unsigned executables for SignPath
         id: upload-unsigned-exes
         if: steps.signing.outputs.signpath == 'true'
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: drivesweep-unsigned-exes
           path: |
@@ -157,7 +286,7 @@ jobs:
       # Stage 4: sign the installer itself.
       - name: Sign installer (Azure Trusted Signing)
         if: steps.signing.outputs.azure == 'true'
-        uses: azure/trusted-signing-action@bb15ca63eb5548cc306f4f335c5617bb414abcad # v0.5.9
+        uses: azure/trusted-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
         with:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -174,7 +303,7 @@ jobs:
       - name: Upload unsigned installer for SignPath
         id: upload-unsigned-setup
         if: steps.signing.outputs.signpath == 'true'
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: drivesweep-unsigned-setup
           path: dist/setup/DriveSweep-Setup-*.exe
@@ -220,7 +349,7 @@ jobs:
             dist/DriveSweep-Setup-*.exe
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: drivesweep-win64
           path: |
@@ -231,22 +360,19 @@ jobs:
             dist/DriveSweep-sbom.cdx.json
             packaging/winget/*.yaml
 
+      - name: Compose release notes from CHANGELOG.md
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          SIGNING_LINE: ${{ steps.signing.outputs.signpath_release == 'true' && 'Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).' || (steps.signing.outputs.azure == 'true' && 'Executables are signed with Azure Trusted Signing.' || 'These builds are not code signed yet, so Windows SmartScreen may warn on first run. Verify the checksum and provenance above before running.') }}
+          TAG: ${{ github.ref_name }}
+        run: .\.venv\Scripts\python.exe scripts\release_notes.py --version $env:TAG --signing-line $env:SIGNING_LINE --out dist\RELEASE_NOTES.md
+
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
-          body: |
-            Windows disk analyzer and cache cleaner with Recycle Bin and Permanent cleanup modes, Light/Dark themes, optional Administrator mode, and local-only data storage.
-
-            ### Verify your download
-            * Compare the file's SHA-256 with `SHA256SUMS.txt`.
-            * Check the build provenance: `gh attestation verify <file> --repo ${{ github.repository }}`.
-            * `DriveSweep-sbom.cdx.json` lists every bundled Python package (CycloneDX format).
-
-            ### Code signing
-            ${{ steps.signing.outputs.signpath_release == 'true' && 'Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).' || (steps.signing.outputs.azure == 'true' && 'Executables are signed with Azure Trusted Signing.' || 'These builds are not code signed yet, so Windows SmartScreen may warn on first run. Verify the checksum and provenance above before running.') }}
-
-            Provided "as is" under the MIT License, without warranty. Back up important files before cleaning.
+          body_path: dist/RELEASE_NOTES.md
           files: |
             dist/DriveSweep.exe
             dist/DriveSweep-win64.zip

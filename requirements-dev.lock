@@ -1,6 +1,6 @@
 # Hash-locked Windows build and test dependencies used by CI (pip install --require-hashes).
 # Regenerate after changing requirements*.txt:
-#   uv pip compile requirements-dev.txt --python-platform x86_64-pc-windows-msvc --python-version 3.12 --generate-hashes -o requirements-dev.lock
+#   python scripts/refresh_lock.py            (add --upgrade to move to the newest versions)
 altgraph==0.17.5 \
     --hash=sha256:c87b395dd12fabde9c99573a9749d67da8d29ef9de0125c7f536699b4a9bc9e7 \
     --hash=sha256:f3a22400bce1b0c701683820ac4f3b159cd301acab067c51c653e06961600597

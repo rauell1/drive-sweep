@@ -758,3 +758,16 @@ def test_launch_rejects_file_changed_after_verification(tmp_path: Path, monkeypa
     res = updater.launch_downloaded_update(str(setup_exe), install_kind="setup", expected_sha256="0" * 64)
     assert res["ok"] is False
     assert not setup_exe.exists()
+
+
+def test_self_test_reports_complete_bundle(tmp_path: Path):
+    import json
+    import main as entry_main
+
+    out = tmp_path / "selftest.json"
+    rc = entry_main.run_self_test(str(out))
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert rc == 0, report
+    assert report["ok"] is True
+    assert report["checks"]["ui_index"]["ok"] is True
+    assert report["version"]
