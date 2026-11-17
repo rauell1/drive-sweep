@@ -33,6 +33,8 @@ OutputDir=..\dist\setup
 OutputBaseFilename=DriveSweep-Setup-{#MyAppVersion}
 SetupIconFile=..\assets\drivesweep.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
+; Stable name in Installed apps (no version in it) so winget and upgrades match it reliably
+UninstallDisplayName={#MyAppName}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
