@@ -79,7 +79,7 @@ Every update is checked before anything is replaced:
 - Only official `github.com/rauell1/drive-sweep` release downloads newer than your current version are accepted.
 - The file's SHA-256 must match `SHA256SUMS.txt`, and it is checked again right before the swap.
 - The Authenticode signature is checked. Once DriveSweep builds are signed, updates must be signed by the same publisher.
-- If the swap fails, the previous version is restored. The backup is deleted automatically the next time the new version starts.
+- If the swap fails, or the new version closes without opening its window, the previous version is restored and started again automatically. The backup is deleted once the new version's window has opened.
 
 A portable copy must be in a folder you can write to (for example not inside `Program Files`); otherwise DriveSweep asks you to move it or use Setup. Checking on startup is **off by default**; you can turn it on during first run or in Settings.
 

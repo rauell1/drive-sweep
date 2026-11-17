@@ -69,6 +69,11 @@ PORTABLE_ZIP_NAME = "drivesweep-win64.zip"
 # Folders used while the folder (zip) version replaces itself; they live inside the app folder.
 UPDATE_STAGING_DIRNAME = "_update_staging"
 UPDATE_BACKUP_DIRNAME = "_update_old"
+# Written by the new version once its window has opened, so the swap step knows the update worked.
+UPDATE_MARKER_NAME = ".drivesweep-update-ok"
+UPDATE_MARKER_ENV = "DRIVESWEEP_UPDATE_MARKER"
+# How long the swap step waits for the new version to open before leaving the backup in place.
+UPDATE_VERIFY_SECONDS = 120
 _MAX_ZIP_UNPACKED_BYTES = 2 * 1024 * 1024 * 1024
 
 
@@ -200,14 +205,33 @@ def cleanup_stale_updates() -> None:
                     entry.unlink(missing_ok=True)
         except Exception:
             pass
+
+
+def confirm_update_started() -> bool:
+    """Tell a waiting in place update that this new version opened successfully.
+
+    Called once the main window is shown. Writes the marker file the swap step is waiting for
+    (only when this run was started by an update) and then removes the previous version's
+    backup. Returns True when a marker was written.
+    """
+    marker = os.environ.pop(UPDATE_MARKER_ENV, "")
+    wrote = False
+    if marker:
+        try:
+            Path(marker).write_text("ok", encoding="utf-8")
+            wrote = True
+        except OSError:
+            pass
     cleanup_in_place_update_leftovers()
+    return wrote
 
 
 def cleanup_in_place_update_leftovers(app_dir: Path | None = None, exe_name: str | None = None) -> None:
     """Remove backups and partial files left in the app folder by an in place update.
 
-    Runs at startup of the new version, which proves the swap worked, so the backup of the
-    previous version is no longer needed.
+    Runs once the new version's window has opened, which proves the swap worked, so the backup
+    of the previous version is no longer needed. (A crash before that point keeps the backup,
+    and the swap step restores it.)
     """
     if app_dir is None:
         if not getattr(sys, "frozen", False):
@@ -697,7 +721,8 @@ def _launch_locked_update(target: Path, kind: str, name_lower: str, expected_sha
 
 # Runs after DriveSweep exits. It checks the new exe's SHA-256 once more, keeps the current exe
 # as DriveSweep.exe.old, moves the new one into place (restoring the old one if that fails),
-# and starts DriveSweep again. The new version deletes the .old backup when it starts.
+# and starts DriveSweep again. If the new version exits without opening its window, the previous
+# version is restored and started instead; otherwise the backup is deleted.
 _EXE_SWAP_SCRIPT = r"""
 $ErrorActionPreference = 'Stop'
 foreach ($p in ($env:DS_WAIT_PIDS -split ',' | Where-Object { $_ })) {
@@ -706,6 +731,33 @@ foreach ($p in ($env:DS_WAIT_PIDS -split ',' | Where-Object { $_ })) {
 Start-Sleep -Milliseconds 400
 Get-ChildItem Env:_PYI_* -ErrorAction SilentlyContinue | Remove-Item -ErrorAction SilentlyContinue
 Remove-Item Env:_MEIPASS2 -ErrorAction SilentlyContinue
+# Starts the new version and waits until it reports that its window opened (it writes the
+# marker file named in DRIVESWEEP_UPDATE_MARKER). Returns $true when it did, $false when the new
+# version exited without opening, and $null when it is still starting after the wait.
+function Start-AndVerify([string]$exePath, [string]$workDir) {
+  $marker = $env:DS_UPDATE_MARKER
+  $verify = 0
+  [void][int]::TryParse("$env:DS_VERIFY_SECONDS", [ref]$verify)
+  if (-not $marker -or $verify -le 0) {
+    if ($workDir) { Start-Process -FilePath $exePath -WorkingDirectory $workDir } else { Start-Process -FilePath $exePath }
+    return $null
+  }
+  Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+  $env:DRIVESWEEP_UPDATE_MARKER = $marker
+  if ($workDir) { $proc = Start-Process -FilePath $exePath -WorkingDirectory $workDir -PassThru } else { $proc = Start-Process -FilePath $exePath -PassThru }
+  Remove-Item Env:DRIVESWEEP_UPDATE_MARKER -ErrorAction SilentlyContinue
+  $deadline = (Get-Date).AddSeconds($verify)
+  while ((Get-Date) -lt $deadline) {
+    if (Test-Path -LiteralPath $marker) { Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue; return $true }
+    if ($proc.HasExited) {
+      Start-Sleep -Seconds 2
+      if (Test-Path -LiteralPath $marker) { Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue; return $true }
+      return $false
+    }
+    Start-Sleep -Milliseconds 500
+  }
+  return $null
+}
 $old = $env:DS_OLD_EXE; $new = $env:DS_NEW_EXE; $bak = "$old.old"
 # Hash with .NET directly so no PowerShell module has to load (works in any PowerShell host).
 $fs = [System.IO.File]::OpenRead($new)
@@ -732,7 +784,20 @@ for ($i = 0; $i -lt 20 -and -not $swapped; $i++) {
     }
   } catch { Start-Sleep -Milliseconds 300 }
 }
-Start-Process -FilePath $old
+if (-not $swapped) { Start-Process -FilePath $old; exit 1 }
+$result = Start-AndVerify $old $null
+if ($result -eq $true) {
+  Remove-Item -LiteralPath $bak -Force -ErrorAction SilentlyContinue
+  exit 0
+}
+if ($result -eq $false) {
+  # The new version closed without opening its window: put the previous version back.
+  Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue
+  Move-Item -LiteralPath $bak -Destination $old -Force
+  Start-Process -FilePath $old
+  exit 2
+}
+exit 0
 """
 
 # Runs after DriveSweep exits. Moves the current app files that the new version replaces into _update_old, moves the
@@ -746,12 +811,40 @@ foreach ($p in ($env:DS_WAIT_PIDS -split ',' | Where-Object { $_ })) {
 Start-Sleep -Milliseconds 400
 Get-ChildItem Env:_PYI_* -ErrorAction SilentlyContinue | Remove-Item -ErrorAction SilentlyContinue
 Remove-Item Env:_MEIPASS2 -ErrorAction SilentlyContinue
+# Starts the new version and waits until it reports that its window opened (it writes the
+# marker file named in DRIVESWEEP_UPDATE_MARKER). Returns $true when it did, $false when the new
+# version exited without opening, and $null when it is still starting after the wait.
+function Start-AndVerify([string]$exePath, [string]$workDir) {
+  $marker = $env:DS_UPDATE_MARKER
+  $verify = 0
+  [void][int]::TryParse("$env:DS_VERIFY_SECONDS", [ref]$verify)
+  if (-not $marker -or $verify -le 0) {
+    if ($workDir) { Start-Process -FilePath $exePath -WorkingDirectory $workDir } else { Start-Process -FilePath $exePath }
+    return $null
+  }
+  Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+  $env:DRIVESWEEP_UPDATE_MARKER = $marker
+  if ($workDir) { $proc = Start-Process -FilePath $exePath -WorkingDirectory $workDir -PassThru } else { $proc = Start-Process -FilePath $exePath -PassThru }
+  Remove-Item Env:DRIVESWEEP_UPDATE_MARKER -ErrorAction SilentlyContinue
+  $deadline = (Get-Date).AddSeconds($verify)
+  while ((Get-Date) -lt $deadline) {
+    if (Test-Path -LiteralPath $marker) { Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue; return $true }
+    if ($proc.HasExited) {
+      Start-Sleep -Seconds 2
+      if (Test-Path -LiteralPath $marker) { Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue; return $true }
+      return $false
+    }
+    Start-Sleep -Milliseconds 500
+  }
+  return $null
+}
 $app = $env:DS_APP_DIR
 $stage = Join-Path $app $env:DS_STAGE_NAME
 $old = Join-Path $app $env:DS_BACKUP_NAME
 $exe = Join-Path $app $env:DS_EXE_NAME
 $skip = @($env:DS_STAGE_NAME, $env:DS_BACKUP_NAME, $env:DS_ZIP_NAME)
 $placed = @()
+$swapped = $false
 try {
   if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Recurse -Force }
   New-Item -ItemType Directory -Path $old | Out-Null
@@ -766,13 +859,30 @@ try {
   }
   Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath (Join-Path $app $env:DS_ZIP_NAME) -Force -ErrorAction SilentlyContinue
+  $swapped = $true
 } catch {
   foreach ($n in $placed) { Remove-Item -LiteralPath (Join-Path $app $n) -Recurse -Force -ErrorAction SilentlyContinue }
   Get-ChildItem -LiteralPath $old -Force | ForEach-Object {
     Move-Item -LiteralPath $_.FullName -Destination $app -Force -ErrorAction SilentlyContinue
   }
 }
-Start-Process -FilePath $exe -WorkingDirectory $app
+if (-not $swapped) { Start-Process -FilePath $exe -WorkingDirectory $app; exit 1 }
+$result = Start-AndVerify $exe $app
+if ($result -eq $true) {
+  Remove-Item -LiteralPath $old -Recurse -Force -ErrorAction SilentlyContinue
+  exit 0
+}
+if ($result -eq $false) {
+  # The new version closed without opening its window: put the previous version back.
+  foreach ($n in $placed) { Remove-Item -LiteralPath (Join-Path $app $n) -Recurse -Force -ErrorAction SilentlyContinue }
+  Get-ChildItem -LiteralPath $old -Force | ForEach-Object {
+    Move-Item -LiteralPath $_.FullName -Destination $app -Force -ErrorAction SilentlyContinue
+  }
+  Remove-Item -LiteralPath $old -Recurse -Force -ErrorAction SilentlyContinue
+  Start-Process -FilePath $exe -WorkingDirectory $app
+  exit 2
+}
+exit 0
 """
 
 
@@ -818,6 +928,8 @@ def _start_exe_swap(new_exe: Path, sha256: str) -> dict:
             "DS_NEW_EXE": str(new_exe.resolve()),
             "DS_SHA256": sha256.lower(),
             "DS_WAIT_PIDS": _wait_pids(),
+            "DS_UPDATE_MARKER": str(current.parent / UPDATE_MARKER_NAME),
+            "DS_VERIFY_SECONDS": str(UPDATE_VERIFY_SECONDS),
         },
         cwd=str(current.parent.parent if current.parent.parent != current.parent else current.parent),
     )
@@ -877,6 +989,8 @@ def _start_folder_swap(zip_path: Path) -> dict:
             "DS_ZIP_NAME": zip_path.name,
             "DS_EXE_NAME": exe_name,
             "DS_WAIT_PIDS": _wait_pids(),
+            "DS_UPDATE_MARKER": str(app_dir / UPDATE_MARKER_NAME),
+            "DS_VERIFY_SECONDS": str(UPDATE_VERIFY_SECONDS),
         },
         cwd=str(app_dir.parent if app_dir.parent != app_dir else app_dir),
     )

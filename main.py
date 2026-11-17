@@ -14,7 +14,7 @@ from app.safety import is_admin, relaunch_as_admin
 from app.scheduler import evaluate_low_disk_alerts, show_low_disk_notification
 from app.storage import load_settings
 from app.system_tools import apply_windows11_frame_styling
-from app.updater import cleanup_stale_updates
+from app.updater import cleanup_stale_updates, confirm_update_started
 
 
 def ensure_admin_or_relaunch(argv: list[str] | None = None) -> bool:
@@ -139,6 +139,8 @@ def main() -> None:
     def _on_shown() -> None:
         settings = load_settings()
         apply_windows11_frame_styling(dark_mode=(settings.get("theme") == "dark"))
+        # The window is up: confirm a pending in place update and drop the old version's backup.
+        confirm_update_started()
 
     if hasattr(window, "events") and hasattr(window.events, "shown"):
         window.events.shown += _on_shown

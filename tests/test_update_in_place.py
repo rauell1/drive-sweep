@@ -276,3 +276,113 @@ def test_windows_powershell_env_drops_inherited_module_path(monkeypatch):
     assert not any(k.upper() == "PSMODULEPATH" for k in env)
     assert "_PYI_ARCHIVE_FILE" not in env
     assert env["DS_X"] == "1"
+
+
+def _keep_writing_marker(marker: Path, seconds: float = 25.0):
+    """Stand in for the new version: keep reporting 'window opened' while the script runs."""
+    import threading
+    import time
+
+    stop = threading.Event()
+
+    def run():
+        deadline = time.monotonic() + seconds
+        while not stop.is_set() and time.monotonic() < deadline:
+            try:
+                marker.write_text("ok", encoding="utf-8")
+            except OSError:
+                pass
+            time.sleep(0.2)
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    return stop
+
+
+def test_confirm_update_started_writes_marker_only_when_asked(tmp_path: Path, monkeypatch):
+    marker = tmp_path / updater.UPDATE_MARKER_NAME
+    monkeypatch.delenv(updater.UPDATE_MARKER_ENV, raising=False)
+    assert updater.confirm_update_started() is False
+    assert not marker.exists()
+    monkeypatch.setenv(updater.UPDATE_MARKER_ENV, str(marker))
+    assert updater.confirm_update_started() is True
+    assert marker.read_text(encoding="utf-8") == "ok"
+    assert updater.UPDATE_MARKER_ENV not in os.environ
+
+
+@WINDOWS_ONLY
+def test_real_exe_swap_rolls_back_when_new_version_does_not_open(tmp_path: Path):
+    old = tmp_path / "DriveSweep.exe"
+    new = tmp_path / "DriveSweep.exe.new"
+    shutil.copy2(_sys_exe("hostname.exe"), old)
+    shutil.copy2(_sys_exe("whoami.exe"), new)  # exits at once and never reports success
+    old_bytes = old.read_bytes()
+
+    proc = _run_ps(updater._EXE_SWAP_SCRIPT, {
+        "DS_OLD_EXE": str(old),
+        "DS_NEW_EXE": str(new),
+        "DS_SHA256": hashlib.sha256(new.read_bytes()).hexdigest(),
+        "DS_WAIT_PIDS": "",
+        "DS_UPDATE_MARKER": str(tmp_path / updater.UPDATE_MARKER_NAME),
+        "DS_VERIFY_SECONDS": "30",
+    })
+
+    assert proc.returncode == 2, proc.stderr
+    assert old.read_bytes() == old_bytes
+    assert not (tmp_path / "DriveSweep.exe.old").exists()
+
+
+@WINDOWS_ONLY
+def test_real_exe_swap_removes_backup_when_new_version_opens(tmp_path: Path):
+    old = tmp_path / "DriveSweep.exe"
+    new = tmp_path / "DriveSweep.exe.new"
+    shutil.copy2(_sys_exe("hostname.exe"), old)
+    shutil.copy2(_sys_exe("whoami.exe"), new)
+    new_bytes = new.read_bytes()
+    marker = tmp_path / updater.UPDATE_MARKER_NAME
+    stop = _keep_writing_marker(marker)
+    try:
+        proc = _run_ps(updater._EXE_SWAP_SCRIPT, {
+            "DS_OLD_EXE": str(old),
+            "DS_NEW_EXE": str(new),
+            "DS_SHA256": hashlib.sha256(new_bytes).hexdigest(),
+            "DS_WAIT_PIDS": "",
+            "DS_UPDATE_MARKER": str(marker),
+            "DS_VERIFY_SECONDS": "30",
+        })
+    finally:
+        stop.set()
+
+    assert proc.returncode == 0, proc.stderr
+    assert old.read_bytes() == new_bytes
+    assert not (tmp_path / "DriveSweep.exe.old").exists()
+
+
+@WINDOWS_ONLY
+def test_real_folder_swap_rolls_back_when_new_version_does_not_open(tmp_path: Path):
+    app_dir = tmp_path / "DriveSweep-win64"
+    (app_dir / "_internal").mkdir(parents=True)
+    shutil.copy2(_sys_exe("hostname.exe"), app_dir / "DriveSweep.exe")
+    (app_dir / "_internal" / "old_only.dll").write_text("old")
+    old_exe_bytes = (app_dir / "DriveSweep.exe").read_bytes()
+    stage = app_dir / updater.UPDATE_STAGING_DIRNAME
+    (stage / "_internal").mkdir(parents=True)
+    shutil.copy2(_sys_exe("whoami.exe"), stage / "DriveSweep.exe")
+    (stage / "_internal" / "new_only.dll").write_text("new")
+
+    proc = _run_ps(updater._FOLDER_SWAP_SCRIPT, {
+        "DS_APP_DIR": str(app_dir),
+        "DS_STAGE_NAME": updater.UPDATE_STAGING_DIRNAME,
+        "DS_BACKUP_NAME": updater.UPDATE_BACKUP_DIRNAME,
+        "DS_ZIP_NAME": "DriveSweep-win64.zip.download",
+        "DS_EXE_NAME": "DriveSweep.exe",
+        "DS_WAIT_PIDS": "",
+        "DS_UPDATE_MARKER": str(app_dir / updater.UPDATE_MARKER_NAME),
+        "DS_VERIFY_SECONDS": "30",
+    })
+
+    assert proc.returncode == 2, proc.stderr
+    assert (app_dir / "DriveSweep.exe").read_bytes() == old_exe_bytes
+    assert (app_dir / "_internal" / "old_only.dll").exists()
+    assert not (app_dir / "_internal" / "new_only.dll").exists()
+    assert not (app_dir / updater.UPDATE_BACKUP_DIRNAME).exists()
