@@ -1160,3 +1160,20 @@ html, body {
 /* First run notice */
 .notice-list { margin: 8px 0 4px 18px; padding: 0; display: grid; gap: 6px; font-size: 12.5px; line-height: 1.45; text-align: justify; }
 .notice-list li { padding-left: 2px; }
+
+/* Layout polish: keep toolbar and footer buttons on one line; let the search box give way instead. */
+.view-header > div:first-child { min-width: 0; }
+.header-toolbar { flex-shrink: 0; }
+.header-toolbar > .btn,
+.priv-card > .btn { white-space: nowrap; flex-shrink: 0; }
+.header-toolbar .search-box { min-width: 0; flex: 1 1 auto; }
+.header-toolbar .search-box input { width: clamp(120px, 16vw, 225px); }
+.priv-card > div:first-child { min-width: 0; }
+
+/* Category legend: names stay on one line and are never cut off. When the card is too narrow for
+   the chart and the list side by side, the list moves below the chart instead of squeezing. */
+.donut-wrap { flex-wrap: wrap; justify-content: center; }
+.donut-list { flex: 1 1 190px; }
+.donut-list-row > strong { white-space: nowrap; flex-shrink: 0; }
+.donut-list-name { overflow: visible; text-overflow: clip; }
+.donut-list-name .legend-dot { flex-shrink: 0; }
