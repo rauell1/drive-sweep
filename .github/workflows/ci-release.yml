@@ -52,6 +52,88 @@ jobs:
         shell: pwsh
         run: .\.venv\Scripts\python.exe -m pytest -v
 
+  build-check:
+    name: Build and smoke test (unsigned)
+    # Catches packaging problems on every pull request and push to main, long before a release tag.
+    needs: [test]
+    if: "!startsWith(github.ref, 'refs/tags/v')"
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Install hash locked dependencies
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install --require-hashes -r requirements-dev.lock
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Build executables, zip and installer
+        shell: pwsh
+        run: .\build.ps1
+
+      - name: Smoke test the portable exe and the folder version
+        shell: pwsh
+        run: |
+          function Test-DriveSweep([string]$exe, [string]$label) {
+            $report = Join-Path $env:RUNNER_TEMP "selftest-$label.json"
+            $proc = Start-Process -FilePath $exe -ArgumentList @('--self-test', "`"$report`"") -Wait -PassThru
+            if (-not (Test-Path $report)) { throw "${label}: no self-test report was written (exit code $($proc.ExitCode))" }
+            Get-Content $report -Raw | Write-Host
+            $data = Get-Content $report -Raw | ConvertFrom-Json
+            if ($proc.ExitCode -ne 0 -or -not $data.ok) { throw "${label}: self-test failed" }
+          }
+          Test-DriveSweep "dist\DriveSweep.exe" "onefile"
+          Test-DriveSweep "dist\DriveSweep-win64\DriveSweep.exe" "onedir"
+
+      - name: Smoke test silent install, installed app and uninstall
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem "dist\DriveSweep-Setup-*.exe" | Select-Object -First 1
+          $dir = Join-Path $env:RUNNER_TEMP "DriveSweepInstall"
+          $p = Start-Process -FilePath $setup.FullName -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`"") -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Setup exited with code $($p.ExitCode)" }
+          if (-not (Test-Path "$dir\DriveSweep.exe")) { throw "DriveSweep.exe was not installed" }
+
+          $key = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{7E8F3E52-3F2A-4D28-9E93-B9F5C2C4F612}_is1'
+          $entry = Get-ItemProperty $key
+          Write-Host "Installed apps entry: $($entry.DisplayName) $($entry.DisplayVersion) by $($entry.Publisher)"
+          if ($entry.DisplayName -ne 'DriveSweep') { throw "Unexpected Installed apps name: $($entry.DisplayName)" }
+
+          $report = Join-Path $env:RUNNER_TEMP "selftest-installed.json"
+          $t = Start-Process -FilePath "$dir\DriveSweep.exe" -ArgumentList @('--self-test', "`"$report`"") -Wait -PassThru
+          Get-Content $report -Raw | Write-Host
+          if ($t.ExitCode -ne 0) { throw "Installed app self-test failed" }
+
+          # The Inno uninstaller relaunches itself from a temp copy and returns at once, so wait for it.
+          Start-Process -FilePath "$dir\unins000.exe" -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait
+          for ($i = 0; $i -lt 60 -and ((Test-Path "$dir\DriveSweep.exe") -or (Test-Path $key)); $i++) { Start-Sleep -Seconds 1 }
+          if (Test-Path "$dir\DriveSweep.exe") { throw "Uninstall left DriveSweep.exe behind" }
+          if (Test-Path $key) { throw "Uninstall left the Installed apps entry behind" }
+          Write-Host "Install, run and uninstall all worked."
+
+      - name: Upload test build (7 days, unsigned, for manual testing)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: drivesweep-test-build
+          retention-days: 7
+          path: |
+            dist/DriveSweep.exe
+            dist/DriveSweep-win64.zip
+            dist/DriveSweep-Setup-*.exe
+            dist/SHA256SUMS.txt
+
   release:
     name: Build, sign and publish
     needs: [audit, test]

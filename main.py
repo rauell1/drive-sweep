@@ -73,7 +73,51 @@ def run_low_disk_check_cli() -> int:
     return 0
 
 
+def run_self_test(output_path: str) -> int:
+    """Non-interactive smoke test used by CI on the built executables.
+
+    Writes a JSON report to output_path and returns 0 when the bundle is complete: the app
+    modules import, the UI and icon files are present, and the version is readable. It
+    opens no window, needs no elevation and changes nothing on the machine.
+    """
+    import json
+    import traceback
+
+    from app import __version__
+
+    report: dict = {"version": __version__, "frozen": bool(getattr(sys, "frozen", False)), "checks": {}}
+    ok = True
+
+    def check(name: str, fn) -> None:
+        nonlocal ok
+        try:
+            value = fn()
+            report["checks"][name] = {"ok": bool(value), "value": str(value)}
+            ok = ok and bool(value)
+        except Exception:
+            report["checks"][name] = {"ok": False, "error": traceback.format_exc(limit=3)}
+            ok = False
+
+    check("ui_index", lambda: Path(get_ui_index_path()).is_file())
+    check("ui_app_js", lambda: (Path(get_ui_index_path()).parent / "app.js").is_file())
+    check("icon", lambda: get_icon_path() is not None)
+    check("imports", lambda: all(
+        __import__(m) for m in (
+            "app.api", "app.scanner", "app.duplicates", "app.ntfs_mft", "app.presets",
+            "app.system_tools", "app.updater", "webview", "send2trash", "psutil",
+        )
+    ))
+    check("install_kind", lambda: __import__("app.updater", fromlist=["x"]).detect_install_kind())
+    report["ok"] = ok
+    Path(output_path).write_text(json.dumps(report, indent=2), encoding="utf-8")
+    return 0 if ok else 1
+
+
 def main() -> None:
+    if "--self-test" in sys.argv[1:]:
+        idx = sys.argv.index("--self-test")
+        out = sys.argv[idx + 1] if len(sys.argv) > idx + 1 else "drivesweep-selftest.json"
+        raise SystemExit(run_self_test(out))
     setup_logging()
     if "--low-disk-check" in sys.argv[1:]:
         raise SystemExit(run_low_disk_check_cli())
