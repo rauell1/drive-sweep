@@ -2,9 +2,32 @@
 
 **Free up disk space safely on Windows.** DriveSweep scans your PC for temporary files, leftover app caches, browser caches, and oversized old files, then lets you review everything in plain visual charts before moving anything to the Recycle Bin.
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="docs/images/quick-clean-light.png">
+    <img src="docs/images/quick-clean-dark.png" alt="DriveSweep Quick Clean showing 24.74 GB of cleanup items grouped by category, with a category chart and a Clean button" width="900">
+  </picture>
+</p>
+
+<details>
+<summary><strong>See it in action</strong> (15 second demo and more screenshots)</summary>
+
+<p align="center">
+  <img src="docs/images/quick-clean-demo.gif" alt="Animated demo: reviewing Quick Clean results, confirming, and moving 18.54 GB to the Recycle Bin" width="800">
+</p>
+<p align="center">
+  <img src="docs/images/confirm-dark.png" alt="Confirmation window listing every selected item and its size before anything is moved to the Recycle Bin" width="440">
+  <img src="docs/images/cleanup-complete-light.png" alt="Cleanup complete summary in light mode" width="440">
+</p>
+
+</details>
+
+<sub>Screenshots use sample data on a demo PC.</sub>
+
 - **Works on any Windows PC:** Automatically finds Windows temporary files, Windows Update leftovers, Microsoft Store app caches, browser caches (Edge, Chrome, Firefox, Brave, Opera), everyday app caches (Teams, Discord, Spotify, Slack, Zoom, Steam, Epic Games, Office), and any installed desktop app caches on your computer. Optional coding and AI caches are also detected automatically only if you use those tools.
 - **Designed for safety:** Personal folders (`Downloads`, `OneDrive`, `Documents`, `Pictures`, `Videos`, `Music`, `Desktop`) are never auto-selected by Quick Clean. Use the **Large Files & Folders** view to inspect big files and folders across `Downloads`, user spaces, and all drives where every item stays unchecked until you manually select it. Windows system folders and other user accounts are blocked, important files ask for your confirmation first, and cleanup defaults to the **Recycle Bin** so you can usually restore files (see [Limits](#limits-please-read)).
 - **Light and Dark Mode:** Switch themes anytime from the top-left corner.
+- **Five languages:** English, Spanish, French, German and Portuguese. Choose yours in **Settings & Updates**.
 - **Private by design:** Every scan, setting, and cleanup record stays on your own computer. Nothing is uploaded. The only network use is the optional update check, which is off by default (see [Privacy](#privacy)).
 - **Least privilege:** DriveSweep runs as a standard user. It asks for Administrator rights only when you choose **Restart as Admin** for system level tasks.
 
@@ -19,7 +42,7 @@ DriveSweep runs on 64 bit Windows 10 (1809 or later) and Windows 11, including W
 ### Option A: Windows Installer (Recommended)
 
 1. Open the **[GitHub Releases](https://github.com/rauell1/drive-sweep/releases)** page.
-2. Under the latest release (**Assets** section at the bottom), click **`DriveSweep-Setup-0.7.1.exe`** (or the newest version listed) to download it.
+2. Under the latest release (**Assets** section at the bottom), click **`DriveSweep-Setup-0.7.2.exe`** (or the newest version listed) to download it.
 3. Open your `Downloads` folder and double-click the downloaded `DriveSweep-Setup-...exe` file.
 4. **If Windows shows a "Windows protected your PC" (SmartScreen) blue popup:**
    - DriveSweep releases are not code signed yet (see [Code Signing Policy](#code-signing-policy)), so Windows shows this for a publisher it does not know. Before running, you can [verify the download](#verifying-downloads) against `SHA256SUMS.txt` and its build provenance.
@@ -66,7 +89,7 @@ Click **Windows Tools** on the left sidebar to open the dedicated Windows Space 
 ### 4. Always Keep, Cleanup Log & Scheduled Low-Disk Reminders
 - **Always Keep:** Protect any folder or file from deletion across Quick Clean, Large Files & Folders, Drive Scanner, and Duplicates by clicking **Keep** on any row, or by opening **Always Keep** in the sidebar and clicking **+ Add Folder...**. You can remove protected paths from this list anytime.
 - **Cleanup Log:** Shows a local record of past cleanups on your PC and includes an **Open Recycle Bin** button for quick restoration.
-- **Settings & Updates:** Switch UI language (`English`, `Espanol`, `Francais`, `Deutsch`, `Portugues`), configure an optional Windows Task Scheduler low-disk space reminder, verify local storage privacy, and check or install updates via GitHub Releases Setup.
+- **Settings & Updates:** Switch UI language (`English`, `Español`, `Français`, `Deutsch`, `Português`), configure an optional Windows Task Scheduler low-disk space reminder, verify local storage privacy, and check or install updates via GitHub Releases Setup.
 
 ### 5. Updates
 Open **Settings & Updates** (left sidebar) -> **Check for Updates**. DriveSweep checks GitHub Releases over HTTPS and updates **the copy you are running**:
@@ -125,11 +148,11 @@ Every release includes three ways to check that a file is genuine and unchanged:
 
 1. **Checksum.** In PowerShell, compare the file's hash with the matching line in `SHA256SUMS.txt` from the same release:
    ```powershell
-   (Get-FileHash .\DriveSweep-Setup-0.7.1.exe -Algorithm SHA256).Hash.ToLower()
+   (Get-FileHash .\DriveSweep-Setup-0.7.2.exe -Algorithm SHA256).Hash.ToLower()
    ```
 2. **Build provenance.** Proves the file was built by this repository's GitHub Actions workflow from a specific commit (requires the [GitHub CLI](https://cli.github.com)):
    ```powershell
-   gh attestation verify .\DriveSweep-Setup-0.7.1.exe --repo rauell1/drive-sweep
+   gh attestation verify .\DriveSweep-Setup-0.7.2.exe --repo rauell1/drive-sweep
    ```
 3. **Software bill of materials.** `DriveSweep-sbom.cdx.json` lists every bundled Python package and version.
 

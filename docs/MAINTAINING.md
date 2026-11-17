@@ -28,6 +28,10 @@ In **Settings > Advanced Security** (called **Code security** on some accounts),
 - **Dependabot alerts** and **Dependabot security updates**.
 - **Code scanning** results appear automatically from the CodeQL workflow; nothing else to enable.
 
+### 4. Social preview and topics
+- **Settings > General > Social preview > Edit > Upload an image**: choose [`docs/images/social-preview.png`](images/social-preview.png) (1280 by 640). Links to the repository then show this card.
+- On the repository's main page, click the gear next to **About** and add the topics `windows`, `disk-cleanup`, `disk-space`, `cache-cleaner`, `storage-analyzer`, `duplicate-finder`, `open-source` and `python`, so people find DriveSweep through GitHub search.
+
 ## Releasing a new version
 
 1. Make sure everything for the release is merged and the **Unreleased** section of [`CHANGELOG.md`](../CHANGELOG.md) describes it.
@@ -50,7 +54,8 @@ In **Settings > Advanced Security** (called **Code security** on some accounts),
    git push origin v0.7.1
    ```
 5. The release job checks that the tag matches the app version, builds, signs (when configured), and publishes the release with the changelog section as its notes.
-6. Update winget (see [`packaging/winget/README.md`](../packaging/winget/README.md)):
+6. Test the update path on a real PC with [`TESTING_UPDATES.md`](TESTING_UPDATES.md): update the previous version (portable, zip folder and Setup) to the new one, and check the rollback.
+7. Update winget (see [`packaging/winget/README.md`](../packaging/winget/README.md)):
    ```powershell
    wingetcreate update rauell1.DriveSweep --version 0.7.1 --urls https://github.com/rauell1/drive-sweep/releases/download/v0.7.1/DriveSweep-Setup-0.7.1.exe --submit
    ```
@@ -64,4 +69,4 @@ In **Settings > Advanced Security** (called **Code security** on some accounts),
 
 ## Test builds
 
-Every pull request uploads an unsigned **drivesweep-test-build** artifact (kept 7 days) from the **Build and smoke test** job. Download it from the pull request's Checks tab to try a change on a real PC before merging.
+Every pull request uploads an unsigned **drivesweep-test-build** artifact (kept 7 days) from the **Build and smoke test** job. Download it from the pull request's Checks tab to try a change on a real PC before merging. For updates, follow [`TESTING_UPDATES.md`](TESTING_UPDATES.md) once the release is published.
