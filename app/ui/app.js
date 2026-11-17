@@ -17,7 +17,7 @@ const ICON_MOON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" s
 const state = {
   theme: "dark",
   language: "en",
-  version: "0.7.3",
+  version: "0.7.4",
   activeTab: "smart",
   dataDir: "",
   installKind: "source",
@@ -2865,6 +2865,11 @@ function openConfirmCleanModal() {
     ? `<div class="caution-box"><strong>${escapeHtml(tr("winold_title"))}</strong> ${escapeHtml(tr("winold_body"))}</div>`
     : "";
 
+  const runningApps = Array.from(new Set(items.map((it) => it.running_app).filter(Boolean)));
+  const runningHtml = runningApps.length
+    ? `<div class="caution-box"><strong>Tip:</strong> Close running apps (${escapeHtml(runningApps.join(", "))}) first so active cache files are not locked.</div>`
+    : "";
+
   const cautionHtml = cautionItems.length
     ? `<div class="caution-box"><strong>${LH("Caution Items Flagged ({count}):", { count: cautionItems.length })}</strong> ${LH("You selected personal, active project, or sensitive files. Please verify you intend to remove them.")}</div>`
     : "";
@@ -2878,6 +2883,7 @@ function openConfirmCleanModal() {
     `
       ${warningHtml}
       ${winOldHtml}
+      ${runningHtml}
       ${cautionHtml}
       <p>${LH("Ready to clean {count} selected item(s) totaling {size}.", { count: `<strong>${items.length}</strong>`, size: `<strong>${formatBytes(totalBytes)}</strong>` })}</p>
       <div class="review-list">
@@ -3029,6 +3035,56 @@ async function runCleanup(items, mode) {
     ? `<p class="small-text"><strong>${LH("Docker Prune:")}</strong> ${escapeHtml(res.docker_result.message)}</p>`
     : "";
 
+  const refreshAfterClean = async () => {
+    closeModal();
+    await loadSmartScan();
+    state.largeData = null;
+    if (state.activeTab === "large") {
+      await loadLargeSpaces(true);
+    }
+    if (state.browseState.path) {
+      await Promise.all([loadAnalytics(), loadBrowseFolder(), loadAllFiles(), loadLargestFiles(), loadDevArtifacts()]);
+    }
+  };
+
+  const footerBtns = [];
+  if (res.mode === "recycle" && Number(res.freed_bytes || 0) > 0) {
+    footerBtns.push({
+      id: "btn-clean-empty-rb",
+      text: L("Empty Recycle Bin"),
+      cls: "btn-soft",
+      onClick: async () => {
+        const rbBtn = document.getElementById("btn-clean-empty-rb");
+        if (rbBtn) {
+          rbBtn.disabled = true;
+          rbBtn.textContent = "Emptying...";
+        }
+        const rbRes = await api().empty_recycle_bin(null);
+        if (rbRes.ok) {
+          if (rbRes.drives_after) renderDrives(rbRes.drives_after);
+          if (typeof rbRes.history_count === "number") updateHeaderCounts(undefined, rbRes.history_count);
+          state.windowsData = null;
+          showToast(
+            rbRes.already_empty ? "Recycle Bin is already empty." : `Permanently freed ${rbRes.freed_human} from Recycle Bin.`,
+            "good"
+          );
+          if (rbBtn) rbBtn.textContent = "Recycle Bin Emptied";
+        } else {
+          showToast(rbRes.error || "Could not empty Recycle Bin.", "danger");
+          if (rbBtn) {
+            rbBtn.disabled = false;
+            rbBtn.textContent = L("Empty Recycle Bin");
+          }
+        }
+      },
+    });
+  }
+  footerBtns.push({
+    text: L("Done"),
+    cls: "btn-primary",
+    onClick: refreshAfterClean,
+  });
+
   const title = res.cancelled ? L("Cleanup Stopped (Partial)") : L("Cleanup Complete");
   showModal(
     title,
@@ -3041,23 +3097,7 @@ async function runCleanup(items, mode) {
       ${dockerHtml}
       ${failedHtml}
     `,
-    [
-      {
-        text: L("Done"),
-        cls: "btn-primary",
-        onClick: async () => {
-          closeModal();
-          await loadSmartScan();
-          state.largeData = null;
-          if (state.activeTab === "large") {
-            await loadLargeSpaces(true);
-          }
-          if (state.browseState.path) {
-            await Promise.all([loadAnalytics(), loadBrowseFolder(), loadAllFiles(), loadLargestFiles(), loadDevArtifacts()]);
-          }
-        },
-      },
-    ]
+    footerBtns
   );
 }
 
