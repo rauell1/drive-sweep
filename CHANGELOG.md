@@ -6,6 +6,18 @@ When you release, `scripts/bump_version.py` turns the **Unreleased** section int
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-11-17
+
+### Added
+- The whole interface is now available in Spanish, French, German and Portuguese, with proper accents and one consistent tone. This includes buttons, menus, messages, tooltips and the names and notes of cleanup items.
+- Screenshots and a short demo in the README, and a social preview image for links to the repository.
+- A step by step checklist for testing updates on a real PC, including the automatic rollback.
+
+### Fixed
+- Toolbar buttons such as **Re-scan**, **+ Add Custom Folder** and **Restart as Admin** no longer wrap onto two lines.
+- Category names in the **Space by Category** chart are no longer cut off; long names wrap, and the list moves below the chart when space is tight.
+- Counts such as "1 item selected" now use the correct singular or plural form.
+
 ## [0.7.1] - 2026-11-17
 
 ### Added
@@ -56,7 +68,8 @@ When you release, `scripts/bump_version.py` turns the **Unreleased** section int
 ## 0.2.0 to 0.2.8 - 2026-11-15
 - First public release with Administrator mode and CI (0.2.0), then local only privacy guarantees, a SHA-256 verified updater, wider cache detection and interface polish.
 
-[Unreleased]: https://github.com/rauell1/drive-sweep/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/rauell1/drive-sweep/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/rauell1/drive-sweep/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/rauell1/drive-sweep/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/rauell1/drive-sweep/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/rauell1/drive-sweep/compare/v0.5.0...v0.6.0

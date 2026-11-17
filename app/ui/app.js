@@ -17,7 +17,7 @@ const ICON_MOON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" s
 const state = {
   theme: "dark",
   language: "en",
-  version: "0.7.1",
+  version: "0.7.2",
   activeTab: "smart",
   dataDir: "",
   installKind: "source",
@@ -70,6 +70,24 @@ const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'
 // Escapes text for both element content and quoted attribute values (data-path="...", title="...").
 function escapeHtml(text) {
   return String(text ?? "").replace(/[&<>"'`]/g, (ch) => HTML_ESCAPES[ch]);
+}
+
+// Translate an English interface sentence for the current language. Unknown sentences fall
+// back to English. {name} placeholders are filled from vars.
+function L(text, vars) {
+  const i18n = window.DriveSweepI18n;
+  let out = i18n && typeof i18n.phrase === "function" ? i18n.phrase(text) : text;
+  if (vars) for (const [k, v] of Object.entries(vars)) out = out.split(`{${k}}`).join(String(v));
+  return out;
+}
+
+// Same as L, but HTML escaped for use inside markup. vars are inserted as given, so callers
+// pass values that are already escaped (or deliberate markup such as <strong>).
+function LH(text, vars) {
+  const i18n = window.DriveSweepI18n;
+  let out = escapeHtml(i18n && typeof i18n.phrase === "function" ? i18n.phrase(text) : text);
+  if (vars) for (const [k, v] of Object.entries(vars)) out = out.split(`{${k}}`).join(String(v));
+  return out;
 }
 
 function formatBytes(bytes) {
@@ -134,7 +152,7 @@ function tr(key, fallback) {
 }
 
 function renderRiskBadge(riskLevel, riskReason) {
-  const titleAttr = riskReason ? `title="${escapeHtml(riskReason)}"` : "";
+  const titleAttr = riskReason ? `title="${LH(riskReason)}"` : "";
   if (riskLevel === "critical") {
     return `<span class="badge badge-danger" ${titleAttr}>${escapeHtml(tr("badge_critical", "System"))}</span>`;
   }
@@ -147,7 +165,7 @@ function renderRiskBadge(riskLevel, riskReason) {
 function buildSvgDonut(segments, centerTop, centerBottom, activeLabel = null, clickable = false) {
   const total = segments.reduce((acc, s) => acc + Number(s.value || 0), 0);
   if (total <= 0) {
-    return `<div class="muted small-text">No data to chart yet.</div>`;
+    return `<div class="muted small-text">${LH("No data to chart yet.")}</div>`;
   }
 
   const r = 46;
@@ -169,7 +187,7 @@ function buildSvgDonut(segments, centerTop, centerBottom, activeLabel = null, cl
     .slice(0, 6)
     .map(
       (s) => `
-      <div class="donut-list-row ${clickable ? "is-clickable" : ""} ${activeLabel === s.label ? "is-active" : ""}" data-cat="${escapeHtml(s.rawCategory || s.label)}">
+      <div class="donut-list-row ${clickable ? "is-clickable" : ""} ${activeLabel === (s.rawCategory || s.label) ? "is-active" : ""}" data-cat="${escapeHtml(s.rawCategory || s.label)}">
         <span class="donut-list-name">
           <span class="legend-dot" style="background:${s.color};"></span>
           <span>${escapeHtml(s.label)}</span>
@@ -221,13 +239,13 @@ function updateSelectionBar() {
   const totalBytes = items.reduce((acc, it) => acc + Number(it.size_bytes || 0), 0);
   const sizeStr = formatBytes(totalBytes);
 
-  document.getElementById("selected-count").textContent = `${count} item${count === 1 ? "" : "s"} selected`;
+  document.getElementById("selected-count").textContent = count === 1 ? L("1 item selected") : L("{count} items selected", { count });
   document.getElementById("selected-size").textContent = sizeStr;
 
   const heroSel = document.getElementById("smart-selected-metric");
   const heroSub = document.getElementById("smart-selected-sub");
   if (heroSel) heroSel.textContent = sizeStr;
-  if (heroSub) heroSub.textContent = `${count} item${count === 1 ? "" : "s"} queued`;
+  if (heroSub) heroSub.textContent = count === 1 ? L("1 item queued") : L("{count} items queued", { count });
 
   document.querySelectorAll(".group-card[data-group]").forEach((card) => {
     const grp = card.dataset.group;
@@ -235,16 +253,16 @@ function updateSelectionBar() {
     if (!chip) return;
     const grpItems = state.smartItems.filter((it) => it.group === grp);
     const selCount = grpItems.filter((it) => !isPathExcludedLocal(it.path) && isItemSelected(it.path, !!it.contents_only)).length;
-    chip.textContent = `${selCount}/${grpItems.length} selected`;
+    chip.textContent = L("{done}/{total} selected", { done: selCount, total: grpItems.length });
   });
 
   const cleanBtn = document.getElementById("btn-clean-now");
-  cleanBtn.textContent = count > 0 ? `Clean ${sizeStr}` : tr("clean_selected", "Clean Selected");
+  cleanBtn.textContent = count > 0 ? L("Clean {size}", { size: sizeStr }) : tr("clean_selected", "Clean Selected");
   cleanBtn.disabled = count === 0;
 
   const dedupNote = document.getElementById("dedup-note");
   if (nestedCount > 0) {
-    dedupNote.textContent = `${nestedCount} nested child item${nestedCount === 1 ? "" : "s"} covered by parent`;
+    dedupNote.textContent = nestedCount === 1 ? L("1 nested item covered by its parent folder") : L("{count} nested items covered by their parent folders", { count: nestedCount });
     dedupNote.classList.remove("hidden");
   } else {
     dedupNote.classList.add("hidden");
@@ -320,7 +338,7 @@ async function copyCommandText(cmd, btnEl) {
       btnEl.textContent = prev;
     }, 1500);
   }
-  showToast(ok ? "Command copied to clipboard" : `Command: ${cmd}`, ok ? "good" : "info");
+  showToast(ok ? L("Command copied to clipboard") : L("Command: {cmd}", { cmd }), ok ? "good" : "info");
 }
 
 function switchTab(tabName) {
@@ -400,10 +418,10 @@ function renderDrives(drives, pulse = false) {
   sideEl.innerHTML = state.drives
     .map(
       (d) => `
-      <button class="side-drive ${state.activeDriveRoot === d.path ? "active" : ""}${pulseCls}" data-drive="${escapeHtml(d.path)}" title="${escapeHtml(d.free_human)} free of ${escapeHtml(d.total_human)}">
+      <button class="side-drive ${state.activeDriveRoot === d.path ? "active" : ""}${pulseCls}" data-drive="${escapeHtml(d.path)}" title="${LH("{free} free of {total}", { free: escapeHtml(d.free_human), total: escapeHtml(d.total_human) })}">
         <div class="side-drive-top">
-          <span>Drive ${escapeHtml(d.name)}</span>
-          <span class="muted">${escapeHtml(d.free_human)} free</span>
+          <span>${LH("Drive {name}", { name: escapeHtml(d.name) })}</span>
+          <span class="muted">${LH("{free} free", { free: escapeHtml(d.free_human) })}</span>
         </div>
         <div class="gauge-track">
           <div class="gauge-fill ${gaugeClass(d.used_percent)}" style="width: ${Math.min(100, d.used_percent)}%"></div>
@@ -416,10 +434,10 @@ function renderDrives(drives, pulse = false) {
     cardsEl.innerHTML = state.drives
       .map(
         (d) => `
-        <button class="drive-card ${state.activeDriveRoot === d.path ? "active" : ""}${pulseCls}" data-drive="${escapeHtml(d.path)}" title="Scan Drive ${escapeHtml(d.name)}: ${escapeHtml(d.free_human)} free of ${escapeHtml(d.total_human)} (${d.used_percent}% used)">
+        <button class="drive-card ${state.activeDriveRoot === d.path ? "active" : ""}${pulseCls}" data-drive="${escapeHtml(d.path)}" title="${LH("Scan Drive {name}: {free} free of {total} ({pct}% used)", { name: escapeHtml(d.name), free: escapeHtml(d.free_human), total: escapeHtml(d.total_human), pct: d.used_percent })}">
           <span class="drive-pill-dot ${gaugeClass(d.used_percent)}"></span>
-          <span class="drive-pill-name">Drive ${escapeHtml(d.name)}</span>
-          <span class="drive-pill-meta">${escapeHtml(d.free_human)} free</span>
+          <span class="drive-pill-name">${LH("Drive {name}", { name: escapeHtml(d.name) })}</span>
+          <span class="drive-pill-meta">${LH("{free} free", { free: escapeHtml(d.free_human) })}</span>
         </button>`
       )
       .join("");
@@ -452,7 +470,7 @@ function updateDriveHealthPill() {
     dot.classList.remove("risk-dot-caution", "risk-dot-critical");
     dot.classList.add("risk-dot-safe");
     badge.textContent = tr("health_healthy", "Healthy");
-    text.textContent = "Checking drives...";
+    text.textContent = L("Checking drives...");
     return;
   }
 
@@ -489,11 +507,11 @@ function updateDriveHealthPill() {
     badge.textContent = tr("health_healthy", "Healthy");
   }
 
-  const freeLabel = `${formatBytes(totalFreeBytes)} total free across ${drives.length} drive${drives.length === 1 ? "" : "s"}`;
+  const freeLabel = drives.length === 1 ? L("{size} free on 1 drive", { size: formatBytes(totalFreeBytes) }) : L("{size} total free across {count} drives", { size: formatBytes(totalFreeBytes), count: drives.length });
   const lifeBytes = Number(state.lifetimeStats?.lifetime_freed_bytes || 0);
   const parts = [freeLabel];
-  if (reclaimBytes > 0) parts.push(`${formatBytes(reclaimBytes)} safe caches found`);
-  if (lifeBytes > 0) parts.push(`${formatBytes(lifeBytes)} reclaimed total`);
+  if (reclaimBytes > 0) parts.push(L("{size} safe caches found", { size: formatBytes(reclaimBytes) }));
+  if (lifeBytes > 0) parts.push(L("{size} reclaimed total", { size: formatBytes(lifeBytes) }));
   text.textContent = parts.join(" | ");
 }
 
@@ -553,18 +571,18 @@ async function openExclusionsModal() {
       (p) => `
       <div class="review-row">
         <div class="item-subpath" style="flex:1;">${escapeHtml(p)}</div>
-        <button class="btn btn-soft btn-sm btn-remove-ex" data-path="${escapeHtml(p)}">Remove</button>
+        <button class="btn btn-soft btn-sm btn-remove-ex" data-path="${escapeHtml(p)}">${LH("Remove")}</button>
       </div>`
     )
     .join("");
 
   showModal(
-    `Always Keep List (${list.length})`,
-    `<p class="muted small-text">Paths listed here stay unchecked during Smart Scans and are marked "Always Keep" across DriveSweep.</p>
-     <div class="review-list">${rows || "<p class='muted'>No excluded paths yet. Click '+ Add Folder...' below, or click 'Keep' on any folder or cache row to protect it.</p>"}</div>`,
+    L("Always Keep List ({count})", { count: list.length }),
+    `<p class="muted small-text">${LH('Paths listed here stay unchecked during Smart Scans and are marked "Always Keep" across DriveSweep.')}</p>
+     <div class="review-list">${rows || `<p class='muted'>${LH("No excluded paths yet. Click '+ Add Folder...' below, or click 'Keep' on any folder or cache row to protect it.")}</p>`}</div>`,
     [
       {
-        text: "+ Add Folder...",
+        text: L("+ Add Folder..."),
         cls: "btn-soft",
         id: "btn-add-exclusion-folder",
         onClick: async () => {
@@ -582,7 +600,7 @@ async function openExclusionsModal() {
           await openExclusionsModal();
         },
       },
-      { text: "Close", cls: "btn-primary", onClick: closeModal },
+      { text: L("Close"), cls: "btn-primary", onClick: closeModal },
     ]
   );
 
@@ -612,8 +630,8 @@ async function openHistoryModal() {
   const summaryHtml =
     lifeRuns > 0
       ? `<div class="summary-strip" style="margin-bottom:10px;">
-           <div>Lifetime reclaimed: <strong class="accent-good">${escapeHtml(formatBytes(lifeBytes))}</strong></div>
-           <div class="muted small-text">Across ${lifeRuns.toLocaleString()} cleanup run${lifeRuns === 1 ? "" : "s"}</div>
+           <div>${LH("Lifetime reclaimed:")} <strong class="accent-good">${escapeHtml(formatBytes(lifeBytes))}</strong></div>
+           <div class="muted small-text">${lifeRuns === 1 ? LH("Across 1 cleanup run") : LH("Across {count} cleanup runs", { count: lifeRuns.toLocaleString() })}</div>
          </div>`
       : "";
 
@@ -623,10 +641,10 @@ async function openHistoryModal() {
       const actionLabel = h.action || "Cleanup";
       const itemList = Array.isArray(h.items) ? h.items : [];
       const itemPreview = itemList.length
-        ? `<div class="item-subpath" style="margin-top:3px;" title="${escapeHtml(itemList.join("\n"))}">${escapeHtml(itemList.slice(0, 3).join(", "))}${itemList.length > 3 ? ` (+${itemList.length - 3} more)` : ""}</div>`
+        ? `<div class="item-subpath" style="margin-top:3px;" title="${escapeHtml(itemList.join("\n"))}">${escapeHtml(itemList.slice(0, 3).join(", "))}${itemList.length > 3 ? ` ${LH("(+{count} more)", { count: itemList.length - 3 })}` : ""}</div>`
         : "";
       const modeClass = h.mode === "permanent" ? "badge-danger" : h.mode === "system" ? "badge-info" : "badge-good";
-      const modeLabel = h.mode === "permanent" ? "Permanent" : h.mode === "system" ? "System Tool" : "Recycle Bin";
+      const modeLabel = h.mode === "permanent" ? L("Permanent") : h.mode === "system" ? L("System Tool") : L("Recycle Bin");
       return `
         <div class="review-row">
           <div style="flex:1;min-width:0;">
@@ -635,7 +653,7 @@ async function openHistoryModal() {
               <span class="badge badge-info">${escapeHtml(actionLabel)}</span>
               <span class="badge ${modeClass}">${modeLabel}</span>
             </div>
-            <div class="muted small-text">${escapeHtml(dateLabel)} | ${h.deleted_count} cleaned${h.failed_count ? ` | ${h.failed_count} failed` : ""}</div>
+            <div class="muted small-text">${escapeHtml(dateLabel)} | ${LH("{count} cleaned", { count: h.deleted_count })}${h.failed_count ? ` | ${LH("{count} failed", { count: h.failed_count })}` : ""}</div>
             ${itemPreview}
           </div>
         </div>`;
@@ -643,8 +661,8 @@ async function openHistoryModal() {
     .join("");
 
   showModal(
-    `Cleanup Log (${entries.length})`,
-    `${summaryHtml}<div class="review-list">${rows || "<p class='muted'>No cleanup runs recorded yet.</p>"}</div>`,
+    L("Cleanup Log ({count})", { count: entries.length }),
+    `${summaryHtml}<div class="review-list">${rows || `<p class='muted'>${LH("No cleanup runs recorded yet.")}</p>`}</div>`,
     [
       {
         text: tr("open_recycle_bin", "Open Recycle Bin"),
@@ -656,16 +674,16 @@ async function openHistoryModal() {
       ...(entries.length
         ? [
             {
-              text: "Clear Log",
+              text: L("Clear Log"),
               cls: "btn-soft",
               onClick: () => {
                 showModal(
-                  "Permission Required: Clear Cleanup Log",
-                  `<div class="caution-box">This will permanently erase your local cleanup history log (${entries.length} entries).</div>`,
+                  L("Permission Required: Clear Cleanup Log"),
+                  `<div class="caution-box">${LH("This will permanently erase your local cleanup history log ({count} entries).", { count: entries.length })}</div>`,
                   [
-                    { text: "Cancel", cls: "btn-soft", onClick: openHistoryModal },
+                    { text: L("Cancel"), cls: "btn-soft", onClick: openHistoryModal },
                     {
-                      text: "Yes, Clear Log",
+                      text: L("Yes, Clear Log"),
                       cls: "btn-danger",
                       onClick: async () => {
                         await api().clear_history();
@@ -681,7 +699,7 @@ async function openHistoryModal() {
             },
           ]
         : []),
-      { text: "Close", cls: "btn-primary", onClick: closeModal },
+      { text: L("Close"), cls: "btn-primary", onClick: closeModal },
     ]
   );
 }
@@ -706,44 +724,44 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
 
   const renderBody = (statusHtml) => `
     <div class="settings-section">
-      <h4>Language &amp; Privacy</h4>
+      <h4>${LH("Language & Privacy")}</h4>
       <div class="settings-row">
         <div>
-          <div style="font-weight:600;font-size:13px;">Interface Language</div>
-          <div class="muted small-text">Changes menus and headings offline without restart.</div>
+          <div style="font-weight:600;font-size:13px;">${LH("Interface Language")}</div>
+          <div class="muted small-text">${LH("Changes menus and headings offline without restart.")}</div>
         </div>
         <select id="sel-ui-language" class="select">${langOptions}</select>
       </div>
       <div class="settings-row" style="margin-top:10px;">
         <div style="flex:1;min-width:0;">
-          <div style="font-weight:600;font-size:13px;">100% Local Data &amp; Zero Telemetry</div>
+          <div style="font-weight:600;font-size:13px;">${LH("Local Data & No Telemetry")}</div>
           <div class="item-subpath" style="margin-top:2px;">${escapeHtml(state.dataDir)}</div>
         </div>
-        <button id="btn-open-data-dir" class="btn btn-soft btn-sm">Open Folder</button>
+        <button id="btn-open-data-dir" class="btn btn-soft btn-sm">${LH("Open Folder")}</button>
       </div>
     </div>
 
     <div class="settings-section">
-      <h4>Optional Low-Disk Space Reminder (Windows Task Scheduler)</h4>
+      <h4>${LH("Optional Low-Disk Space Reminder (Windows Task Scheduler)")}</h4>
       <div class="settings-row">
         <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;">
           <input id="chk-reminder-enabled" type="checkbox" ${remStatus.enabled ? "checked" : ""} />
-          <span>Notify me when a drive drops below</span>
+          <span>${LH("Notify me when a drive drops below")}</span>
         </label>
         <div style="display:flex;align-items:center;gap:6px;">
           <input id="inp-reminder-pct" type="number" min="5" max="50" class="input input-sm" style="width:68px;" value="${Number(remStatus.threshold_pct || 15)}" />
-          <span class="small-text muted">% free</span>
+          <span class="small-text muted">${LH("% free")}</span>
           <select id="sel-reminder-freq" class="select">
-            <option value="daily" ${remStatus.frequency === "daily" ? "selected" : ""}>Daily</option>
-            <option value="weekly" ${remStatus.frequency === "weekly" ? "selected" : ""}>Weekly</option>
-            <option value="monthly" ${remStatus.frequency === "monthly" ? "selected" : ""}>Monthly</option>
+            <option value="daily" ${remStatus.frequency === "daily" ? "selected" : ""}>${LH("Daily")}</option>
+            <option value="weekly" ${remStatus.frequency === "weekly" ? "selected" : ""}>${LH("Weekly")}</option>
+            <option value="monthly" ${remStatus.frequency === "monthly" ? "selected" : ""}>${LH("Monthly")}</option>
           </select>
-          <button id="btn-save-reminder" class="btn btn-primary btn-xs">Save</button>
-          <button id="btn-test-reminder" class="btn btn-soft btn-xs">Test Alert</button>
+          <button id="btn-save-reminder" class="btn btn-primary btn-xs">${LH("Save")}</button>
+          <button id="btn-test-reminder" class="btn btn-soft btn-xs">${LH("Test Alert")}</button>
         </div>
       </div>
       <div id="reminder-status-msg" class="muted small-text" style="margin-top:6px;">
-        ${remStatus.task?.installed ? `Scheduled task active${remStatus.task.next_run ? ` (Next run: ${escapeHtml(remStatus.task.next_run)})` : ""}.` : "Not scheduled (disabled by default)."}
+        ${remStatus.task?.installed ? (remStatus.task.next_run ? LH("Scheduled task active (Next run: {when}).", { when: escapeHtml(remStatus.task.next_run) }) : LH("Scheduled task active.")) : LH("Not scheduled (disabled by default).")}
       </div>
     </div>
 
@@ -759,9 +777,9 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
     </label>
 
     <div class="settings-section">
-      <h4>Diagnostics &amp; Crash Log</h4>
+      <h4>${LH("Diagnostics & Crash Log")}</h4>
       <div class="settings-row">
-        <div class="muted small-text">Version v${escapeHtml(state.version)} | ${escapeHtml(state.osName)} | ${state.isAdmin ? "Administrator" : "Standard Mode"}</div>
+        <div class="muted small-text">${LH("Version {version}", { version: "v" + escapeHtml(state.version) })} | ${escapeHtml(state.osName)} | ${state.isAdmin ? LH("Administrator") : LH("Standard Mode")}</div>
         <div style="display:flex;gap:6px;">
           <button id="btn-open-diag-log" class="btn btn-soft btn-xs">${escapeHtml(tr("view_log_file", "Open Diagnostics Log"))}</button>
           <button id="btn-clear-diag-log" class="btn btn-ghost btn-xs" title="${escapeHtml(tr("clear_logs_tip"))}">${escapeHtml(tr("clear_logs"))}</button>
@@ -774,21 +792,21 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
 
   const formatUpdatePanel = (u) => {
     if (!u) {
-      return `<div><strong>Current Version:</strong> v${escapeHtml(state.version)}<div class="muted small-text">Click "Check for Updates" to check GitHub Releases.</div></div>`;
+      return `<div><strong>${LH("Current Version:")}</strong> v${escapeHtml(state.version)}<div class="muted small-text">${LH('Click "Check for Updates" to check GitHub Releases.')}</div></div>`;
     }
     if (!u.ok) {
-      return `<div><strong>Update check failed</strong><div class="muted small-text">${escapeHtml(u.error || "Network error")}</div></div>`;
+      return `<div><strong>${LH("Update check failed")}</strong><div class="muted small-text">${escapeHtml(u.error || L("Network error"))}</div></div>`;
     }
     if (!u.update_available) {
-      return `<div><strong>Up to date (v${escapeHtml(state.version)})</strong><div class="muted small-text">Latest release on GitHub is v${escapeHtml(u.latest_version)}.</div></div>`;
+      return `<div><strong>${LH("Up to date (v{version})", { version: escapeHtml(state.version) })}</strong><div class="muted small-text">${LH("Latest release on GitHub is v{version}.", { version: escapeHtml(u.latest_version) })}</div></div>`;
     }
     const pkgSize = u.asset_size > 0 ? ` (${formatBytes(u.asset_size)})` : "";
     return `
       <div style="width:100%;">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
           <div>
-            <strong>Update Available: v${escapeHtml(u.latest_version)}</strong>
-            <span class="badge badge-info">Installed: v${escapeHtml(state.version)}</span>
+            <strong>${LH("Update Available: v{version}", { version: escapeHtml(u.latest_version) })}</strong>
+            <span class="badge badge-info">${LH("Installed: v{version}", { version: escapeHtml(state.version) })}</span>
           </div>
           <span class="muted small-text">${escapeHtml(u.asset_name || "GitHub Release")}${escapeHtml(pkgSize)}</span>
         </div>
@@ -833,7 +851,7 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
   const runGuidedUpdate = async (u) => {
     const panel = document.getElementById("update-status-panel");
     setUpdateModalBusy(true);
-    renderUpdateProgress(panel, `Starting download of ${u.asset_name}...`, "0%", 4);
+    renderUpdateProgress(panel, L("Starting download of {name}...", { name: u.asset_name }), "0%", 4);
     try {
       await api().start_update_install(u.asset_url, u.asset_name, u.sha256_url, Number(u.asset_size || 0));
       while (true) {
@@ -841,7 +859,7 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
         const st = await api().get_update_status();
         if (st.status === "error") {
           setUpdateModalBusy(false);
-          if (panel) panel.innerHTML = `<div class="warning-box" style="margin:0;width:100%;">${escapeHtml(st.error || "Update failed.")}</div>`;
+          if (panel) panel.innerHTML = `<div class="warning-box" style="margin:0;width:100%;">${escapeHtml(st.error || L("Update failed."))}</div>`;
           return;
         }
         const total = Number(st.total_bytes || 0);
@@ -855,7 +873,7 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
               : dlBytes > 0
                 ? formatBytes(dlBytes)
                 : "...";
-        renderUpdateProgress(panel, st.message || "Updating DriveSweep...", bytesLabel, pct);
+        renderUpdateProgress(panel, st.message || L("Updating DriveSweep..."), bytesLabel, pct);
         if (st.status === "launching") {
           break;
         }
@@ -870,7 +888,7 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
     const btns = [
       {
         id: "btn-update-check",
-        text: state.isCheckingUpdates ? "Checking..." : "Check for Updates",
+        text: state.isCheckingUpdates ? L("Checking...") : L("Check for Updates"),
         cls: "btn-soft",
         disabled: state.isCheckingUpdates || state.isUpdating,
         onClick: () => runCheckInModal(modalToken),
@@ -880,7 +898,7 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
     if (u && u.ok && u.update_available && u.asset_url && u.sha256_url) {
       btns.push({
         id: "btn-update-install",
-        text: `Download & Update v${u.latest_version}`,
+        text: L("Download & Update v{version}", { version: u.latest_version }),
         cls: "btn-cta",
         disabled: state.isCheckingUpdates || state.isUpdating,
         onClick: () => runGuidedUpdate(u),
@@ -888,7 +906,7 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
     }
     btns.push({
       id: "btn-update-close",
-      text: "Close",
+      text: L("Close"),
       cls: "btn-primary",
       disabled: state.isUpdating,
       onClick: closeModal,
@@ -903,7 +921,7 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
     state.isCheckingUpdates = true;
     setModalFooterButtons(buildFooterButtons());
     const panel = document.getElementById("update-status-panel");
-    if (panel) panel.innerHTML = `<div class="muted">Checking GitHub Releases...</div>`;
+    if (panel) panel.innerHTML = `<div class="muted">${LH("Checking GitHub Releases...")}</div>`;
     try {
       const res = await api().check_for_updates();
       state.latestUpdateInfo = res;
@@ -954,6 +972,8 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
     if (activeTabBtn) switchTab(activeTabBtn.dataset.tab);
     updateSelectionBar();
     renderSmartGroups();
+    updateCollapseToggleBtn();
+    renderPrivilegeLabels();
     updateDriveHealthPill();
     if (state.dupResult) renderDuplicateResults();
   });
@@ -962,7 +982,7 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
     const freq = document.getElementById("sel-reminder-freq")?.value || "weekly";
     const pct = Number(document.getElementById("inp-reminder-pct")?.value || 15);
     const msgEl = document.getElementById("reminder-status-msg");
-    if (msgEl) msgEl.textContent = "Saving Windows schedule...";
+    if (msgEl) msgEl.textContent = L("Saving Windows schedule...");
     const res = await api().configure_disk_reminder(enabled, freq, pct);
     state.reminderEnabled = !!res.enabled;
     state.reminderFrequency = res.frequency || freq;
@@ -971,15 +991,15 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
     renderLowDiskBanner();
     if (msgEl) {
       msgEl.textContent = res.ok
-        ? (res.enabled ? `Scheduled ${res.frequency} reminder saved.` : "Scheduled reminder disabled.")
-        : `Could not update Task Scheduler: ${res.error || "Unknown error"}`;
+        ? (res.enabled ? L("Scheduled {frequency} reminder saved.", { frequency: L(res.frequency === "daily" ? "Daily" : res.frequency === "monthly" ? "Monthly" : "Weekly").toLowerCase() }) : L("Scheduled reminder disabled."))
+        : L("Could not update Task Scheduler: {error}", { error: res.error || L("Unknown error") });
     }
   });
   document.getElementById("btn-test-reminder")?.addEventListener("click", async () => {
     const msgEl = document.getElementById("reminder-status-msg");
     const res = await api().test_low_disk_notification();
     if (msgEl) {
-      msgEl.textContent = res.ok ? "Test notification sent to Windows tray." : `Notification error: ${res.error || "Failed"}`;
+      msgEl.textContent = res.ok ? L("Test notification sent to Windows tray.") : L("Notification error: {error}", { error: res.error || L("Failed") });
     }
   });
 
@@ -993,11 +1013,11 @@ function updateHeaderUpdateBadge(u) {
   const navBadge = document.getElementById("update-nav-badge");
   if (u && u.ok && u.update_available) {
     chip.classList.add("update-ready");
-    chip.title = `Update available: v${u.latest_version}. Click to view.`;
+    chip.title = L("Update available: v{version}. Click to view.", { version: u.latest_version });
     navBadge?.classList.remove("hidden");
   } else {
     chip.classList.remove("update-ready");
-    chip.title = "View updates and local privacy settings";
+    chip.title = L("View updates and local privacy settings");
     navBadge?.classList.add("hidden");
   }
 }
@@ -1019,17 +1039,17 @@ function renderLowDiskBanner() {
   const extraCount = Math.max(0, alerts.length - visible.length);
   const summary =
     visible
-      .map((a) => `<strong>${escapeHtml(a.drive.replace(/\\+$/, ""))}</strong> (${escapeHtml(a.free_human)} free, ${a.free_pct}%)`)
-      .join(" \u00b7 ") + (extraCount > 0 ? ` <span class="muted">(+${extraCount} more)</span>` : "");
+      .map((a) => `<strong>${escapeHtml(a.drive.replace(/\\+$/, ""))}</strong> (${LH("{free} free", { free: escapeHtml(a.free_human) })}, ${a.free_pct}%)`)
+      .join(" \u00b7 ") + (extraCount > 0 ? ` <span class="muted">${LH("(+{count} more)", { count: extraCount })}</span>` : "");
   banner.innerHTML = `
     <div style="font-size:12.5px;display:flex;align-items:center;gap:8px;min-width:0;">
       <span class="risk-dot ${hasCritical ? "risk-dot-critical" : "risk-dot-caution"}"></span>
-      <span><strong>Low Disk Space:</strong> ${summary}</span>
+      <span><strong>${LH("Low Disk Space:")}</strong> ${summary}</span>
     </div>
     <div style="display:flex;gap:6px;align-items:center;">
-      <button id="btn-banner-scan" class="btn btn-soft btn-xs">Scan ${escapeHtml(alerts[0].drive.replace(/\\+$/, ""))}</button>
-      <button id="btn-banner-tools" class="btn btn-soft btn-xs">Windows Tools</button>
-      <button id="btn-banner-dismiss" class="btn-icon-quiet" title="Dismiss" aria-label="Dismiss">&times;</button>
+      <button id="btn-banner-scan" class="btn btn-soft btn-xs">${LH("Scan {drive}", { drive: escapeHtml(alerts[0].drive.replace(/\\+$/, "")) })}</button>
+      <button id="btn-banner-tools" class="btn btn-soft btn-xs">${LH("Windows Tools")}</button>
+      <button id="btn-banner-dismiss" class="btn-icon-quiet" title="${LH("Dismiss")}" aria-label="${LH("Dismiss")}">&times;</button>
     </div>
   `;
   document.getElementById("btn-banner-scan")?.addEventListener("click", () => {
@@ -1048,9 +1068,9 @@ async function promptAddCustomPreset() {
   if (res.cancelled) return;
   if (!res.ok) {
     showModal(
-      "Could Not Add Custom Folder",
-      `<div class="warning-box">${escapeHtml(res.error || "Invalid folder.")}</div>`,
-      [{ text: "Close", cls: "btn-primary", onClick: closeModal }]
+      L("Could Not Add Custom Folder"),
+      `<div class="warning-box">${escapeHtml(res.error || L("Invalid folder."))}</div>`,
+      [{ text: L("Close"), cls: "btn-primary", onClick: closeModal }]
     );
     return;
   }
@@ -1088,11 +1108,11 @@ function buildWindowsToolsHtml(data, isPageView = true) {
       <div class="review-row">
         <div style="flex:1;min-width:0;">
           <div style="font-weight:600;font-size:12.5px;">${escapeHtml(it.name)}</div>
-          <div class="item-subpath">${it.age_days} days old | ${escapeHtml(it.path)}</div>
+          <div class="item-subpath">${LH("{days} days old", { days: it.age_days })} | ${escapeHtml(it.path)}</div>
         </div>
         <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
           <strong>${escapeHtml(it.size_human)}</strong>
-          <button class="btn btn-soft btn-xs btn-queue-inst" data-path="${escapeHtml(it.path)}" data-name="${escapeHtml(it.name)}" data-size="${it.size_bytes}" data-human="${escapeHtml(it.size_human)}">Queue</button>
+          <button class="btn btn-soft btn-xs btn-queue-inst" data-path="${escapeHtml(it.path)}" data-name="${escapeHtml(it.name)}" data-size="${it.size_bytes}" data-human="${escapeHtml(it.size_human)}">${LH("Queue")}</button>
         </div>
       </div>`
     )
@@ -1113,9 +1133,9 @@ function buildWindowsToolsHtml(data, isPageView = true) {
           </div>
           <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
             <strong>${escapeHtml(v.size_human)}</strong>
-            <button class="btn btn-primary btn-xs btn-compact-vhdx" data-path="${escapeHtml(v.path)}" data-name="${escapeHtml(v.name)}">Shrink Disk</button>
-            <button class="btn btn-soft btn-xs btn-open-vhdx" data-path="${escapeHtml(v.path)}">Reveal</button>
-            <button class="btn btn-ghost btn-xs btn-copy-cmd" data-cmd="${escapeHtml(compactCmd)}">Copy Cmd</button>
+            <button class="btn btn-primary btn-xs btn-compact-vhdx" data-path="${escapeHtml(v.path)}" data-name="${escapeHtml(v.name)}">${LH("Shrink Disk")}</button>
+            <button class="btn btn-soft btn-xs btn-open-vhdx" data-path="${escapeHtml(v.path)}">${LH("Reveal")}</button>
+            <button class="btn btn-ghost btn-xs btn-copy-cmd" data-cmd="${escapeHtml(compactCmd)}">${LH("Copy Cmd")}</button>
           </div>
         </div>
         <div class="space-map-bar-wrap">
@@ -1129,20 +1149,20 @@ function buildWindowsToolsHtml(data, isPageView = true) {
     ? `
       <div class="kpi-mini-grid">
         <div class="kpi-mini-cell">
-          <div class="kpi-mini-label">Component Store</div>
+          <div class="kpi-mini-label">${LH("Component Store")}</div>
           <div class="kpi-mini-val">${escapeHtml(state.winsxsAnalysis.component_store_size || "Unknown")}</div>
         </div>
         <div class="kpi-mini-cell">
-          <div class="kpi-mini-label">Backups &amp; Disabled</div>
+          <div class="kpi-mini-label">${LH("Backups & Disabled")}</div>
           <div class="kpi-mini-val">${escapeHtml(state.winsxsAnalysis.backups_and_disabled || "0")}</div>
         </div>
         <div class="kpi-mini-cell">
-          <div class="kpi-mini-label">Reclaimable</div>
+          <div class="kpi-mini-label">${LH("Reclaimable")}</div>
           <div class="kpi-mini-val">${escapeHtml(state.winsxsAnalysis.reclaimable_packages || "0")} packages</div>
         </div>
         <div class="kpi-mini-cell">
-          <div class="kpi-mini-label">Cleanup Needed</div>
-          <div class="kpi-mini-val">${state.winsxsAnalysis.cleanup_recommended ? `<span class="badge badge-warn">Recommended</span>` : `<span class="badge badge-good">Optimal</span>`}</div>
+          <div class="kpi-mini-label">${LH("Cleanup Needed")}</div>
+          <div class="kpi-mini-val">${state.winsxsAnalysis.cleanup_recommended ? `<span class="badge badge-warn">${LH("Recommended")}</span>` : `<span class="badge badge-good">${LH("Optimal")}</span>`}</div>
         </div>
       </div>`
     : "";
@@ -1151,15 +1171,15 @@ function buildWindowsToolsHtml(data, isPageView = true) {
     ? `
     <div class="windows-summary-strip">
       <div class="windows-summary-metrics">
-        <span>Inspectable Windows space: <strong>${escapeHtml(formatBytes(totalKnownBytes))}</strong></span>
+        <span>${LH("Inspectable Windows space:")} <strong>${escapeHtml(formatBytes(totalKnownBytes))}</strong></span>
         <span class="risk-quiet-sep">|</span>
-        <span>Recycle Bin: <strong>${escapeHtml(rb.size_human || "0 B")}</strong></span>
+        <span>${LH("Recycle Bin:")} <strong>${escapeHtml(rb.size_human || "0 B")}</strong></span>
         <span class="risk-quiet-sep">|</span>
-        <span>Old Downloads: <strong>${escapeHtml(oldInst.total_human || "0 B")}</strong></span>
+        <span>${LH("Old Downloads:")} <strong>${escapeHtml(oldInst.total_human || "0 B")}</strong></span>
         <span class="risk-quiet-sep">|</span>
-        <span>Virtual Disks: <strong>${escapeHtml(vhdx.total_human || "0 B")}</strong></span>
+        <span>${LH("Virtual Disks:")} <strong>${escapeHtml(vhdx.total_human || "0 B")}</strong></span>
       </div>
-      <span class="badge ${data.is_admin ? "badge-good" : "badge-warn"}">${data.is_admin ? "Administrator Active" : "Admin Needed for DISM"}</span>
+      <span class="badge ${data.is_admin ? "badge-good" : "badge-warn"}">${data.is_admin ? LH("Administrator Active") : LH("Admin Needed for DISM")}</span>
     </div>`
     : "";
 
@@ -1169,17 +1189,17 @@ function buildWindowsToolsHtml(data, isPageView = true) {
       <div class="${isPageView ? "tool-card" : "settings-section"}">
         <div class="tool-card-header">
           <div>
-            <h4 class="tool-card-title">Windows Recycle Bin</h4>
-            <p class="tool-card-desc">Inspect or permanently clear trashed files across all attached drives.</p>
+            <h4 class="tool-card-title">${LH("Windows Recycle Bin")}</h4>
+            <p class="tool-card-desc">${LH("Inspect or permanently clear trashed files across all attached drives.")}</p>
           </div>
           <div style="display:flex;gap:8px;flex-shrink:0;">
-            <button id="btn-sys-open-rb" class="btn btn-soft btn-xs">Open Recycle Bin</button>
-            <button id="btn-sys-empty-rb" class="btn btn-danger btn-xs" ${rbEmpty ? "disabled" : ""}>Empty Recycle Bin</button>
+            <button id="btn-sys-open-rb" class="btn btn-soft btn-xs">${LH("Open Recycle Bin")}</button>
+            <button id="btn-sys-empty-rb" class="btn btn-danger btn-xs" ${rbEmpty ? "disabled" : ""}>${LH("Empty Recycle Bin")}</button>
           </div>
         </div>
         <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;">
           <span id="rb-size-label" class="tool-kpi-value">${escapeHtml(rb.size_human || "0 B")}</span>
-          <span class="muted small-text">${Number(rb.item_count || 0).toLocaleString()} items waiting in Recycle Bin</span>
+          <span class="muted small-text">${LH("{count} items waiting in Recycle Bin", { count: Number(rb.item_count || 0).toLocaleString() })}</span>
         </div>
         ${rbDriveChips ? `<div class="tool-drive-chips">${rbDriveChips}</div>` : ""}
         <div id="rb-status-msg" class="muted small-text"></div>
@@ -1188,31 +1208,31 @@ function buildWindowsToolsHtml(data, isPageView = true) {
       <div class="${isPageView ? "tool-card" : "settings-section"}">
         <div class="tool-card-header">
           <div>
-            <h4 class="tool-card-title">Old Installers &amp; Archives in Downloads</h4>
-            <p class="tool-card-desc">Untouched installers older than ${ageDays} days (${escapeHtml(oldInst.total_human || "0 B")} found).</p>
+            <h4 class="tool-card-title">${LH("Old Installers & Archives in Downloads")}</h4>
+            <p class="tool-card-desc">${LH("Untouched installers older than {days} days ({size} found).", { days: ageDays, size: escapeHtml(oldInst.total_human || "0 B") })}</p>
           </div>
-          ${oldInst.count > 0 ? `<button id="btn-sys-queue-all-inst" class="btn btn-primary btn-xs">Queue All (${oldInst.count})</button>` : ""}
+          ${oldInst.count > 0 ? `<button id="btn-sys-queue-all-inst" class="btn btn-primary btn-xs">${LH("Queue All ({count})", { count: oldInst.count })}</button>` : ""}
         </div>
-        <div class="review-list">${instRows || `<div class="tool-empty-note">Clean: no installers or archives older than ${ageDays} days in Downloads.</div>`}</div>
+        <div class="review-list">${instRows || `<div class="tool-empty-note">${LH("Clean: no installers or archives older than {days} days in Downloads.", { days: ageDays })}</div>`}</div>
       </div>
 
       <div class="${isPageView ? "tool-card" : "settings-section"}">
         <div class="tool-card-header">
           <div>
-            <h4 class="tool-card-title">Windows Update Store (WinSxS / DISM)</h4>
-            <p class="tool-card-desc">Analyze or safely remove superseded Windows Update component backups.</p>
+            <h4 class="tool-card-title">${LH("Windows Update Store (WinSxS / DISM)")}</h4>
+            <p class="tool-card-desc">${LH("Analyze or safely remove superseded Windows Update component backups.")}</p>
           </div>
           <div style="display:flex;gap:8px;flex-shrink:0;">
-            <button id="btn-sys-winsxs-analyze" class="btn btn-soft btn-xs">Analyze WinSxS</button>
-            <button id="btn-sys-winsxs-clean" class="btn btn-primary btn-xs">Clean Old Updates</button>
+            <button id="btn-sys-winsxs-analyze" class="btn btn-soft btn-xs">${LH("Analyze WinSxS")}</button>
+            <button id="btn-sys-winsxs-clean" class="btn btn-primary btn-xs">${LH("Clean Old Updates")}</button>
           </div>
         </div>
         <div class="summary-strip" style="padding:8px 11px;">
           <div class="small-text">
-            Previous Windows backup (<code>Windows.old</code>):
-            <strong>${winOld.present ? escapeHtml(winOld.size_human || "0 B") : "Not present (0 B)"}</strong>
+            ${LH("Previous Windows backup ({name}):", { name: "<code>Windows.old</code>" })}
+            <strong>${winOld.present ? escapeHtml(winOld.size_human || "0 B") : LH("Not present (0 B)")}</strong>
           </div>
-          ${winOld.present ? `<div style="display:flex;gap:6px;"><button id="btn-sys-queue-winold" class="btn btn-primary btn-xs" data-path="${escapeHtml(winOld.path)}" data-size="${winOld.size_bytes || 0}" data-human="${escapeHtml(winOld.size_human || "0 B")}">Queue</button><button id="btn-sys-open-winold" class="btn btn-soft btn-xs" data-path="${escapeHtml(winOld.path)}">Reveal</button></div>` : `<span class="badge badge-good">Clean</span>`}
+          ${winOld.present ? `<div style="display:flex;gap:6px;"><button id="btn-sys-queue-winold" class="btn btn-primary btn-xs" data-path="${escapeHtml(winOld.path)}" data-size="${winOld.size_bytes || 0}" data-human="${escapeHtml(winOld.size_human || "0 B")}">${LH("Queue")}</button><button id="btn-sys-open-winold" class="btn btn-soft btn-xs" data-path="${escapeHtml(winOld.path)}">${LH("Reveal")}</button></div>` : `<span class="badge badge-good">${LH("Clean")}</span>`}
         </div>
         <div id="winsxs-output" class="tool-output-box ${state.winsxsAnalysis ? "" : "hidden"}">${winsxsHtml}</div>
       </div>
@@ -1220,19 +1240,19 @@ function buildWindowsToolsHtml(data, isPageView = true) {
       <div class="${isPageView ? "tool-card" : "settings-section"}">
         <div class="tool-card-header">
           <div>
-            <h4 class="tool-card-title">Hibernation &amp; WSL2 / Docker Virtual Disks</h4>
-            <p class="tool-card-desc">Virtual disks grow over time and do not shrink automatically when containers are removed.</p>
+            <h4 class="tool-card-title">${LH("Hibernation & WSL2 / Docker Virtual Disks")}</h4>
+            <p class="tool-card-desc">${LH("Virtual disks grow over time and do not shrink automatically when containers are removed.")}</p>
           </div>
         </div>
         <div class="summary-strip" style="padding:8px 11px;">
           <div class="small-text">
-            Hibernation file (<code>hiberfil.sys</code>):
-            <strong>${hib.present ? escapeHtml(hib.size_human) : "Not active (0 B)"}</strong>
+            ${LH("Hibernation file ({name}):", { name: "<code>hiberfil.sys</code>" })}
+            <strong>${hib.present ? escapeHtml(hib.size_human) : LH("Not active (0 B)")}</strong>
           </div>
-          ${hib.present ? `<button id="btn-sys-hiber-toggle" class="btn btn-primary btn-xs" data-enable="0">Disable Hibernation (Free ${escapeHtml(hib.size_human)})</button>` : `<div style="display:flex;align-items:center;gap:8px;"><span class="badge badge-good">Off</span><button id="btn-sys-hiber-toggle" class="btn btn-soft btn-xs" data-enable="1">Enable Hibernation</button></div>`}
+          ${hib.present ? `<button id="btn-sys-hiber-toggle" class="btn btn-primary btn-xs" data-enable="0">${LH("Disable Hibernation (Free {size})", { size: escapeHtml(hib.size_human) })}</button>` : `<div style="display:flex;align-items:center;gap:8px;"><span class="badge badge-good">${LH("Off")}</span><button id="btn-sys-hiber-toggle" class="btn btn-soft btn-xs" data-enable="1">${LH("Enable Hibernation")}</button></div>`}
         </div>
-        <div class="small-text muted">${vhdx.count} virtual disk${vhdx.count === 1 ? "" : "s"} detected (${escapeHtml(vhdx.total_human || "0 B")} total)</div>
-        <div class="review-list">${vhdxRows || `<div class="tool-empty-note">No WSL2 or Docker .vhdx virtual disks detected.</div>`}</div>
+        <div class="small-text muted">${vhdx.count === 1 ? LH("1 virtual disk detected ({size} total)", { size: escapeHtml(vhdx.total_human || "0 B") }) : LH("{count} virtual disks detected ({size} total)", { count: vhdx.count, size: escapeHtml(vhdx.total_human || "0 B") })}</div>
+        <div class="review-list">${vhdxRows || `<div class="tool-empty-note">${LH("No WSL2 or Docker .vhdx virtual disks detected.")}</div>`}</div>
         <div id="sys-hiber-vhdx-output" class="tool-output-box hidden"></div>
       </div>
     </div>
@@ -1247,7 +1267,7 @@ function bindWindowsToolsEvents(data, { inModal = false } = {}) {
     const rbBtn = document.getElementById("btn-sys-empty-rb");
     const msgEl = document.getElementById("rb-status-msg");
     if (rbBtn) rbBtn.disabled = true;
-    if (msgEl) msgEl.textContent = "Emptying Windows Recycle Bin...";
+    if (msgEl) msgEl.textContent = L("Emptying Windows Recycle Bin...");
     const res = await api().empty_recycle_bin(null);
     if (res.ok) {
       if (res.freed_bytes) recordLifetimeCleanup(res.freed_bytes);
@@ -1255,12 +1275,12 @@ function bindWindowsToolsEvents(data, { inModal = false } = {}) {
       if (typeof res.history_count === "number") updateHeaderCounts(undefined, res.history_count);
       const lbl = document.getElementById("rb-size-label");
       if (lbl) lbl.textContent = "0 B";
-      const summaryMsg = res.already_empty ? "Recycle Bin is already empty." : `Freed ${res.freed_human} from Recycle Bin.`;
+      const summaryMsg = res.already_empty ? L("Recycle Bin is already empty.") : L("Freed {size} from Recycle Bin.", { size: res.freed_human });
       if (msgEl) msgEl.textContent = summaryMsg;
       showToast(summaryMsg, "good");
       state.windowsData = null;
     } else {
-      if (msgEl) msgEl.textContent = res.error || "Could not empty Recycle Bin.";
+      if (msgEl) msgEl.textContent = res.error || L("Could not empty Recycle Bin.");
       if (rbBtn) rbBtn.disabled = false;
     }
   });
@@ -1275,14 +1295,14 @@ function bindWindowsToolsEvents(data, { inModal = false } = {}) {
           size_human: b.dataset.human,
           contents_only: false,
           risk_level: "caution",
-          risk_reason: "Old installer package in Downloads.",
+          risk_reason: L("Old installer package in Downloads."),
           source: "explorer",
         },
         true
       );
-      b.textContent = "Queued";
+      b.textContent = L("Queued");
       b.disabled = true;
-      showToast(`Queued ${b.dataset.name} for cleanup`, "info");
+      showToast(L("Queued {name} for cleanup", { name: b.dataset.name }), "info");
     });
   });
 
@@ -1296,7 +1316,7 @@ function bindWindowsToolsEvents(data, { inModal = false } = {}) {
           size_human: it.size_human,
           contents_only: false,
           risk_level: "caution",
-          risk_reason: `Old installer (${it.age_days} days old) in Downloads.`,
+          risk_reason: L("Old installer ({days} days old) in Downloads.", { days: it.age_days }),
           source: "explorer",
         },
         true
@@ -1314,19 +1334,19 @@ function bindWindowsToolsEvents(data, { inModal = false } = {}) {
     setItemSelected(
       {
         path: btn.dataset.path || "C:\\Windows.old",
-        label: "Windows.old (Previous Windows Backup)",
+        label: L("Windows.old (Previous Windows Backup)"),
         size_bytes: Number(btn.dataset.size || 0),
         size_human: btn.dataset.human || "0 B",
         contents_only: false,
         risk_level: "caution",
-        risk_reason: "Previous Windows version backup. Safe to remove if your current Windows update is working well.",
+        risk_reason: L("Previous Windows version backup. Safe to remove if your current Windows update is working well."),
         source: "explorer",
       },
       true
     );
-    btn.textContent = "Queued";
+    btn.textContent = L("Queued");
     btn.disabled = true;
-    showToast("Queued Windows.old for cleanup", "info");
+    showToast(L("Queued Windows.old for cleanup"), "info");
   });
 
   document.querySelectorAll(".btn-open-vhdx").forEach((b) => {
@@ -1342,10 +1362,10 @@ function bindWindowsToolsEvents(data, { inModal = false } = {}) {
   hibBtn?.addEventListener("click", async () => {
     const enable = hibBtn.dataset.enable === "1";
     if (!data.is_admin) {
-      showToast("Administrator rights required to change Windows hibernation", "warn");
+      showToast(L("Administrator rights required to change Windows hibernation"), "warn");
       if (hibOut) {
         hibOut.classList.remove("hidden");
-        hibOut.textContent = "Restart DriveSweep as Administrator to toggle Windows hibernation.";
+        hibOut.textContent = L("Restart DriveSweep as Administrator to toggle Windows hibernation.");
       }
       return;
     }
@@ -1354,13 +1374,13 @@ function bindWindowsToolsEvents(data, { inModal = false } = {}) {
     hibBtn.textContent = enable ? "Enabling..." : "Disabling...";
     if (hibOut) {
       hibOut.classList.remove("hidden");
-      hibOut.innerHTML = `<span class="muted">Running powercfg /hibernate ${enable ? "on" : "off"}...</span>`;
+      hibOut.innerHTML = `<span class="muted">${enable ? LH("Turning hibernation on...") : LH("Turning hibernation off...")}</span>`;
     }
     try {
       const res = await api().set_hibernation_enabled(enable);
       if (!res.ok) {
-        if (hibOut) hibOut.textContent = res.error || "Could not update hibernation setting.";
-        showToast(res.error || "Hibernation change failed", "danger");
+        if (hibOut) hibOut.textContent = res.error || L("Could not update hibernation setting.");
+        showToast(res.error || L("Hibernation change failed"), "danger");
         hibBtn.disabled = false;
         hibBtn.textContent = prevLabel;
         return;
@@ -1368,7 +1388,7 @@ function bindWindowsToolsEvents(data, { inModal = false } = {}) {
       if (!enable && res.freed_bytes) recordLifetimeCleanup(res.freed_bytes);
       if (res.drives_after) renderDrives(res.drives_after);
       if (typeof res.history_count === "number") updateHeaderCounts(undefined, res.history_count);
-      showToast(res.message || "Updated Windows hibernation", "good");
+      showToast(res.message || L("Updated Windows hibernation"), "good");
       state.windowsData = null;
       if (inModal) {
         await openSystemToolsModal();
@@ -1387,10 +1407,10 @@ function bindWindowsToolsEvents(data, { inModal = false } = {}) {
       const vhdxPath = btn.dataset.path || "";
       const vhdxName = btn.dataset.name || "virtual disk";
       if (!data.is_admin) {
-        showToast("Administrator rights required to compact virtual disks", "warn");
+        showToast(L("Administrator rights required to compact virtual disks"), "warn");
         if (hibOut) {
           hibOut.classList.remove("hidden");
-          hibOut.textContent = "Restart DriveSweep as Administrator to compact virtual disks automatically.";
+          hibOut.textContent = L("Restart DriveSweep as Administrator to compact virtual disks automatically.");
         }
         return;
       }
@@ -1405,24 +1425,24 @@ function bindWindowsToolsEvents(data, { inModal = false } = {}) {
       if (!proceed) return;
       const allShrinkBtns = Array.from(document.querySelectorAll(".btn-compact-vhdx"));
       allShrinkBtns.forEach((b) => (b.disabled = true));
-      btn.textContent = "Shrinking...";
+      btn.textContent = L("Shrinking...");
       if (hibOut) {
         hibOut.classList.remove("hidden");
-        hibOut.innerHTML = `<span class="muted">Stopping WSL/Docker backend and compacting ${escapeHtml(vhdxName)}...</span>`;
+        hibOut.innerHTML = `<span class="muted">${LH("Stopping WSL/Docker backend and compacting {name}...", { name: escapeHtml(vhdxName) })}</span>`;
       }
       try {
         const res = await api().compact_virtual_disk(vhdxPath);
         if (!res.ok) {
-          if (hibOut) hibOut.textContent = res.error || "Virtual disk compaction failed.";
-          showToast(res.error || "Could not shrink virtual disk", "danger");
+          if (hibOut) hibOut.textContent = res.error || L("Virtual disk compaction failed.");
+          showToast(res.error || L("Could not shrink virtual disk"), "danger");
           allShrinkBtns.forEach((b) => (b.disabled = false));
-          btn.textContent = "Shrink Disk";
+          btn.textContent = L("Shrink Disk");
           return;
         }
         if (res.freed_bytes) recordLifetimeCleanup(res.freed_bytes);
         if (res.drives_after) renderDrives(res.drives_after);
         if (typeof res.history_count === "number") updateHeaderCounts(undefined, res.history_count);
-        showToast(res.message || `Compacted ${vhdxName}`, "good");
+        showToast(res.message || L("Compacted {name}", { name: vhdxName }), "good");
         state.windowsData = null;
         if (inModal) {
           await openSystemToolsModal();
@@ -1432,7 +1452,7 @@ function bindWindowsToolsEvents(data, { inModal = false } = {}) {
       } catch (err) {
         if (hibOut) hibOut.textContent = String(err);
         allShrinkBtns.forEach((b) => (b.disabled = false));
-        btn.textContent = "Shrink Disk";
+        btn.textContent = L("Shrink Disk");
       }
     });
   });
@@ -1446,7 +1466,7 @@ function bindWindowsToolsEvents(data, { inModal = false } = {}) {
     analyzeBtn.disabled = true;
     if (cleanBtn) cleanBtn.disabled = true;
     outBox.classList.remove("hidden");
-    outBox.innerHTML = `<div class="muted">Running DISM /AnalyzeComponentStore (usually takes 30 to 90 seconds)...</div>`;
+    outBox.innerHTML = `<div class="muted">${LH("Running DISM /AnalyzeComponentStore (usually takes 30 to 90 seconds)...")}</div>`;
     try {
       const res = await api().analyze_winsxs();
       if (!res.ok) {
@@ -1457,20 +1477,20 @@ function bindWindowsToolsEvents(data, { inModal = false } = {}) {
       outBox.innerHTML = `
         <div class="kpi-mini-grid" style="margin-top:0;">
           <div class="kpi-mini-cell">
-            <div class="kpi-mini-label">Component Store</div>
+            <div class="kpi-mini-label">${LH("Component Store")}</div>
             <div class="kpi-mini-val">${escapeHtml(res.component_store_size || "Unknown")}</div>
           </div>
           <div class="kpi-mini-cell">
-            <div class="kpi-mini-label">Backups &amp; Disabled</div>
+            <div class="kpi-mini-label">${LH("Backups & Disabled")}</div>
             <div class="kpi-mini-val">${escapeHtml(res.backups_and_disabled || "0")}</div>
           </div>
           <div class="kpi-mini-cell">
-            <div class="kpi-mini-label">Reclaimable</div>
+            <div class="kpi-mini-label">${LH("Reclaimable")}</div>
             <div class="kpi-mini-val">${escapeHtml(res.reclaimable_packages || "0")} packages</div>
           </div>
           <div class="kpi-mini-cell">
-            <div class="kpi-mini-label">Cleanup Needed</div>
-            <div class="kpi-mini-val">${res.cleanup_recommended ? `<span class="badge badge-warn">Recommended</span>` : `<span class="badge badge-good">Optimal</span>`}</div>
+            <div class="kpi-mini-label">${LH("Cleanup Needed")}</div>
+            <div class="kpi-mini-val">${res.cleanup_recommended ? `<span class="badge badge-warn">${LH("Recommended")}</span>` : `<span class="badge badge-good">${LH("Optimal")}</span>`}</div>
           </div>
         </div>`;
     } finally {
@@ -1484,14 +1504,14 @@ function bindWindowsToolsEvents(data, { inModal = false } = {}) {
     analyzeBtn && (analyzeBtn.disabled = true);
     cleanBtn.disabled = true;
     outBox.classList.remove("hidden");
-    outBox.innerHTML = `<div class="muted">Running DISM /StartComponentCleanup (keep DriveSweep open until Windows finishes)...</div>`;
+    outBox.innerHTML = `<div class="muted">${LH("Running DISM /StartComponentCleanup (keep DriveSweep open until Windows finishes)...")}</div>`;
     try {
       const res = await api().run_winsxs_cleanup();
       if (res.ok) {
         if (res.drives_after) renderDrives(res.drives_after);
         if (typeof res.history_count === "number") updateHeaderCounts(undefined, res.history_count);
-        outBox.innerHTML = `<div class="accent-good" style="font-weight:600;">WinSxS component cleanup finished cleanly and was recorded in Cleanup Log.</div>`;
-        showToast("WinSxS component cleanup finished", "good");
+        outBox.innerHTML = `<div class="accent-good" style="font-weight:600;">${LH("WinSxS component cleanup finished cleanly and was recorded in Cleanup Log.")}</div>`;
+        showToast(L("WinSxS component cleanup finished"), "good");
       } else {
         outBox.textContent = res.error || "WinSxS cleanup failed.";
       }
@@ -1506,7 +1526,7 @@ function renderWindowsToolsView() {
   const host = document.getElementById("windows-content");
   if (!host) return;
   if (!state.windowsData) {
-    host.innerHTML = `<div class="progress-card"><div class="muted">Inspecting Windows Recycle Bin, Downloads installers, WinSxS, hibernation, and virtual disks...</div></div>`;
+    host.innerHTML = `<div class="progress-card"><div class="muted">${LH("Inspecting Windows Recycle Bin, Downloads installers, WinSxS, hibernation, and virtual disks...")}</div></div>`;
     return;
   }
   host.innerHTML = buildWindowsToolsHtml(state.windowsData, true);
@@ -1517,7 +1537,7 @@ async function loadWindowsToolsView(force = false) {
   const host = document.getElementById("windows-content");
   if (!host) return;
   if (force || !state.windowsData) {
-    host.innerHTML = `<div class="progress-card"><div class="muted">Inspecting Windows Recycle Bin, Downloads installers, WinSxS, hibernation, and virtual disks...</div></div>`;
+    host.innerHTML = `<div class="progress-card"><div class="muted">${LH("Inspecting Windows Recycle Bin, Downloads installers, WinSxS, hibernation, and virtual disks...")}</div></div>`;
   }
   const btn = document.getElementById("btn-windows-refresh");
   if (btn) btn.disabled = true;
@@ -1533,9 +1553,9 @@ async function loadWindowsToolsView(force = false) {
 
 async function openSystemToolsModal() {
   showModal(
-    "Windows Space & System Tools",
-    `<div class="muted">Checking Recycle Bin, old Download installers, hibernation, and virtual disks...</div>`,
-    [{ text: "Close", cls: "btn-primary", onClick: closeModal }]
+    L("Windows Space & System Tools"),
+    `<div class="muted">${LH("Checking Recycle Bin, old Download installers, hibernation, and virtual disks...")}</div>`,
+    [{ text: L("Close"), cls: "btn-primary", onClick: closeModal }]
   );
 
   let data;
@@ -1544,17 +1564,17 @@ async function openSystemToolsModal() {
     state.windowsData = data;
   } catch (err) {
     showModal(
-      "Windows Space & System Tools",
+      L("Windows Space & System Tools"),
       `<div class="warning-box">${escapeHtml(String(err))}</div>`,
-      [{ text: "Close", cls: "btn-primary", onClick: closeModal }]
+      [{ text: L("Close"), cls: "btn-primary", onClick: closeModal }]
     );
     return;
   }
 
   showModal(
-    "Windows Space & System Tools",
+    L("Windows Space & System Tools"),
     buildWindowsToolsHtml(data, false),
-    [{ text: "Close", cls: "btn-primary", onClick: closeModal }]
+    [{ text: L("Close"), cls: "btn-primary", onClick: closeModal }]
   );
   bindWindowsToolsEvents(data, { inModal: true });
 }
@@ -1565,9 +1585,9 @@ async function loadSmartScan() {
   const rescanBtn = document.getElementById("btn-smart-scan");
   if (rescanBtn) {
     rescanBtn.disabled = true;
-    rescanBtn.textContent = "Scanning...";
+    rescanBtn.textContent = L("Scanning...");
   }
-  document.getElementById("smart-count-sub").textContent = "Scanning locations...";
+  document.getElementById("smart-count-sub").textContent = L("Scanning locations...");
   const groupsEl = document.getElementById("smart-groups");
   groupsEl.innerHTML = "";
 
@@ -1586,18 +1606,18 @@ async function loadSmartScan() {
 
     document.getElementById("smart-total-metric").textContent = res.total_human;
     document.getElementById("smart-rec-metric").textContent = res.recommended_human;
-    document.getElementById("smart-count-sub").textContent = `${res.count} cleanup items found`;
+    document.getElementById("smart-count-sub").textContent = L("{count} cleanup items found", { count: res.count });
     document.getElementById("nav-smart-badge").textContent = res.total_human;
 
     renderSmartBreakdown(res.total_human);
     renderSmartGroups();
     updateDriveHealthPill();
   } catch (err) {
-    document.getElementById("smart-count-sub").textContent = `Scan failed: ${String(err)}`;
+    document.getElementById("smart-count-sub").textContent = L("Scan failed: {error}", { error: String(err) });
   } finally {
     if (rescanBtn) {
       rescanBtn.disabled = false;
-      rescanBtn.textContent = "Re-scan";
+      rescanBtn.textContent = L("Re-scan");
     }
   }
 }
@@ -1627,7 +1647,7 @@ function renderSmartBreakdown(totalHuman) {
 
   if (grandTotal <= 0) {
     barEl.innerHTML = "";
-    donutEl.innerHTML = `<span class="muted small-text">No caches to visualize.</span>`;
+    donutEl.innerHTML = `<span class="muted small-text">${LH("No caches to visualize.")}</span>`;
     return;
   }
 
@@ -1636,7 +1656,7 @@ function renderSmartBreakdown(totalHuman) {
     .map(([grp, bytes]) => {
       const pct = Math.max(1.5, (bytes / grandTotal) * 100);
       const color = GROUP_COLORS[grp] || "#64748b";
-      return `<div class="breakdown-seg" data-cat="${escapeHtml(grp)}" style="width:${pct}%;background:${color};" title="${escapeHtml(grp)}: ${formatBytes(bytes)}"></div>`;
+      return `<div class="breakdown-seg" data-cat="${escapeHtml(grp)}" style="width:${pct}%;background:${color};" title="${LH(grp)}: ${formatBytes(bytes)}"></div>`;
     })
     .join("");
 
@@ -1646,12 +1666,13 @@ function renderSmartBreakdown(totalHuman) {
 
   if (hintEl) {
     hintEl.textContent = state.activeCategoryFilter
-      ? `Filtered: ${state.activeCategoryFilter} (click to clear)`
-      : "Click a category to filter";
+      ? L("Filtered: {category} (click to clear)", { category: L(state.activeCategoryFilter) })
+      : L("Click a category to filter");
   }
 
   const donutSegs = sorted.map(([grp, bytes]) => ({
-    label: grp,
+    label: L(grp),
+    rawCategory: grp,
     value: bytes,
     valueLabel: formatBytes(bytes),
     color: GROUP_COLORS[grp] || "#64748b",
@@ -1659,7 +1680,7 @@ function renderSmartBreakdown(totalHuman) {
   donutEl.innerHTML = buildSvgDonut(
     donutSegs,
     totalHuman || formatBytes(grandTotal),
-    "Total Found",
+    L("Total Found"),
     state.activeCategoryFilter,
     true
   );
@@ -1669,12 +1690,21 @@ function renderSmartBreakdown(totalHuman) {
   });
 }
 
+function renderPrivilegeLabels() {
+  const title = document.getElementById("priv-title");
+  const sub = document.getElementById("priv-sub");
+  if (!title || !sub) return;
+  title.textContent = state.isAdmin ? L("Administrator") : L("Standard Mode");
+  title.classList.toggle("accent-good", !!state.isAdmin);
+  sub.textContent = state.isAdmin ? L("Full drive & system temp access") : L("Safe user-level access");
+}
+
 function updateCollapseToggleBtn() {
   const btn = document.getElementById("btn-smart-collapse-toggle");
   if (!btn) return;
   const visibleGroups = Array.from(document.querySelectorAll(".group-card[data-group]")).map((el) => el.dataset.group);
   const allCollapsed = visibleGroups.length > 0 && visibleGroups.every((g) => state.collapsedGroups.has(g));
-  btn.textContent = allCollapsed ? "Expand All" : "Collapse All";
+  btn.textContent = allCollapsed ? L("Expand All") : L("Collapse All");
 }
 
 function renderSmartGroups() {
@@ -1686,12 +1716,13 @@ function renderSmartGroups() {
       (!state.activeCategoryFilter || item.group === state.activeCategoryFilter) &&
       (!filter ||
         item.label.toLowerCase().includes(filter) ||
+        L(item.label).toLowerCase().includes(filter) ||
         item.path.toLowerCase().includes(filter) ||
         item.group.toLowerCase().includes(filter))
   );
 
   if (filtered.length === 0) {
-    container.innerHTML = `<div class="summary-strip">No matching caches found.</div>`;
+    container.innerHTML = `<div class="summary-strip">${LH("No matching caches found.")}</div>`;
     updateCollapseToggleBtn();
     return;
   }
@@ -1718,11 +1749,11 @@ function renderSmartGroups() {
       <div class="group-title-wrap">
         ${ICON_CHEVRON}
         <span class="legend-dot" style="background:${color};"></span>
-        <span>${escapeHtml(groupName)}</span>
+        <span>${LH(groupName)}</span>
         <span class="ver-chip">${items.length}</span>
       </div>
       <div class="group-header-right">
-        <span class="group-selected-chip">${selectedCount}/${items.length} selected</span>
+        <span class="group-selected-chip">${LH("{done}/{total} selected", { done: selectedCount, total: items.length })}</span>
         <span class="size-pill">${formatBytes(groupBytes)}</span>
       </div>
     `;
@@ -1748,19 +1779,19 @@ function renderSmartGroups() {
       row.className = "preset-row";
       row.innerHTML = `
         <div class="row-size-bg" style="width:${pct}%;"></div>
-        <label class="toggle-switch" title="Toggle clean or keep">
+        <label class="toggle-switch" title="${LH("Toggle clean or keep")}">
           <input type="checkbox" ${checked ? "checked" : ""} ${excluded ? "disabled" : ""} />
           <span class="toggle-slider"></span>
         </label>
         <div class="preset-main">
           <div class="preset-title-line">
-            <span class="preset-title">${escapeHtml(item.label)}</span>
+            <span class="preset-title">${LH(item.label)}</span>
             ${renderRiskBadge(item.risk_level || "safe", item.risk_reason || item.safety_note)}
-            ${item.running_app ? `<span class="badge badge-warn">${escapeHtml(item.running_app)} running</span>` : ""}
-            ${excluded ? `<span class="badge badge-info">Always Keep</span>` : ""}
+            ${item.running_app ? `<span class="badge badge-warn">${LH("{app} running", { app: escapeHtml(item.running_app) })}</span>` : ""}
+            ${excluded ? `<span class="badge badge-info">${LH("Always Keep")}</span>` : ""}
           </div>
           <div class="preset-path" title="${escapeHtml(item.path)}">${escapeHtml(item.path)}</div>
-          <div class="preset-note">${escapeHtml(item.safety_note)}</div>
+          <div class="preset-note">${LH(item.safety_note || "")}</div>
         </div>
         <div class="preset-right">
           <div class="row-hover-actions">
@@ -1768,7 +1799,7 @@ function renderSmartGroups() {
             ${item.is_docker_prune ? "" : `<button class="btn btn-soft btn-xs btn-keep-toggle">${excluded ? escapeHtml(tr("allow", "Allow")) : escapeHtml(tr("keep", "Keep"))}</button>`}
             ${item.is_docker_prune ? "" : `<button class="btn btn-soft btn-xs btn-open">${escapeHtml(tr("open_folder", "Open Folder"))}</button>`}
           </div>
-          <span class="muted small-text row-file-count">${item.file_count ? `${item.file_count.toLocaleString()} files` : "-"}</span>
+          <span class="muted small-text row-file-count">${item.file_count ? LH("{count} files", { count: item.file_count.toLocaleString() }) : "-"}</span>
           <span class="size-pill">${escapeHtml(item.size_human)}</span>
         </div>
       `;
@@ -1830,11 +1861,11 @@ async function pollScanStatus() {
   const stats = document.getElementById("scan-stats-text");
   const curPath = document.getElementById("scan-current-path");
 
-  stats.textContent = `${st.files_scanned.toLocaleString()} files | ${st.dirs_scanned.toLocaleString()} folders | ${st.bytes_human} (${st.elapsed_sec}s)`;
+  stats.textContent = L("{files} files | {folders} folders | {size} ({secs}s)", { files: st.files_scanned.toLocaleString(), folders: st.dirs_scanned.toLocaleString(), size: st.bytes_human, secs: st.elapsed_sec });
   curPath.textContent = st.current_path || "";
 
   if (st.status === "scanning") {
-    label.textContent = `Scanning ${st.root_path}...`;
+    label.textContent = L("Scanning {path}...", { path: st.root_path });
     return;
   }
 
@@ -1843,20 +1874,20 @@ async function pollScanStatus() {
   document.getElementById("btn-cancel-scan").classList.add("hidden");
 
   if (st.status === "error") {
-    label.textContent = `Scan error: ${st.error}`;
+    label.textContent = L("Scan error: {error}", { error: st.error });
     return;
   }
 
   document.getElementById("scan-progress").classList.add("hidden");
   document.getElementById("explorer-workspace").classList.remove("hidden");
-  const prefix = st.cached ? "Cached \u00b7 " : "";
+  const prefix = st.cached ? `${L("Cached")} \u00b7 ` : "";
   document.getElementById("explorer-summary-pill").textContent =
-    `${prefix}${st.files_scanned.toLocaleString()} files \u00b7 ${st.bytes_human} \u00b7 ${st.elapsed_sec}s` +
-    (st.skipped_count ? ` \u00b7 ${st.skipped_count} locked skipped` : "");
+    `${prefix}${L("{count} files", { count: st.files_scanned.toLocaleString() })} \u00b7 ${st.bytes_human} \u00b7 ${st.elapsed_sec}s` +
+    (st.skipped_count ? ` \u00b7 ${L("{count} locked skipped", { count: st.skipped_count })}` : "");
   const engineBadge = document.getElementById("scan-engine-badge");
   if (engineBadge) {
     engineBadge.classList.remove("hidden");
-    engineBadge.textContent = st.scan_engine === "ntfs_mft" ? "NTFS MFT" : "Standard Scan";
+    engineBadge.textContent = st.scan_engine === "ntfs_mft" ? "NTFS MFT" : L("Standard Scan");
   }
   document.getElementById("export-menu-wrap")?.classList.remove("hidden");
   document.getElementById("btn-explorer-rescan").classList.remove("hidden");
@@ -1919,7 +1950,7 @@ async function loadTreemap(targetPath) {
 
   const allItems = (data.items || []).filter((it) => Number(it.size_bytes || 0) > 0);
   if (!allItems.length) {
-    canvasEl.innerHTML = `<div class="muted small-text" style="padding:18px;">No sized items in this folder.</div>`;
+    canvasEl.innerHTML = `<div class="muted small-text" style="padding:18px;">${LH("No sized items in this folder.")}</div>`;
     return;
   }
 
@@ -1960,7 +1991,7 @@ async function loadTreemap(targetPath) {
       `;
     }),
     minorBytes > 0
-      ? `<div class="space-seg" style="flex:${Math.max(minorPct, 1.2).toFixed(2)} 1 0%;background:#64748b;opacity:0.55;cursor:default;" title="Other smaller items | ${escapeHtml(formatBytes(minorBytes))}"></div>`
+      ? `<div class="space-seg" style="flex:${Math.max(minorPct, 1.2).toFixed(2)} 1 0%;background:#64748b;opacity:0.55;cursor:default;" title="${LH("Other smaller items")} | ${escapeHtml(formatBytes(minorBytes))}"></div>`
       : "",
   ].join("");
 
@@ -1970,7 +2001,7 @@ async function loadTreemap(targetPath) {
       const drill = item.kind === "dir" && item.has_children;
       const pctNum = Math.min(100, Math.max(0, Number(item.percent || 0)));
       const iconHtml = item.kind === "dir" ? ICON_FOLDER : ICON_FILE;
-      const lockBadge = item.risk_level === "critical" ? `<span class="space-map-lock">System</span>` : "";
+      const lockBadge = item.risk_level === "critical" ? `<span class="space-map-lock">${LH("System")}</span>` : "";
       return `
         <button class="space-map-row" type="button"
           data-kind="${escapeHtml(item.kind)}"
@@ -2000,7 +2031,7 @@ async function loadTreemap(targetPath) {
     ? `<div class="space-map-row is-summary">
          <div class="space-map-label">
            <span class="space-map-dot" style="background:#64748b;"></span>
-           <span class="space-map-name">${rest.length} smaller item${rest.length === 1 ? "" : "s"}</span>
+           <span class="space-map-name">${rest.length === 1 ? LH("1 smaller item") : LH("{count} smaller items", { count: rest.length })}</span>
          </div>
          <div class="space-map-bar-wrap">
            <div class="space-map-bar-fill" style="width:${Math.max(2, restPct)}%;background:#64748b;opacity:0.6;"></div>
@@ -2040,21 +2071,21 @@ async function loadAnalytics() {
 
   document.getElementById("risk-cards-row").innerHTML = `
     <div class="risk-quiet-bar">
-      <div class="risk-quiet-item" title="Windows and program files locked so they cannot be deleted by mistake.">
+      <div class="risk-quiet-item" title="${LH("Windows and program files locked so they cannot be deleted by mistake.")}">
         <span class="risk-dot risk-dot-critical"></span>
         <span>${escapeHtml(tr("risk_sys_title", "System Files (Locked)"))}:</span>
         <strong>${escapeHtml(crit.size_human)}</strong>
-        <span class="muted">(${crit.percent}% &middot; ${crit.file_count.toLocaleString()} locked)</span>
+        <span class="muted">(${crit.percent}% &middot; ${LH("{count} locked", { count: crit.file_count.toLocaleString() })})</span>
       </div>
       <span class="risk-quiet-sep" aria-hidden="true">&middot;</span>
-      <div class="risk-quiet-item" title="Personal, database, app, or project files. DriveSweep asks before cleaning.">
+      <div class="risk-quiet-item" title="${LH("Personal, database, app, or project files. DriveSweep asks before cleaning.")}">
         <span class="risk-dot risk-dot-caution"></span>
         <span>${escapeHtml(tr("risk_imp_title", "Important Files (Review First)"))}:</span>
         <strong>${escapeHtml(caut.size_human)}</strong>
         <span class="muted">(${caut.percent}%)</span>
       </div>
       <span class="risk-quiet-sep" aria-hidden="true">&middot;</span>
-      <div class="risk-quiet-item" title="Regular files and temporary caches you can safely review or remove.">
+      <div class="risk-quiet-item" title="${LH("Regular files and temporary caches you can safely review or remove.")}">
         <span class="risk-dot risk-dot-safe"></span>
         <span>${escapeHtml(tr("risk_std_title", "Standard Files"))}:</span>
         <strong>${escapeHtml(safe.size_human)}</strong>
@@ -2068,7 +2099,7 @@ async function loadAnalytics() {
 
   // Category Donut Chart (click any category to drill down into Find Any File)
   const catSegs = (data.by_category || []).map((c) => ({
-    label: `${c.name} (${c.percent}%)`,
+    label: `${L(c.name)} (${c.percent}%)`,
     rawCategory: c.name,
     value: c.size_bytes,
     valueLabel: c.size_human,
@@ -2122,9 +2153,9 @@ async function loadAnalytics() {
       const w = Math.min(100, (Number(a.size_bytes || 0) / maxAgeBytes) * 100);
       const minAge = ageMinDaysForLabel(a.name);
       return `
-        <div class="bar-row is-clickable" data-min-age="${minAge}" title="Click to browse files in this age bracket">
+        <div class="bar-row is-clickable" data-min-age="${minAge}" title="${LH("Click to browse files in this age bracket")}">
           <div class="bar-row-top">
-            <span><strong>${escapeHtml(a.name)}</strong> <span class="muted">(${a.file_count.toLocaleString()} files)</span></span>
+            <span><strong>${LH(a.name)}</strong> <span class="muted">(${LH("{count} files", { count: a.file_count.toLocaleString() })})</span></span>
             <span><strong>${escapeHtml(a.size_human)}</strong> <span class="muted">(${a.percent}%)</span></span>
           </div>
           <div class="bar-track"><div class="bar-fill" style="width:${w}%;background:${a.color};"></div></div>
@@ -2159,12 +2190,12 @@ async function loadAnalytics() {
   const topFolders = data.top_folders || [];
   const tableEl = document.getElementById("top-folders-table-wrap");
   if (topFolders.length === 0) {
-    tableEl.innerHTML = `<div class="muted small-text">No folders to summarize.</div>`;
+    tableEl.innerHTML = `<div class="muted small-text">${LH("No folders to summarize.")}</div>`;
   } else {
     tableEl.innerHTML = `
       <table class="mini-table">
         <thead>
-          <tr><th>Folder</th><th>Safety</th><th>Files</th><th>Size</th></tr>
+          <tr><th>${LH("Folder")}</th><th>${LH("Safety")}</th><th>${LH("Files")}</th><th>${LH("Size")}</th></tr>
         </thead>
         <tbody>
           ${topFolders
@@ -2222,8 +2253,8 @@ async function loadBrowseFolder() {
     const pct = Math.min(100, (Number(item.size_bytes || 0) / maxBytes) * 100);
 
     const extraBadges = [
-      excluded ? `<span class="badge badge-info">Always Keep</span>` : "",
-      item.is_dev_bloat ? `<span class="badge badge-info">Project Cache</span>` : "",
+      excluded ? `<span class="badge badge-info">${LH("Always Keep")}</span>` : "",
+      item.is_dev_bloat ? `<span class="badge badge-info">${LH("Project Cache")}</span>` : "",
     ]
       .filter(Boolean)
       .join(" ");
@@ -2254,7 +2285,7 @@ async function loadBrowseFolder() {
       <td class="col-actions">
         <div class="row-actions">
           ${item.is_protected ? "" : `<button class="btn btn-soft btn-xs btn-keep-toggle">${excluded ? "Allow" : "Keep"}</button>`}
-          <button class="btn btn-soft btn-xs btn-open">Open Folder</button>
+          <button class="btn btn-soft btn-xs btn-open">${LH("Open Folder")}</button>
         </div>
       </td>
     `;
@@ -2306,7 +2337,7 @@ async function loadAllFiles() {
   const a = state.allFilesState;
   const res = await api().search_all_files(a.query, a.minMb, a.minAgeDays, a.ext, a.sort, a.offset, a.limit, a.category || "");
   document.getElementById("allfiles-meta").textContent =
-    `${res.total_matches.toLocaleString()} files matched (${res.total_matched_human})`;
+    L("{count} files matched ({size})", { count: res.total_matches.toLocaleString(), size: res.total_matched_human });
 
   renderFileRows(document.getElementById("allfiles-tbody"), res.items || []);
   renderPager("allfiles-pager", res.total_matches, a.offset, a.limit, (newOffset) => {
@@ -2323,8 +2354,8 @@ async function loadLargeSpaces(force = false) {
     renderLargeSpacesTable();
     return;
   }
-  metaEl.textContent = "Scanning Downloads, user spaces, and all drives...";
-  tbody.innerHTML = `<tr><td colspan="7" class="muted" style="text-align:center;padding:28px;">Scanning large files and folders...</td></tr>`;
+  metaEl.textContent = L("Scanning Downloads, user spaces, and all drives...");
+  tbody.innerHTML = `<tr><td colspan="7" class="muted" style="text-align:center;padding:28px;">${LH("Scanning large files and folders...")}</td></tr>`;
   try {
     const res = await api().scan_large_spaces(25.0, 100.0);
     state.largeData = res || { files: [], folders: [], spaces: [] };
@@ -2332,7 +2363,7 @@ async function loadLargeSpaces(force = false) {
     renderLargeSpacesTable();
   } catch (err) {
     state.largeData = { files: [], folders: [], spaces: [] };
-    metaEl.textContent = "Could not complete large item scan.";
+    metaEl.textContent = L("Could not complete large item scan.");
     tbody.innerHTML = `<tr><td colspan="7" class="muted" style="text-align:center;padding:28px;">${escapeHtml(err?.message || String(err))}</td></tr>`;
   }
 }
@@ -2341,7 +2372,7 @@ function populateLargeSpacesDropdown(spaces) {
   const sel = document.getElementById("large-space-filter");
   if (!sel) return;
   const prev = sel.value || "";
-  sel.innerHTML = `<option value="">All Spaces &amp; Drives</option>`;
+  sel.innerHTML = `<option value="">${LH("All Spaces & Drives")}</option>`;
   for (const sp of spaces || []) {
     const opt = document.createElement("option");
     opt.value = sp;
@@ -2376,12 +2407,14 @@ function renderLargeSpacesTable() {
   });
 
   const totalBytes = filtered.reduce((acc, it) => acc + Number(it.size_bytes || 0), 0);
-  const kindLabel = isFolders ? "large folder" : "large file";
-  metaEl.textContent = `${filtered.length} ${kindLabel}${filtered.length === 1 ? "" : "s"} (${formatBytes(totalBytes)}) | Nothing auto-selected`;
+  const countLabel = isFolders
+    ? (filtered.length === 1 ? L("1 large folder") : L("{count} large folders", { count: filtered.length }))
+    : (filtered.length === 1 ? L("1 large file") : L("{count} large files", { count: filtered.length }));
+  metaEl.textContent = `${countLabel} (${formatBytes(totalBytes)}) | ${L("Nothing auto-selected")}`;
 
   tbody.innerHTML = "";
   if (filtered.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="7" class="muted" style="text-align:center;padding:28px;">No matching ${isFolders ? "folders" : "files"} above ${minMb} MB. Try lowering the size filter or rescanning.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="muted" style="text-align:center;padding:28px;">${isFolders ? LH("No matching folders above {mb} MB. Try lowering the size filter or rescanning.", { mb: minMb }) : LH("No matching files above {mb} MB. Try lowering the size filter or rescanning.", { mb: minMb })}</td></tr>`;
     return;
   }
 
@@ -2392,7 +2425,7 @@ function renderLargeSpacesTable() {
     const disabled = !!item.is_protected || excluded;
     const checked = !disabled && isItemSelected(item.path, false);
     const pct = Math.min(100, (Number(item.size_bytes || 0) / maxBytes) * 100);
-    const fileCountHint = isFolders && item.file_count ? ` | ${Number(item.file_count).toLocaleString()} files` : "";
+    const fileCountHint = isFolders && item.file_count ? ` | ${L("{count} files", { count: Number(item.file_count).toLocaleString() })}` : "";
 
     tr.innerHTML = `
       <td class="col-check">
@@ -2402,7 +2435,7 @@ function renderLargeSpacesTable() {
         <div class="item-name-line">
           ${isFolders ? ICON_FOLDER : ICON_FILE}
           <strong>${escapeHtml(item.name)}</strong>
-          ${excluded ? `<span class="badge badge-info">Always Keep</span>` : ""}
+          ${excluded ? `<span class="badge badge-info">${LH("Always Keep")}</span>` : ""}
         </div>
         ${item.risk_reason ? `<div class="item-human-hint">${escapeHtml(item.risk_reason)}</div>` : ""}
         <div class="item-subpath" title="${escapeHtml(item.path)}">${escapeHtml(item.path)}${escapeHtml(fileCountHint)}</div>
@@ -2415,7 +2448,7 @@ function renderLargeSpacesTable() {
       <td class="col-actions">
         <div class="row-actions">
           ${item.is_protected ? "" : `<button class="btn btn-soft btn-xs btn-keep-toggle">${excluded ? "Allow" : "Keep"}</button>`}
-          <button class="btn btn-soft btn-xs btn-open">Open Folder</button>
+          <button class="btn btn-soft btn-xs btn-open">${LH("Open Folder")}</button>
         </div>
       </td>
     `;
@@ -2453,7 +2486,7 @@ async function loadLargestFiles() {
   const metaEl = document.getElementById("largest-meta");
   if (metaEl) {
     const totalBytes = list.reduce((acc, it) => acc + Number(it.size_bytes || 0), 0);
-    metaEl.textContent = `${list.length} largest ${isFolders ? "folders" : "files"} (${formatBytes(totalBytes)})`;
+    metaEl.textContent = `${isFolders ? L("{count} largest folders", { count: list.length }) : L("{count} largest files", { count: list.length })} (${formatBytes(totalBytes)})`;
   }
   const tbody = document.getElementById("largest-tbody");
   if (!tbody) return;
@@ -2473,7 +2506,7 @@ function renderExplorerFolderRows(tbody, items) {
     const disabled = item.is_protected || excluded;
     const checked = !disabled && isItemSelected(item.path, false);
     const pct = Math.min(100, (Number(item.size_bytes || 0) / maxBytes) * 100);
-    const fileCountHint = item.file_count ? ` | ${Number(item.file_count).toLocaleString()} files` : "";
+    const fileCountHint = item.file_count ? ` | ${L("{count} files", { count: Number(item.file_count).toLocaleString() })}` : "";
 
     tr.innerHTML = `
       <td class="col-check">
@@ -2483,7 +2516,7 @@ function renderExplorerFolderRows(tbody, items) {
         <div class="item-name-line">
           ${ICON_FOLDER}
           <strong>${escapeHtml(item.name)}</strong>
-          ${excluded ? `<span class="badge badge-info">Always Keep</span>` : ""}
+          ${excluded ? `<span class="badge badge-info">${LH("Always Keep")}</span>` : ""}
         </div>
         ${item.risk_reason ? `<div class="item-human-hint">${escapeHtml(item.risk_reason)}</div>` : ""}
         <div class="item-subpath">${escapeHtml(item.path)}${escapeHtml(fileCountHint)}</div>
@@ -2495,7 +2528,7 @@ function renderExplorerFolderRows(tbody, items) {
       <td class="col-actions">
         <div class="row-actions">
           ${item.is_protected ? "" : `<button class="btn btn-soft btn-xs btn-keep-toggle">${excluded ? "Allow" : "Keep"}</button>`}
-          <button class="btn btn-soft btn-xs btn-open">Open Folder</button>
+          <button class="btn btn-soft btn-xs btn-open">${LH("Open Folder")}</button>
         </div>
       </td>
     `;
@@ -2537,7 +2570,7 @@ function renderDevArtifacts() {
   });
   const totalBytes = items.reduce((acc, i) => acc + Number(i.size_bytes || 0), 0);
   document.getElementById("devbloat-meta").textContent =
-    `${items.length} project cache folder(s) | ${formatBytes(totalBytes)}`;
+    L("{count} project cache folder(s) | {size}", { count: items.length, size: formatBytes(totalBytes) });
 
   const maxBytes = Math.max(1, ...items.map((it) => Number(it.size_bytes || 0)));
   const tbody = document.getElementById("devbloat-tbody");
@@ -2559,7 +2592,7 @@ function renderDevArtifacts() {
           ${ICON_FOLDER}
           <strong>${escapeHtml(item.name)}</strong>
           <span class="muted">in ${escapeHtml(item.parent_name)}</span>
-          ${excluded ? `<span class="badge badge-info">Always Keep</span>` : ""}
+          ${excluded ? `<span class="badge badge-info">${LH("Always Keep")}</span>` : ""}
         </div>
         ${item.risk_reason ? `<div class="item-human-hint">${escapeHtml(item.risk_reason)}</div>` : ""}
         <div class="item-subpath">${escapeHtml(item.path)}</div>
@@ -2572,7 +2605,7 @@ function renderDevArtifacts() {
       <td class="col-actions">
         <div class="row-actions">
           <button class="btn btn-soft btn-xs btn-keep-toggle">${excluded ? "Allow" : "Keep"}</button>
-          <button class="btn btn-soft btn-xs btn-open">Open Folder</button>
+          <button class="btn btn-soft btn-xs btn-open">${LH("Open Folder")}</button>
         </div>
       </td>
     `;
@@ -2627,7 +2660,7 @@ function selectInactiveDevArtifacts(minAgeDays = 30) {
   }
   renderDevArtifacts();
   showToast(
-    added > 0 ? `Selected ${added} inactive project cache${added === 1 ? "" : "s"} (> ${minAgeDays}d)` : `No inactive caches older than ${minAgeDays} days found`,
+    added > 0 ? L("Selected {count} inactive project cache(s) (older than {days} days)", { count: added, days: minAgeDays }) : L("No inactive caches older than {days} days found", { days: minAgeDays }),
     added > 0 ? "good" : "info"
   );
 }
@@ -2651,7 +2684,7 @@ function renderFileRows(tbody, items) {
         <div class="item-name-line">
           ${ICON_FILE}
           <strong>${escapeHtml(item.name)}</strong>
-          ${excluded ? `<span class="badge badge-info">Always Keep</span>` : ""}
+          ${excluded ? `<span class="badge badge-info">${LH("Always Keep")}</span>` : ""}
         </div>
         ${item.risk_reason ? `<div class="item-human-hint">${escapeHtml(item.risk_reason)}</div>` : ""}
         <div class="item-subpath">${escapeHtml(item.dir_path || item.path)}</div>
@@ -2663,7 +2696,7 @@ function renderFileRows(tbody, items) {
       <td class="col-actions">
         <div class="row-actions">
           ${item.is_protected ? "" : `<button class="btn btn-soft btn-xs btn-keep-toggle">${excluded ? "Allow" : "Keep"}</button>`}
-          <button class="btn btn-soft btn-xs btn-open">Open Folder</button>
+          <button class="btn btn-soft btn-xs btn-open">${LH("Open Folder")}</button>
         </div>
       </td>
     `;
@@ -2697,16 +2730,16 @@ function renderFileRows(tbody, items) {
 function renderPager(elId, total, offset, limit, onPage) {
   const el = document.getElementById(elId);
   if (total <= limit) {
-    el.innerHTML = `<span>Showing ${total} item${total === 1 ? "" : "s"}</span><span></span>`;
+    el.innerHTML = `<span>${total === 1 ? LH("Showing 1 item") : LH("Showing {count} items", { count: total })}</span><span></span>`;
     return;
   }
   const start = offset + 1;
   const end = Math.min(total, offset + limit);
   el.innerHTML = `
-    <span>Showing ${start.toLocaleString()} to ${end.toLocaleString()} of ${total.toLocaleString()}</span>
+    <span>${LH("Showing {start} to {end} of {total}", { start: start.toLocaleString(), end: end.toLocaleString(), total: total.toLocaleString() })}</span>
     <div style="display:flex;gap:8px;">
-      <button class="btn btn-soft btn-sm btn-prev" ${offset === 0 ? "disabled" : ""}>Prev</button>
-      <button class="btn btn-soft btn-sm btn-next" ${end >= total ? "disabled" : ""}>Next</button>
+      <button class="btn btn-soft btn-sm btn-prev" ${offset === 0 ? "disabled" : ""}>${LH("Prev")}</button>
+      <button class="btn btn-soft btn-sm btn-next" ${end >= total ? "disabled" : ""}>${LH("Next")}</button>
     </div>
   `;
   const prev = el.querySelector(".btn-prev");
@@ -2758,22 +2791,22 @@ function openReviewModal() {
       <div class="review-row">
         <div style="min-width:0;flex:1;">
           <div style="display:flex;gap:8px;align-items:center;">
-            <strong>${escapeHtml(it.label)}</strong>
+            <strong>${LH(it.label)}</strong>
             ${renderRiskBadge(it.risk_level || "safe", it.risk_reason)}
           </div>
           ${it.risk_reason ? `<div class="item-human-hint">${escapeHtml(it.risk_reason)}</div>` : ""}
           <div class="item-subpath">${escapeHtml(it.path)}</div>
         </div>
         <span class="size-pill">${escapeHtml(it.size_human || formatBytes(it.size_bytes))}</span>
-        <button class="btn btn-soft btn-sm btn-keep" data-key="${escapeHtml(it.key)}">Keep</button>
+        <button class="btn btn-soft btn-sm btn-keep" data-key="${escapeHtml(it.key)}">${LH("Keep")}</button>
       </div>`
     )
     .join("");
 
   showModal(
-    `Selected for Cleanup (${items.length})`,
-    `<div class="review-list">${rowsHtml || "<p class='muted'>No items selected.</p>"}</div>`,
-    [{ text: "Done", cls: "btn-primary", onClick: closeModal }]
+    L("Selected for Cleanup ({count})", { count: items.length }),
+    `<div class="review-list">${rowsHtml || `<p class='muted'>${LH("No items selected.")}</p>`}</div>`,
+    [{ text: L("Done"), cls: "btn-primary", onClick: closeModal }]
   );
 
   document.querySelectorAll(".btn-keep").forEach((btn) => {
@@ -2824,7 +2857,7 @@ function openConfirmCleanModal() {
   const isDangerous = isPerm || cautionItems.length > 0 || hasWindowsOld;
 
   const warningHtml = isPerm
-    ? `<div class="warning-box"><strong>Permission Required (Permanent Delete):</strong> Selected items will bypass the Recycle Bin and cannot be recovered.</div>`
+    ? `<div class="warning-box"><strong>${LH("Permission Required (Permanent Delete):")}</strong> ${LH("Selected items will bypass the Recycle Bin and cannot be recovered.")}</div>`
     : `<div class="summary-strip">${escapeHtml(tr("recycle_note"))}</div>`;
 
   const winOldItem = items.find((it) => /(^|[\\/])windows\.old[\\/]?$/i.test(String(it.path || "")));
@@ -2833,20 +2866,20 @@ function openConfirmCleanModal() {
     : "";
 
   const cautionHtml = cautionItems.length
-    ? `<div class="caution-box"><strong>Caution Items Flagged (${cautionItems.length}):</strong> You selected personal, active project, or sensitive files. Please verify you intend to remove them.</div>`
+    ? `<div class="caution-box"><strong>${LH("Caution Items Flagged ({count}):", { count: cautionItems.length })}</strong> ${LH("You selected personal, active project, or sensitive files. Please verify you intend to remove them.")}</div>`
     : "";
 
   const ackHtml = isDangerous
-    ? `<label class="ack-box"><input id="danger-ack" type="checkbox" /><span>I give permission to proceed with this ${isPerm ? "permanent deletion" : "caution cleanup"}.</span></label>`
+    ? `<label class="ack-box"><input id="danger-ack" type="checkbox" /><span>${isPerm ? LH("I give permission to proceed with this permanent deletion.") : LH("I give permission to proceed with this caution cleanup.")}</span></label>`
     : "";
 
   showModal(
-    isDangerous ? "Permission Required: Confirm Cleanup" : "Confirm Move to Recycle Bin",
+    isDangerous ? L("Permission Required: Confirm Cleanup") : L("Confirm Move to Recycle Bin"),
     `
       ${warningHtml}
       ${winOldHtml}
       ${cautionHtml}
-      <p>Ready to clean <strong>${items.length}</strong> selected item(s) totaling <strong>${formatBytes(totalBytes)}</strong>.</p>
+      <p>${LH("Ready to clean {count} selected item(s) totaling {size}.", { count: `<strong>${items.length}</strong>`, size: `<strong>${formatBytes(totalBytes)}</strong>` })}</p>
       <div class="review-list">
         ${items
           .slice(0, 40)
@@ -2855,7 +2888,7 @@ function openConfirmCleanModal() {
           <div class="review-row">
             <div style="min-width:0;flex:1;">
               <div style="display:flex;gap:8px;align-items:center;">
-                <strong>${escapeHtml(it.label)}</strong>
+                <strong>${LH(it.label)}</strong>
                 ${renderRiskBadge(it.risk_level || "safe", it.risk_reason)}
               </div>
               <div class="item-subpath">${escapeHtml(it.path)}</div>
@@ -2865,15 +2898,15 @@ function openConfirmCleanModal() {
           </div>`
           )
           .join("")}
-        ${items.length > 40 ? `<div class="muted small-text">...and ${items.length - 40} more item(s).</div>` : ""}
+        ${items.length > 40 ? `<div class="muted small-text">${LH("...and {count} more item(s).", { count: items.length - 40 })}</div>` : ""}
       </div>
       ${ackHtml}
     `,
     [
-      { text: "Cancel", cls: "btn-soft", onClick: closeModal },
+      { text: L("Cancel"), cls: "btn-soft", onClick: closeModal },
       {
         id: "btn-confirm-execute",
-        text: isPerm ? "Permanently Delete" : "Move to Recycle Bin",
+        text: isPerm ? L("Permanently Delete") : L("Move to Recycle Bin"),
         cls: isPerm ? "btn-danger" : "btn-primary",
         disabled: isDangerous,
         onClick: () => runCleanup(items, mode),
@@ -2898,31 +2931,31 @@ async function runCleanup(items, mode) {
     const pct = Math.min(100, Math.max(4, Math.round((done / Math.max(1, total)) * 100)));
     return `
       <div class="summary-strip" style="margin-bottom:12px;">
-        <div>Progress: <strong id="cleanup-prog-count">${done} / ${total}</strong></div>
-        <div>Reclaimed so far: <strong id="cleanup-prog-freed" class="accent-good">${escapeHtml(freedHuman || "0 B")}</strong></div>
+        <div>${LH("Progress:")} <strong id="cleanup-prog-count">${done} / ${total}</strong></div>
+        <div>${LH("Reclaimed so far:")} <strong id="cleanup-prog-freed" class="accent-good">${escapeHtml(freedHuman || "0 B")}</strong></div>
       </div>
       <div class="progress-track" style="margin-bottom:10px;">
         <div id="cleanup-prog-fill" class="progress-fill" style="width:${pct}%;transition:width 0.15s ease;"></div>
       </div>
       <div id="cleanup-prog-path" class="preset-path" title="${escapeHtml(currentPath || "")}">
-        ${escapeHtml(currentPath || "Preparing cleanup...")}
+        ${currentPath ? escapeHtml(currentPath) : LH("Preparing cleanup...")}
       </div>
     `;
   };
 
   showModal(
-    "Cleaning Selected Items...",
+    L("Cleaning Selected Items..."),
     renderProgressBody(0, totalCount, items[0]?.path || "", "0 B"),
     [
       {
         id: "btn-cancel-cleanup",
-        text: "Cancel Remaining",
+        text: L("Cancel Remaining"),
         cls: "btn-soft",
         onClick: async () => {
           const cancelBtn = document.getElementById("btn-cancel-cleanup");
           if (cancelBtn) {
             cancelBtn.disabled = true;
-            cancelBtn.textContent = "Stopping...";
+            cancelBtn.textContent = L("Stopping...");
           }
           await api().cancel_cleanup();
         },
@@ -2954,7 +2987,7 @@ async function runCleanup(items, mode) {
         continue;
       }
       if (st.status === "error") {
-        throw new Error(st.error || "Cleanup failed.");
+        throw new Error(st.error || L("Cleanup failed."));
       }
       res = st.result;
       break;
@@ -2962,9 +2995,9 @@ async function runCleanup(items, mode) {
   } catch (err) {
     state.isCleaning = false;
     showModal(
-      "Cleanup Failed",
+      L("Cleanup Failed"),
       `<div class="warning-box">${escapeHtml(String(err))}</div>`,
-      [{ text: "Close", cls: "btn-primary", onClick: closeModal }]
+      [{ text: L("Close"), cls: "btn-primary", onClick: closeModal }]
     );
     return;
   } finally {
@@ -2987,30 +3020,30 @@ async function runCleanup(items, mode) {
 
   const failedHtml = (res.failed || []).length
     ? `<div class="warning-box" style="margin-top:12px;">
-         <strong>Skipped / Locked (${res.failed.length}):</strong>
+         <strong>${LH("Skipped / Locked ({count}):", { count: res.failed.length })}</strong>
          <ul>${res.failed.slice(0, 15).map((f) => `<li><code>${escapeHtml(f.path)}</code>: ${escapeHtml(f.error)}</li>`).join("")}</ul>
        </div>`
     : "";
 
   const dockerHtml = res.docker_result
-    ? `<p class="small-text"><strong>Docker Prune:</strong> ${escapeHtml(res.docker_result.message)}</p>`
+    ? `<p class="small-text"><strong>${LH("Docker Prune:")}</strong> ${escapeHtml(res.docker_result.message)}</p>`
     : "";
 
-  const title = res.cancelled ? "Cleanup Stopped (Partial)" : "Cleanup Complete";
+  const title = res.cancelled ? L("Cleanup Stopped (Partial)") : L("Cleanup Complete");
   showModal(
     title,
     `
       <div class="summary-strip">
-        <div>Reclaimed: <strong class="accent-good">${escapeHtml(res.freed_human)}</strong></div>
-        <div>Items cleaned: <strong>${res.deleted_count}</strong></div>
-        <div>Mode: <strong>${res.mode === "permanent" ? "Permanent Delete" : "Recycle Bin"}</strong></div>
+        <div>${LH("Reclaimed:")} <strong class="accent-good">${escapeHtml(res.freed_human)}</strong></div>
+        <div>${LH("Items cleaned:")} <strong>${res.deleted_count}</strong></div>
+        <div>${LH("Mode:")} <strong>${res.mode === "permanent" ? LH("Permanent Delete") : LH("Recycle Bin")}</strong></div>
       </div>
       ${dockerHtml}
       ${failedHtml}
     `,
     [
       {
-        text: "Done",
+        text: L("Done"),
         cls: "btn-primary",
         onClick: async () => {
           closeModal();
@@ -3041,7 +3074,7 @@ async function handleRefreshDrives() {
   btn.disabled = true;
   btn.classList.remove("is-done", "is-error");
   btn.classList.add("is-busy");
-  btn.textContent = "Refreshing...";
+  btn.textContent = L("Refreshing...");
 
   try {
     const [drives] = await Promise.all([
@@ -3051,16 +3084,16 @@ async function handleRefreshDrives() {
     renderDrives(drives, true);
     btn.classList.remove("is-busy");
     btn.classList.add("is-done");
-    btn.textContent = "Updated";
+    btn.textContent = L("Updated");
   } catch (_err) {
     btn.classList.remove("is-busy");
     btn.classList.add("is-error");
-    btn.textContent = "Failed";
+    btn.textContent = L("Failed");
   } finally {
     btn.disabled = false;
     refreshResetTimer = setTimeout(() => {
       btn.classList.remove("is-busy", "is-done", "is-error");
-      btn.textContent = "Refresh";
+      btn.textContent = L("Refresh");
       refreshResetTimer = null;
     }, 1600);
   }
@@ -3087,12 +3120,12 @@ function bindEvents() {
     radio.addEventListener("change", () => {
       if (radio.value === "permanent" && radio.checked) {
         showModal(
-          "Permission Required: Permanent Delete Mode",
-          `<div class="warning-box"><strong>Warning:</strong> In Permanent Delete mode, cleaned files bypass the Recycle Bin and cannot be restored.</div>
-           <p>Do you want to switch to Permanent Delete mode?</p>`,
+          L("Permission Required: Permanent Delete Mode"),
+          `<div class="warning-box"><strong>${LH("Warning:")}</strong> ${LH("In Permanent Delete mode, cleaned files bypass the Recycle Bin and cannot be restored.")}</div>
+           <p>${LH("Do you want to switch to Permanent Delete mode?")}</p>`,
           [
             {
-              text: "Keep Safe Recycle Bin",
+              text: L("Keep Safe Recycle Bin"),
               cls: "btn-soft",
               onClick: () => {
                 setDeleteMode("recycle");
@@ -3100,7 +3133,7 @@ function bindEvents() {
               },
             },
             {
-              text: "Allow Permanent Delete",
+              text: L("Allow Permanent Delete"),
               cls: "btn-danger",
               onClick: closeModal,
             },
@@ -3117,19 +3150,19 @@ function bindEvents() {
 
   document.getElementById("btn-elevate").addEventListener("click", () => {
     showModal(
-      "Permission Required: Restart as Administrator",
-      `<div class="caution-box">Windows UAC will prompt to relaunch DriveSweep with Administrator privileges so it can clean protected system temp folders.</div>`,
+      L("Permission Required: Restart as Administrator"),
+      `<div class="caution-box">${LH("Windows UAC will prompt to relaunch DriveSweep with Administrator privileges so it can clean protected system temp folders.")}</div>`,
       [
-        { text: "Cancel", cls: "btn-soft", onClick: closeModal },
+        { text: L("Cancel"), cls: "btn-soft", onClick: closeModal },
         {
-          text: "Continue & Relaunch",
+          text: L("Continue & Relaunch"),
           cls: "btn-primary",
           onClick: async () => {
             closeModal();
             const res = await api().relaunch_as_admin();
             if (!res.ok) {
-              showModal("Elevation Failed", `<p>${escapeHtml(res.error || "Could not elevate.")}</p>`, [
-                { text: "Close", cls: "btn-primary", onClick: closeModal },
+              showModal(L("Elevation Failed"), `<p>${escapeHtml(res.error || L("Could not elevate."))}</p>`, [
+                { text: L("Close"), cls: "btn-primary", onClick: closeModal },
               ]);
             }
           },
@@ -3141,7 +3174,7 @@ function bindEvents() {
   document.getElementById("btn-smart-scan").addEventListener("click", loadSmartScan);
   document.getElementById("btn-hero-restore-rb")?.addEventListener("click", async () => {
     await api().open_recycle_bin();
-    showToast("Opened Windows Recycle Bin to review or restore items", "info");
+    showToast(L("Opened Windows Recycle Bin to review or restore items"), "info");
   });
   document.getElementById("smart-filter").addEventListener("input", renderSmartGroups);
   document.getElementById("btn-large-rescan")?.addEventListener("click", () => loadLargeSpaces(true));
@@ -3339,21 +3372,21 @@ async function handleExportReport(fmt) {
   if (res.cancelled) return;
   if (!res.ok) {
     showModal(
-      "Export Failed",
-      `<div class="warning-box">${escapeHtml(res.error || "Could not export report.")}</div>`,
-      [{ text: "Close", cls: "btn-primary", onClick: closeModal }]
+      L("Export Failed"),
+      `<div class="warning-box">${escapeHtml(res.error || L("Could not export report."))}</div>`,
+      [{ text: L("Close"), cls: "btn-primary", onClick: closeModal }]
     );
     return;
   }
   showModal(
-    "Scan Report Exported",
+    L("Scan Report Exported"),
     `<div class="summary-strip" style="margin-bottom:10px;">
-       <div>Exported <strong>${res.folders_exported}</strong> folders and <strong>${res.files_exported}</strong> largest files as <strong>${escapeHtml(res.format.toUpperCase())}</strong>.</div>
+       <div>${LH("Exported {folders} folders and {files} largest files as {format}.", { folders: `<strong>${res.folders_exported}</strong>`, files: `<strong>${res.files_exported}</strong>`, format: `<strong>${escapeHtml(res.format.toUpperCase())}</strong>` })}</div>
      </div>
      <div class="item-subpath">${escapeHtml(res.path)}</div>`,
     [
-      { text: "Reveal File", cls: "btn-soft", onClick: () => api().open_in_explorer(res.path) },
-      { text: "Close", cls: "btn-primary", onClick: closeModal },
+      { text: L("Reveal File"), cls: "btn-soft", onClick: () => api().open_in_explorer(res.path) },
+      { text: L("Close"), cls: "btn-primary", onClick: closeModal },
     ]
   );
 }
@@ -3397,7 +3430,7 @@ async function pollDuplicateStatus() {
   if (st.status === "running") {
     const tot = Math.max(1, Number(st.total || 0));
     const pct = st.total > 0 ? Math.min(100, Math.max(5, Math.round((st.progress / tot) * 100))) : 15;
-    if (lbl) lbl.textContent = st.stage === "hashing" ? "Verifying SHA-256 checksums..." : "Checking matching file sizes...";
+    if (lbl) lbl.textContent = st.stage === "hashing" ? L("Verifying SHA-256 checksums...") : L("Checking matching file sizes...");
     if (statsEl) statsEl.textContent = st.total > 0 ? `${st.progress} / ${st.total}` : "...";
     if (fillEl) fillEl.style.width = `${pct}%`;
     return;
@@ -3444,8 +3477,8 @@ function renderDuplicateResults() {
 
   const res = state.dupResult;
   if (!res || !(res.groups || []).length) {
-    meta.textContent = "No duplicate files found for this size threshold.";
-    container.innerHTML = `<div class="muted small-text" style="padding:14px;">No exact duplicates found.</div>`;
+    meta.textContent = L("No duplicate files found for this size threshold.");
+    container.innerHTML = `<div class="muted small-text" style="padding:14px;">${LH("No exact duplicates found.")}</div>`;
     selAllBtn?.classList.add("hidden");
     return;
   }
@@ -3457,12 +3490,12 @@ function renderDuplicateResults() {
     return (grp.copies || []).some((c) => String(c.path || "").toLowerCase().includes(q));
   });
 
-  meta.textContent = `${visibleGroups.length} duplicate group(s) | ${res.reclaimable_human} reclaimable if extra copies are cleaned`;
+  meta.textContent = L("{count} duplicate group(s) | {size} reclaimable if extra copies are cleaned", { count: visibleGroups.length, size: res.reclaimable_human });
   selAllBtn?.classList.toggle("hidden", visibleGroups.length === 0);
   container.innerHTML = "";
 
   if (visibleGroups.length === 0) {
-    container.innerHTML = `<div class="muted small-text" style="padding:14px;">No duplicate groups match "${escapeHtml(state.dupQuery)}".</div>`;
+    container.innerHTML = `<div class="muted small-text" style="padding:14px;">${LH("No duplicate groups match \"{query}\".", { query: escapeHtml(state.dupQuery) })}</div>`;
     return;
   }
 
@@ -3478,10 +3511,10 @@ function renderDuplicateResults() {
         <div class="group-title-wrap">
           <span class="group-title">${escapeHtml(grp.name)}</span>
           <span class="badge badge-info">${grp.copy_count} copies</span>
-          <span class="badge badge-warn">Hash: ${escapeHtml(grp.sha256_short)}</span>
+          <span class="badge badge-warn">${LH("Hash: {hash}", { hash: escapeHtml(grp.sha256_short) })}</span>
         </div>
         <div class="group-right">
-          <span class="muted small-text">Each ${escapeHtml(grp.size_human)}</span>
+          <span class="muted small-text">${LH("Each {size}", { size: escapeHtml(grp.size_human) })}</span>
           <span class="group-size">${escapeHtml(grp.reclaimable_human)} extra</span>
         </div>
       </div>
@@ -3519,12 +3552,12 @@ function renderDuplicateResults() {
           setItemSelected(
             {
               path: copy.path,
-              label: `Duplicate: ${copy.name}`,
+              label: L("Duplicate: {name}", { name: copy.name }),
               size_bytes: copy.size_bytes,
               size_human: copy.size_human,
               contents_only: false,
               risk_level: copy.risk_level || "caution",
-              risk_reason: copy.risk_reason || "Exact duplicate file.",
+              risk_reason: copy.risk_reason || L("Exact duplicate file."),
               source: "duplicates",
             },
             cb.checked
@@ -3556,12 +3589,12 @@ function selectAllExtraDuplicates() {
       setItemSelected(
         {
           path: copy.path,
-          label: `Duplicate: ${copy.name}`,
+          label: L("Duplicate: {name}", { name: copy.name }),
           size_bytes: copy.size_bytes,
           size_human: copy.size_human,
           contents_only: false,
           risk_level: copy.risk_level || "caution",
-          risk_reason: copy.risk_reason || "Exact duplicate copy.",
+          risk_reason: copy.risk_reason || L("Exact duplicate copy."),
           source: "duplicates",
         },
         true
@@ -3645,11 +3678,8 @@ async function initApp() {
   updateHeaderCounts(info.exclusions || [], info.history_count || 0);
   renderLowDiskBanner();
 
-  if (state.isAdmin) {
-    document.getElementById("priv-title").textContent = "Administrator";
-    document.getElementById("priv-title").classList.add("accent-good");
-    document.getElementById("priv-sub").textContent = "Full drive & system temp access";
-  } else if (state.osName === "Windows") {
+  renderPrivilegeLabels();
+  if (!state.isAdmin && state.osName === "Windows") {
     document.getElementById("btn-elevate").classList.remove("hidden");
   }
 

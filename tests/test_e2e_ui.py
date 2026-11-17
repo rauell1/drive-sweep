@@ -399,6 +399,10 @@ for (const lang of ["en", "es", "fr", "de", "pt"]) {{
   }}
   assert.strictEqual(i18n.setLanguage(lang), lang);
 }}
+// Interface phrases built in app.js are translated too, with English as the fallback
+assert.notStrictEqual(i18n.phrase("Windows Space & System Tools"), "Windows Space & System Tools");
+assert.strictEqual(i18n.phrase("A phrase nobody translated"), "A phrase nobody translated");
+i18n.setLanguage("en");
 
 (async () => {{
   await new Promise((r) => setTimeout(r, 40));
@@ -453,12 +457,12 @@ for (const lang of ["en", "es", "fr", "de", "pt"]) {{
   ]);
   assert.strictEqual(orderedByShortest[0].path, "C:\\\\s.zip");
   await sandbox.openSystemToolsModal();
-  assert(elementMap.get("modal-title").textContent.includes("Windows Space"), "Windows Tools modal failed");
+  assert(elementMap.get("modal-title").textContent.includes(i18n.phrase("Windows Space & System Tools")), "Windows Tools modal failed: " + elementMap.get("modal-title").textContent);
   await sandbox.openUpdatesPrivacyModal(false);
   assert(elementMap.get("modal-title").textContent.length > 0);
   await sandbox.openExclusionsModal();
-  assert(elementMap.get("modal-title").textContent.includes("Always Keep List"));
-  assert(elementMap.get("modal-footer").children.some((b) => String(b.textContent).includes("Add Folder")));
+  assert(elementMap.get("modal-title").textContent.includes(i18n.phrase("Always Keep List ({{count}})").split(" (")[0]));
+  assert(elementMap.get("modal-footer").children.some((b) => String(b.textContent) === i18n.phrase("+ Add Folder...")));
   console.log("UI_HARNESS_OK");
 }})().catch((e) => {{
   console.error(e);
@@ -468,6 +472,6 @@ for (const lang of ["en", "es", "fr", "de", "pt"]) {{
         encoding="utf-8",
     )
 
-    proc = subprocess.run([node_exe, str(runner)], capture_output=True, text=True, timeout=15)
+    proc = subprocess.run([node_exe, str(runner)], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
     assert proc.returncode == 0, f"Node UI harness failed:\n{proc.stdout}\n{proc.stderr}"
     assert "UI_HARNESS_OK" in proc.stdout
