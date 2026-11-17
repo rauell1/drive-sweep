@@ -729,3 +729,46 @@ def test_benchmark_parity_category_search_windows_old_and_lifetime_stats(tmp_pat
     api = DriveSweepAPI()
     info = api.get_app_info()
     assert info["lifetime_stats"]["lifetime_freed_bytes"] == 3500
+
+
+def test_batched_contents_cleanup_live_progress_and_friendly_lock_errors(tmp_path: Path, monkeypatch):
+    import app.safety as safety
+
+    temp_dir = tmp_path / "Temp"
+    temp_dir.mkdir()
+    locked_file = temp_dir / "active.tmp"
+    locked_file.write_bytes(b"L" * 1024)
+    unlocked_files = []
+    for i in range(6):
+        f = temp_dir / f"old_{i}.tmp"
+        f.write_bytes(b"X" * 512)
+        unlocked_files.append(f)
+
+    calls: list[object] = []
+
+    def fake_send2trash(arg):
+        calls.append(arg)
+        if isinstance(arg, list):
+            # Simulate Windows batch failing because one item in the batch is locked
+            raise PermissionError("[WinError 32] The process cannot access the file because it is being used by another process: ['...']")
+        if Path(arg) == locked_file:
+            raise PermissionError("[WinError 32] The process cannot access the file because it is being used by another process: ['...']")
+        Path(arg).unlink()
+
+    monkeypatch.setattr(safety, "send2trash", fake_send2trash)
+    progress_updates: list[tuple[int, int, str, int]] = []
+
+    res = safety.delete_targets(
+        [{"path": str(temp_dir), "contents_only": True}],
+        mode="recycle",
+        progress_cb=lambda done, total, cur, freed: progress_updates.append((done, total, cur, freed)),
+    )
+
+    assert any(isinstance(c, list) for c in calls)
+    assert len(progress_updates) >= 2
+    assert res.freed_bytes == 6 * 512
+    assert not any(f.exists() for f in unlocked_files)
+    assert locked_file.exists()
+    assert len(res.failed) == 1
+    assert "In use by another program" in res.failed[0]["error"]
+    assert "['" not in res.failed[0]["error"]

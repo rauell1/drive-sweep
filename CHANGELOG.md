@@ -6,6 +6,12 @@ When you release, `scripts/bump_version.py` turns the **Unreleased** section int
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-11-17
+
+### Fixed
+- Batched Windows Recycle Bin cleanup for folder contents (`AppData\Local\Temp`, `SoftwareDistribution\Download`, `Logs`) so large temp folders clean much faster with live sub-item progress updates instead of appearing paused.
+- Replaced raw Windows lock error arrays (`WinError 5` / `WinError 32`) with plain-English locked-file notices in a calmer cleanup summary box.
+
 ## [0.7.2] - 2026-11-17
 
 ### Added
@@ -68,7 +74,8 @@ When you release, `scripts/bump_version.py` turns the **Unreleased** section int
 ## 0.2.0 to 0.2.8 - 2026-11-15
 - First public release with Administrator mode and CI (0.2.0), then local only privacy guarantees, a SHA-256 verified updater, wider cache detection and interface polish.
 
-[Unreleased]: https://github.com/rauell1/drive-sweep/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/rauell1/drive-sweep/compare/v0.7.3...HEAD
+[0.7.3]: https://github.com/rauell1/drive-sweep/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/rauell1/drive-sweep/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/rauell1/drive-sweep/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/rauell1/drive-sweep/compare/v0.6.0...v0.7.0

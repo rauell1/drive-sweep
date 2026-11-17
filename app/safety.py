@@ -9,6 +9,7 @@ import stat
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from dataclasses import dataclass
 from functools import lru_cache
@@ -863,6 +864,29 @@ def _recycle_entry(target: Path) -> None:
     send2trash(path_str)
 
 
+def _recycle_batch(targets: list[Path]) -> None:
+    if not targets:
+        return
+    paths = [str(t) for t in targets]
+    if os.name == "nt" and any(len(p) >= 255 for p in paths):
+        raise OSError("Batch contains long path (>= 255 chars)")
+    send2trash(paths)
+
+
+def _friendly_delete_error(exc: Exception) -> str:
+    msg = str(exc or "").strip()
+    lower = msg.lower()
+    if "winerror 32" in lower or "used by another process" in lower or "being used" in lower:
+        return "In use by another program (skipped safely)"
+    if "winerror 5" in lower or "access is denied" in lower or "permissionerror" in lower:
+        return "Locked by Windows or another service (skipped safely)"
+    # Strip trailing send2trash path list like ": ['C:\\...']"
+    idx = msg.find(": ['")
+    if idx != -1:
+        return msg[:idx]
+    return msg or "Locked or inaccessible"
+
+
 def get_entry_size(raw_path: str | Path) -> int:
     """Compute byte size of a file or directory safely (supports long Windows paths)."""
     os_p = to_os_path(raw_path)
@@ -1004,10 +1028,57 @@ def delete_targets(
                 reclaimed = 0
                 with os.scandir(os_target) as it:
                     children = [Path(strip_long_prefix(e.path)) for e in it]
-                for child in children:
+
+                total_children = len(children)
+                last_prog_ts = time.monotonic()
+                safe_batch: list[tuple[Path, int]] = []
+
+                def _flush_individual(chunk: list[tuple[Path, int]]) -> int:
+                    chunk_reclaimed = 0
+                    for ch, ch_size in chunk:
+                        if cancel_event is not None and cancel_event.is_set():
+                            break
+                        try:
+                            delete_fn(ch)
+                            if os.path.lexists(to_os_path(ch)):
+                                chunk_reclaimed += max(0, ch_size - get_entry_size(ch))
+                            else:
+                                chunk_reclaimed += ch_size
+                        except Exception as exc:
+                            child_errors.append(f"{ch.name}: {_friendly_delete_error(exc)}")
+                    return chunk_reclaimed
+
+                def _flush_batch() -> None:
+                    nonlocal reclaimed
+                    if not safe_batch:
+                        return
+                    chunk = list(safe_batch)
+                    safe_batch.clear()
+                    if mode == "recycle" and len(chunk) > 1:
+                        try:
+                            _recycle_batch([ch for ch, _sz in chunk])
+                            for ch, ch_size in chunk:
+                                if os.path.lexists(to_os_path(ch)):
+                                    reclaimed += max(0, ch_size - get_entry_size(ch))
+                                else:
+                                    reclaimed += ch_size
+                            return
+                        except Exception:
+                            pass
+                    reclaimed += _flush_individual(chunk)
+
+                for c_idx, child in enumerate(children):
                     if cancel_event is not None and cancel_event.is_set():
                         cancelled = True
                         break
+                    if progress_cb is not None and (c_idx % 8 == 0 or (time.monotonic() - last_prog_ts) >= 0.15):
+                        last_prog_ts = time.monotonic()
+                        progress_cb(
+                            idx,
+                            total_items,
+                            f"{target} ({c_idx + 1}/{total_children}: {child.name})",
+                            freed_bytes + reclaimed,
+                        )
                     if is_os_protected_path(child, allow_temp_contents=False):
                         child_errors.append(f"Protected child skipped: {child.name}")
                         continue
@@ -1019,13 +1090,17 @@ def delete_targets(
                             _remove_link_only(child)
                             continue
                         child_size = get_entry_size(child)
-                        delete_fn(child)
-                        if os.path.lexists(to_os_path(child)):
-                            reclaimed += max(0, child_size - get_entry_size(child))
+                        if mode == "recycle":
+                            safe_batch.append((child, child_size))
+                            if len(safe_batch) >= 25:
+                                _flush_batch()
                         else:
-                            reclaimed += child_size
+                            reclaimed += _flush_individual([(child, child_size)])
                     except Exception as exc:
-                        child_errors.append(f"{child.name}: {exc}")
+                        child_errors.append(f"{child.name}: {_friendly_delete_error(exc)}")
+
+                if not cancelled:
+                    _flush_batch()
 
                 freed_bytes += reclaimed
                 if reclaimed > 0 or not child_errors:
@@ -1035,9 +1110,13 @@ def delete_targets(
                         "partial": bool(child_errors) or cancelled,
                     })
                 if child_errors:
+                    if len(child_errors) <= 2:
+                        err_summary = "; ".join(child_errors)
+                    else:
+                        err_summary = f"{len(child_errors)} locked or in-use items skipped safely ({'; '.join(child_errors[:2])})"
                     failed.append({
                         "path": str(target),
-                        "error": "; ".join(child_errors[:3]),
+                        "error": err_summary,
                     })
                 if cancelled:
                     break
@@ -1055,7 +1134,7 @@ def delete_targets(
         except Exception as exc:
             failed.append({
                 "path": str(target),
-                "error": str(exc),
+                "error": _friendly_delete_error(exc),
             })
 
         if progress_cb is not None:
