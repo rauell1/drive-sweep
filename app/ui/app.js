@@ -749,8 +749,8 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
 
     <label class="review-row" style="cursor:pointer;margin-bottom:12px;">
       <div>
-        <div style="font-weight:600;font-size:13px;">Check GitHub Releases on startup</div>
-        <div class="muted small-text">Off by default. Sends a read-only web request to GitHub, which sees your IP address and the DriveSweep version. Never sends logs, file names or scan data.</div>
+        <div style="font-weight:600;font-size:13px;">${escapeHtml(tr("upd_check_label"))}</div>
+        <div class="muted small-text">${escapeHtml(tr("upd_check_desc"))}</div>
       </div>
       <label class="toggle-switch">
         <input id="chk-auto-updates" type="checkbox" ${state.autoCheckUpdates ? "checked" : ""} />
@@ -764,7 +764,7 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
         <div class="muted small-text">Version v${escapeHtml(state.version)} | ${escapeHtml(state.osName)} | ${state.isAdmin ? "Administrator" : "Standard Mode"}</div>
         <div style="display:flex;gap:6px;">
           <button id="btn-open-diag-log" class="btn btn-soft btn-xs">${escapeHtml(tr("view_log_file", "Open Diagnostics Log"))}</button>
-          <button id="btn-clear-diag-log" class="btn btn-ghost btn-xs" title="Logs can contain file and folder paths">Clear Logs</button>
+          <button id="btn-clear-diag-log" class="btn btn-ghost btn-xs" title="${escapeHtml(tr("clear_logs_tip"))}">${escapeHtml(tr("clear_logs"))}</button>
         </div>
       </div>
     </div>
@@ -934,7 +934,7 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
   document.getElementById("btn-clear-diag-log")?.addEventListener("click", async () => {
     try {
       await api().clear_logs();
-      showToast("Diagnostics logs cleared", "good");
+      showToast(tr("logs_cleared"), "good");
     } catch (err) {
       showToast(String(err), "danger");
     }
@@ -1394,15 +1394,13 @@ function bindWindowsToolsEvents(data, { inModal = false } = {}) {
         }
         return;
       }
-      const wslWarning =
-        `To shrink ${vhdxName}, DriveSweep runs "wsl --shutdown", which immediately closes every running ` +
-        "Linux distribution and Docker Desktop's engine. Save any open work in Linux apps or containers first.";
+      const wslWarning = tr("wsl_body").replace("{name}", vhdxName);
       const proceed = inModal
-        ? window.confirm(`Shut down WSL and Docker?\n\n${wslWarning}`)
+        ? window.confirm(`${tr("wsl_prompt")}\n\n${wslWarning}`)
         : await confirmAction(
-            "Shrink virtual disk?",
-            `<div class="caution-box"><strong>This will shut down WSL and Docker.</strong> ${escapeHtml(wslWarning)}</div>`,
-            "Shut Down WSL and Shrink"
+            tr("wsl_title"),
+            `<div class="caution-box"><strong>${escapeHtml(tr("wsl_heading"))}</strong> ${escapeHtml(wslWarning)}</div>`,
+            tr("wsl_confirm")
           );
       if (!proceed) return;
       const allShrinkBtns = Array.from(document.querySelectorAll(".btn-compact-vhdx"));
@@ -2799,7 +2797,7 @@ function confirmAction(title, bodyHtml, confirmText, confirmCls = "btn-danger") 
       resolve(value);
     };
     showModal(title, bodyHtml, [
-      { text: "Cancel", cls: "btn-soft", onClick: () => finish(false) },
+      { text: tr("cancel", "Cancel"), cls: "btn-soft", onClick: () => finish(false) },
       { text: confirmText, cls: confirmCls, onClick: () => finish(true) },
     ]);
     state.onModalDismiss = () => finish(false);
@@ -2808,14 +2806,10 @@ function confirmAction(title, bodyHtml, confirmText, confirmCls = "btn-danger") 
 
 // Plain explanation of how this copy of DriveSweep will be updated.
 function describeUpdateMethod(u) {
-  const folder = u.update_folder ? ` in ${u.update_folder}` : "";
-  if (u.update_method === "replace_exe") {
-    return `Downloads the new DriveSweep.exe from GitHub into the same folder${folder}, verifies its SHA-256 checksum, then closes DriveSweep, replaces this DriveSweep.exe with the new version (keeping a backup until the new version starts) and reopens it.`;
-  }
-  if (u.update_method === "replace_folder") {
-    return `Downloads the new DriveSweep-win64.zip from GitHub into the same folder${folder}, verifies its SHA-256 checksum, unpacks it, then closes DriveSweep, replaces the program files with the new version (keeping a backup until the new version starts) and reopens it.`;
-  }
-  return "Downloads the new DriveSweep Setup from GitHub, verifies its SHA-256 checksum, upgrades your installed copy and reopens DriveSweep.";
+  const folder = u.update_folder ? tr("upd_folder_in").replace("{path}", u.update_folder) : "";
+  if (u.update_method === "replace_exe") return tr("upd_method_exe").replace("{folder}", folder);
+  if (u.update_method === "replace_folder") return tr("upd_method_folder").replace("{folder}", folder);
+  return tr("upd_method_setup");
 }
 
 function openConfirmCleanModal() {
@@ -2831,11 +2825,11 @@ function openConfirmCleanModal() {
 
   const warningHtml = isPerm
     ? `<div class="warning-box"><strong>Permission Required (Permanent Delete):</strong> Selected items will bypass the Recycle Bin and cannot be recovered.</div>`
-    : `<div class="summary-strip">Recycle Bin mode: Items are moved to your <strong>Recycle Bin / Trash</strong> so you can usually restore them. Network and removable drives have no Recycle Bin, so DriveSweep skips those items instead. Windows may permanently delete an item that is too large for the Recycle Bin.</div>`;
+    : `<div class="summary-strip">${escapeHtml(tr("recycle_note"))}</div>`;
 
   const winOldItem = items.find((it) => /(^|[\\/])windows\.old[\\/]?$/i.test(String(it.path || "")));
   const winOldHtml = winOldItem
-    ? `<div class="caution-box"><strong>Windows.old selected:</strong> This is your previous Windows installation. Removing it means you can no longer roll back to your earlier Windows version (Settings &gt; System &gt; Recovery &gt; Go back). Only continue if your current Windows works well.</div>`
+    ? `<div class="caution-box"><strong>${escapeHtml(tr("winold_title"))}</strong> ${escapeHtml(tr("winold_body"))}</div>`
     : "";
 
   const cautionHtml = cautionItems.length
@@ -3580,23 +3574,24 @@ function selectAllExtraDuplicates() {
 // One time notice: what DriveSweep does, its limits, and an opt in for update checks.
 function showFirstRunNotice() {
   return new Promise((resolve) => {
+    const T = (k) => escapeHtml(tr(k));
     showModal(
-      "Before you start",
+      tr("fr_title", "Before you start"),
       `
-        <p>DriveSweep finds and removes files you choose. Please read this once:</p>
+        <p>${T("fr_intro")}</p>
         <ul class="notice-list">
-          <li><strong>Back up anything important first.</strong> DriveSweep is free, open source software provided "as is" under the MIT License, without warranty of any kind.</li>
-          <li><strong>The Recycle Bin is not a guarantee.</strong> Network and removable drives have no Recycle Bin, very long paths cannot go there, and Windows may permanently delete items that are too large for it. <strong>Delete Forever</strong> cannot be undone.</li>
-          <li><strong>Protections reduce risk, they do not remove it.</strong> System folders, other accounts and your Always Keep list are guarded, and personal folders are never selected automatically, but you are responsible for what you choose to remove.</li>
-          <li><strong>Your data stays on this PC.</strong> Scans, settings, logs and history are stored locally and never uploaded.</li>
+          <li><strong>${T("fr_backup_b")}</strong> ${T("fr_backup")}</li>
+          <li><strong>${T("fr_recycle_b")}</strong> ${T("fr_recycle")}</li>
+          <li><strong>${T("fr_protect_b")}</strong> ${T("fr_protect")}</li>
+          <li><strong>${T("fr_local_b")}</strong> ${T("fr_local")}</li>
         </ul>
-        <label class="ack-box"><input id="chk-firstrun-updates" type="checkbox" /><span>Check GitHub for new versions when DriveSweep starts. This sends a standard web request (your IP address and the DriveSweep version) to GitHub, under GitHub's privacy statement. You can change this anytime in Settings.</span></label>
-        <p class="muted small-text">DriveSweep is an independent project and is not affiliated with Microsoft, Google, Mozilla, or any other company whose apps it can clean.</p>
+        <label class="ack-box"><input id="chk-firstrun-updates" type="checkbox" /><span>${T("fr_updates_opt")}</span></label>
+        <p class="muted small-text">${T("fr_affiliation")}</p>
       `,
       [
         {
           id: "btn-firstrun-ok",
-          text: "I Understand",
+          text: tr("fr_ok", "I Understand"),
           cls: "btn-primary",
           onClick: async () => {
             const opted = !!document.getElementById("chk-firstrun-updates")?.checked;
