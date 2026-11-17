@@ -14,6 +14,8 @@
 
 Choose **Option A** (standard Windows installer, recommended for most users) or **Option B** (portable app with no installation).
 
+DriveSweep runs on 64 bit Windows 10 (1809 or later) and Windows 11, including Windows 11 on ARM through Windows' built in x64 emulation. See [docs/PLATFORMS.md](docs/PLATFORMS.md) for ARM and Microsoft Store notes.
+
 ### Option A: Windows Installer (Recommended)
 
 1. Open the **[GitHub Releases](https://github.com/rauell1/drive-sweep/releases)** page.

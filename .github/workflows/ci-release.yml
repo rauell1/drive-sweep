@@ -134,6 +134,42 @@ jobs:
             dist/DriveSweep-Setup-*.exe
             dist/SHA256SUMS.txt
 
+  arm64-check:
+    name: Runs on Windows on ARM (x64 build under emulation)
+    # DriveSweep ships x64 builds; Windows 11 on ARM runs them through its built in x64 emulation.
+    # This installs and self-tests the exact test build on a real ARM64 runner.
+    needs: [build-check]
+    runs-on: windows-11-arm
+    steps:
+      - name: Download test build
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: drivesweep-test-build
+          path: build
+
+      - name: Self-test portable exe, then install, self-test and uninstall Setup
+        shell: pwsh
+        run: |
+          Write-Host "Runner architecture: $env:PROCESSOR_ARCHITECTURE"
+          function Test-DriveSweep([string]$exe, [string]$label) {
+            $report = Join-Path $env:RUNNER_TEMP "selftest-$label.json"
+            $proc = Start-Process -FilePath $exe -ArgumentList @('--self-test', "`"$report`"") -Wait -PassThru
+            if (-not (Test-Path $report)) { throw "${label}: no self-test report was written (exit code $($proc.ExitCode))" }
+            Get-Content $report -Raw | Write-Host
+            if ($proc.ExitCode -ne 0 -or -not (Get-Content $report -Raw | ConvertFrom-Json).ok) { throw "${label}: self-test failed" }
+          }
+          Test-DriveSweep "build\DriveSweep.exe" "onefile-arm64"
+
+          $setup = Get-ChildItem "build\DriveSweep-Setup-*.exe" | Select-Object -First 1
+          $dir = Join-Path $env:RUNNER_TEMP "DriveSweepInstall"
+          $p = Start-Process -FilePath $setup.FullName -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`"") -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Setup exited with code $($p.ExitCode)" }
+          Test-DriveSweep "$dir\DriveSweep.exe" "installed-arm64"
+          Start-Process -FilePath "$dir\unins000.exe" -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait
+          for ($i = 0; $i -lt 60 -and (Test-Path "$dir\DriveSweep.exe"); $i++) { Start-Sleep -Seconds 1 }
+          if (Test-Path "$dir\DriveSweep.exe") { throw "Uninstall left DriveSweep.exe behind" }
+          Write-Host "The x64 build installs, starts its interface engine and uninstalls on Windows on ARM."
+
   release:
     name: Build, sign and publish
     needs: [audit, test]

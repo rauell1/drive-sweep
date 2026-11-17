@@ -108,6 +108,13 @@ def run_self_test(output_path: str) -> int:
         )
     ))
     check("install_kind", lambda: __import__("app.updater", fromlist=["x"]).detect_install_kind())
+    if sys.platform == "win32":
+        import platform
+
+        report["machine"] = platform.machine()
+        # Loads pythonnet, the .NET runtime and the WebView2 assemblies exactly as opening the
+        # window would, without creating one. Catches a bundle that cannot start its interface.
+        check("gui_backend", lambda: bool(__import__("webview.platforms.winforms", fromlist=["x"])))
     report["ok"] = ok
     Path(output_path).write_text(json.dumps(report, indent=2), encoding="utf-8")
     return 0 if ok else 1
