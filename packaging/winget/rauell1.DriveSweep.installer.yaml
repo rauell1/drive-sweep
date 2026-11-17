@@ -3,7 +3,7 @@
 # For a winget-pkgs submission run: python scripts/prepare_winget.py --version <x.y.z>
 
 PackageIdentifier: rauell1.DriveSweep
-PackageVersion: 0.7.2
+PackageVersion: 0.7.3
 Platform:
 - Windows.Desktop
 MinimumOSVersion: 10.0.17763.0
@@ -24,7 +24,7 @@ InstallationMetadata:
   DefaultInstallLocation: '%ProgramFiles%\DriveSweep'
 Installers:
 - Architecture: x64
-  InstallerUrl: https://github.com/rauell1/drive-sweep/releases/download/v0.7.2/DriveSweep-Setup-0.7.2.exe
+  InstallerUrl: https://github.com/rauell1/drive-sweep/releases/download/v0.7.3/DriveSweep-Setup-0.7.3.exe
   InstallerSha256: REPLACE_WITH_RELEASE_SHA256
 ManifestType: installer
 ManifestVersion: 1.12.0

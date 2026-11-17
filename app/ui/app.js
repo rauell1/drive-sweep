@@ -17,7 +17,7 @@ const ICON_MOON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" s
 const state = {
   theme: "dark",
   language: "en",
-  version: "0.7.2",
+  version: "0.7.3",
   activeTab: "smart",
   dataDir: "",
   installKind: "source",
@@ -3019,7 +3019,7 @@ async function runCleanup(items, mode) {
   updateSelectionBar();
 
   const failedHtml = (res.failed || []).length
-    ? `<div class="warning-box" style="margin-top:12px;">
+    ? `<div class="caution-box" style="margin-top:12px;">
          <strong>${LH("Skipped / Locked ({count}):", { count: res.failed.length })}</strong>
          <ul>${res.failed.slice(0, 15).map((f) => `<li><code>${escapeHtml(f.path)}</code>: ${escapeHtml(f.error)}</li>`).join("")}</ul>
        </div>`
