@@ -662,6 +662,7 @@ def test_async_update_install_progress_and_stale_cleanup(tmp_path: Path, monkeyp
 def test_update_check_web_fallback_on_rate_limit(monkeypatch):
     import io
     import urllib.error
+    import urllib.parse
     import app.updater as updater
 
     class FakeWebResp(io.BytesIO):
@@ -674,7 +675,8 @@ def test_update_check_web_fallback_on_rate_limit(monkeypatch):
 
     def fake_urlopen(req, timeout=8.0):
         url = req.full_url if hasattr(req, "full_url") else str(req)
-        if "api.github.com" in url:
+        # Compare the exact host (not a substring) so the stub mirrors the updater's own checks.
+        if urllib.parse.urlparse(url).hostname == "api.github.com":
             raise urllib.error.HTTPError(url, 403, "rate limit exceeded", {}, None)
         return FakeWebResp(b'{"tag_name": "v0.9.9"}')
 
