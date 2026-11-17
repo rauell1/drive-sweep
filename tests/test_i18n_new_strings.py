@@ -33,7 +33,7 @@ def test_new_strings_have_own_translation_in_every_language():
         "for (const [lang, d] of Object.entries(S)) out[lang] = d;"
         "console.log(JSON.stringify(out));"
     )
-    packs = json.loads(subprocess.run([node, "-e", script], capture_output=True, text=True, check=True).stdout)
+    packs = json.loads(subprocess.run([node, "-e", script], capture_output=True, text=True, encoding="utf-8", check=True).stdout)
     assert set(packs) == {"en", "es", "fr", "de", "pt"}
     for key in KEYS:
         english = packs["en"].get(key)

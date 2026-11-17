@@ -1170,10 +1170,12 @@ html, body {
 .header-toolbar .search-box input { width: clamp(120px, 16vw, 225px); }
 .priv-card > div:first-child { min-width: 0; }
 
-/* Category legend: names stay on one line and are never cut off. When the card is too narrow for
-   the chart and the list side by side, the list moves below the chart instead of squeezing. */
+/* Category legend: names are never cut off. Long names (common in translations) wrap onto a second
+   line, and when the card is too narrow for the chart and the list side by side, the list moves
+   below the chart instead of squeezing. */
 .donut-wrap { flex-wrap: wrap; justify-content: center; }
-.donut-list { flex: 1 1 190px; }
+.donut-list { flex: 1 1 200px; min-width: 0; }
 .donut-list-row > strong { white-space: nowrap; flex-shrink: 0; }
-.donut-list-name { overflow: visible; text-overflow: clip; }
+.donut-list-name { overflow: visible; text-overflow: clip; white-space: normal; min-width: 0; line-height: 1.3; }
 .donut-list-name .legend-dot { flex-shrink: 0; }
+#drive-health-badge { white-space: nowrap; flex-shrink: 0; }
