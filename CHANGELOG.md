@@ -6,6 +6,16 @@ When you release, `scripts/bump_version.py` turns the **Unreleased** section int
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-11-17
+
+### Added
+- Added a 1-click **Empty Recycle Bin** button directly inside the **Cleanup Complete** modal so users can free disk space permanently right after reviewing Recycle Bin cleanup results.
+- Added a running-app tip inside the cleanup confirmation modal when selected caches belong to currently open apps (such as Chrome or Docker Desktop).
+
+### Fixed
+- Fixed `[Errno 2]` fallback errors when a partial Recycle Bin batch already moved some files before hitting a locked file, and only batched files (not heavy cache subfolders) for faster, smoother deletion.
+- Added friendly wording for `WinError 161` active cache path errors and wrapped long paths cleanly inside modal notices to remove horizontal scrollbars.
+
 ## [0.7.3] - 2026-11-17
 
 ### Fixed
@@ -74,7 +84,8 @@ When you release, `scripts/bump_version.py` turns the **Unreleased** section int
 ## 0.2.0 to 0.2.8 - 2026-11-15
 - First public release with Administrator mode and CI (0.2.0), then local only privacy guarantees, a SHA-256 verified updater, wider cache detection and interface polish.
 
-[Unreleased]: https://github.com/rauell1/drive-sweep/compare/v0.7.3...HEAD
+[Unreleased]: https://github.com/rauell1/drive-sweep/compare/v0.7.4...HEAD
+[0.7.4]: https://github.com/rauell1/drive-sweep/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/rauell1/drive-sweep/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/rauell1/drive-sweep/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/rauell1/drive-sweep/compare/v0.7.0...v0.7.1

@@ -878,6 +878,8 @@ def _friendly_delete_error(exc: Exception) -> str:
     lower = msg.lower()
     if "winerror 32" in lower or "used by another process" in lower or "being used" in lower:
         return "In use by another program (skipped safely)"
+    if "winerror 161" in lower or "specified path is invalid" in lower:
+        return "In use or invalid Windows Shell path (skipped safely)"
     if "winerror 5" in lower or "access is denied" in lower or "permissionerror" in lower:
         return "Locked by Windows or another service (skipped safely)"
     # Strip trailing send2trash path list like ": ['C:\\...']"
@@ -1038,12 +1040,19 @@ def delete_targets(
                     for ch, ch_size in chunk:
                         if cancel_event is not None and cancel_event.is_set():
                             break
+                        ch_os = to_os_path(ch)
+                        if not os.path.lexists(ch_os):
+                            # Already removed by partial batch or disappeared mid-scan
+                            chunk_reclaimed += ch_size
+                            continue
                         try:
                             delete_fn(ch)
-                            if os.path.lexists(to_os_path(ch)):
+                            if os.path.lexists(ch_os):
                                 chunk_reclaimed += max(0, ch_size - get_entry_size(ch))
                             else:
                                 chunk_reclaimed += ch_size
+                        except FileNotFoundError:
+                            chunk_reclaimed += ch_size
                         except Exception as exc:
                             child_errors.append(f"{ch.name}: {_friendly_delete_error(exc)}")
                     return chunk_reclaimed
@@ -1090,9 +1099,9 @@ def delete_targets(
                             _remove_link_only(child)
                             continue
                         child_size = get_entry_size(child)
-                        if mode == "recycle":
+                        if mode == "recycle" and not os.path.isdir(to_os_path(child)):
                             safe_batch.append((child, child_size))
-                            if len(safe_batch) >= 25:
+                            if len(safe_batch) >= 40:
                                 _flush_batch()
                         else:
                             reclaimed += _flush_individual([(child, child_size)])

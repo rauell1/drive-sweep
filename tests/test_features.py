@@ -749,7 +749,11 @@ def test_batched_contents_cleanup_live_progress_and_friendly_lock_errors(tmp_pat
     def fake_send2trash(arg):
         calls.append(arg)
         if isinstance(arg, list):
-            # Simulate Windows batch failing because one item in the batch is locked
+            # Partial batch success: delete the first 2 files, then fail on the locked file!
+            for p_str in arg[:2]:
+                p = Path(p_str)
+                if p != locked_file and p.exists():
+                    p.unlink()
             raise PermissionError("[WinError 32] The process cannot access the file because it is being used by another process: ['...']")
         if Path(arg) == locked_file:
             raise PermissionError("[WinError 32] The process cannot access the file because it is being used by another process: ['...']")
@@ -771,4 +775,6 @@ def test_batched_contents_cleanup_live_progress_and_friendly_lock_errors(tmp_pat
     assert locked_file.exists()
     assert len(res.failed) == 1
     assert "In use by another program" in res.failed[0]["error"]
+    assert "Errno 2" not in res.failed[0]["error"]
     assert "['" not in res.failed[0]["error"]
+    assert "Windows Shell path" in safety._friendly_delete_error(OSError("[WinError 161] The specified path is invalid."))

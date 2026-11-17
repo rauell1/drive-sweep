@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(0, 7, 3, 0),
-    prodvers=(0, 7, 3, 0),
+    filevers=(0, 7, 4, 0),
+    prodvers=(0, 7, 4, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -17,11 +17,11 @@ VSVersionInfo(
           StringStruct(u'CompanyName', u'Roy Otieno'),
           StringStruct(u'LegalCopyright', u'Copyright (c) 2026 Roy Otieno. MIT License.'),
           StringStruct(u'FileDescription', u'DriveSweep: PC Storage Cleaner & Drive Scanner'),
-          StringStruct(u'FileVersion', u'0.7.3.0'),
+          StringStruct(u'FileVersion', u'0.7.4.0'),
           StringStruct(u'InternalName', u'DriveSweep'),
           StringStruct(u'OriginalFilename', u'DriveSweep.exe'),
           StringStruct(u'ProductName', u'DriveSweep'),
-          StringStruct(u'ProductVersion', u'0.7.3.0')
+          StringStruct(u'ProductVersion', u'0.7.4.0')
         ]
       )
     ]),
