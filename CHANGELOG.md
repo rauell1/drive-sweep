@@ -6,6 +6,8 @@ When you release, `scripts/bump_version.py` turns the **Unreleased** section int
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-17
+
 ### Added
 - Automatic rollback after an in place update: if the new portable or folder version does not open, the previous version is restored and started again.
 - Every pull request now builds the app, checks that the built files start, installs and uninstalls Setup silently, and uploads a test build.
@@ -16,7 +18,8 @@ When you release, `scripts/bump_version.py` turns the **Unreleased** section int
 ### Changed
 - GitHub Actions updated to their latest major versions (checkout, upload artifact, release, Azure signing), still pinned by commit.
 - Python dependencies are refreshed weekly by a workflow that tests the new versions before opening a pull request.
-- From the next release, Installed apps shows the name "DriveSweep" without a version number.
+- Installed apps now shows the name "DriveSweep" without a version number, so winget and upgrades match it reliably.
+- Confirmed working on Windows 11 on ARM (the x64 build runs through Windows' built in emulation); checked automatically on every pull request.
 
 ## [0.7.0] - 2026-11-16
 
@@ -53,7 +56,8 @@ When you release, `scripts/bump_version.py` turns the **Unreleased** section int
 ## 0.2.0 to 0.2.8 - 2026-11-15
 - First public release with Administrator mode and CI (0.2.0), then local only privacy guarantees, a SHA-256 verified updater, wider cache detection and interface polish.
 
-[Unreleased]: https://github.com/rauell1/drive-sweep/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/rauell1/drive-sweep/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/rauell1/drive-sweep/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/rauell1/drive-sweep/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/rauell1/drive-sweep/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/rauell1/drive-sweep/compare/v0.4.0...v0.5.0
