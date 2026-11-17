@@ -156,6 +156,13 @@ DriveSweep has no accounts, analytics, telemetry or ads. Scans, settings, histor
 
 ---
 
+## Contributing and Security
+
+- Bug reports, ideas, translations and pull requests are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md).
+- Found a security problem? Please report it privately as described in [SECURITY.md](SECURITY.md), not in a public issue.
+
+---
+
 ## Building from Source (For Developers)
 
 ```powershell
