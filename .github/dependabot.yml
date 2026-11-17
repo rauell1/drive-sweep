@@ -1,12 +1,22 @@
-# Weekly update pull requests for pinned GitHub Actions and Python dependencies.
-# After a Python update, regenerate requirements-dev.lock (see the command at the top of that file).
+# Dependabot for this repository.
+# * GitHub Actions: weekly update pull requests, grouped into one, keeping SHA pins.
+# * Python: no version update pull requests. CI installs only from the hash locked
+#   requirements-dev.lock, so raising minimums in requirements*.txt changes nothing.
+#   The "Refresh dependency lock" workflow updates the lock weekly instead, after testing it.
+#   Security alerts (Dependabot alerts and security updates in the repository settings)
+#   still work for Python packages.
 version: 2
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 0

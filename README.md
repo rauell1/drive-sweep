@@ -178,4 +178,4 @@ python -m venv .venv
   ```powershell
   .\build.ps1
   ```
-- After changing `requirements.txt` or `requirements-dev.txt`, regenerate the lock file with the command at the top of `requirements-dev.lock`, and regenerate `THIRD_PARTY_NOTICES.txt` with `python scripts\collect_licenses.py`.
+- After changing `requirements.txt` or `requirements-dev.txt`, regenerate the lock file with `python scripts\refresh_lock.py` (needs uv), and regenerate `THIRD_PARTY_NOTICES.txt` with `python scripts\collect_licenses.py`.
