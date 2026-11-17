@@ -160,6 +160,17 @@ jobs:
           python -m venv .venv
           .\.venv\Scripts\python.exe -m pip install --require-hashes -r requirements-dev.lock
 
+      - name: Check the tag matches the app version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          .\.venv\Scripts\python.exe scripts\bump_version.py --check
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $appVersion = (Select-String -Path app\__init__.py -Pattern '__version__ = "(.+)"').Matches[0].Groups[1].Value
+          if ("v$appVersion" -ne $env:TAG) { Write-Error "Tag $env:TAG does not match app version $appVersion. Run scripts/bump_version.py before tagging."; exit 1 }
+
       # Only true/false flags leave this step; secret values stay inside the signing steps.
       - name: Detect signing configuration
         id: signing
@@ -313,22 +324,19 @@ jobs:
             dist/DriveSweep-sbom.cdx.json
             packaging/winget/*.yaml
 
+      - name: Compose release notes from CHANGELOG.md
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          SIGNING_LINE: ${{ steps.signing.outputs.signpath_release == 'true' && 'Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).' || (steps.signing.outputs.azure == 'true' && 'Executables are signed with Azure Trusted Signing.' || 'These builds are not code signed yet, so Windows SmartScreen may warn on first run. Verify the checksum and provenance above before running.') }}
+          TAG: ${{ github.ref_name }}
+        run: .\.venv\Scripts\python.exe scripts\release_notes.py --version $env:TAG --signing-line $env:SIGNING_LINE --out dist\RELEASE_NOTES.md
+
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
-          body: |
-            Windows disk analyzer and cache cleaner with Recycle Bin and Permanent cleanup modes, Light/Dark themes, optional Administrator mode, and local-only data storage.
-
-            ### Verify your download
-            * Compare the file's SHA-256 with `SHA256SUMS.txt`.
-            * Check the build provenance: `gh attestation verify <file> --repo ${{ github.repository }}`.
-            * `DriveSweep-sbom.cdx.json` lists every bundled Python package (CycloneDX format).
-
-            ### Code signing
-            ${{ steps.signing.outputs.signpath_release == 'true' && 'Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).' || (steps.signing.outputs.azure == 'true' && 'Executables are signed with Azure Trusted Signing.' || 'These builds are not code signed yet, so Windows SmartScreen may warn on first run. Verify the checksum and provenance above before running.') }}
-
-            Provided "as is" under the MIT License, without warranty. Back up important files before cleaning.
+          body_path: dist/RELEASE_NOTES.md
           files: |
             dist/DriveSweep.exe
             dist/DriveSweep-win64.zip

@@ -178,4 +178,5 @@ python -m venv .venv
   ```powershell
   .\build.ps1
   ```
+- Maintainer guide (branch protection, releasing with `scripts\bump_version.py`, dependency updates): [docs/MAINTAINING.md](docs/MAINTAINING.md). Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 - After changing `requirements.txt` or `requirements-dev.txt`, regenerate the lock file with `python scripts\refresh_lock.py` (needs uv), and regenerate `THIRD_PARTY_NOTICES.txt` with `python scripts\collect_licenses.py`.
