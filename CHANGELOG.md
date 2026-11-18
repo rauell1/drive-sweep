@@ -6,6 +6,16 @@ When you release, `scripts/bump_version.py` turns the **Unreleased** section int
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-11-18
+
+### Security
+- **Empty Recycle Bin** now always asks first. It shows how many items and how much space will go, and says that it also removes files you deleted earlier and cannot be undone. This applies to the button in **Cleanup Complete** and the one in **Windows Tools**. The app's backend also refuses to empty the Recycle Bin without that confirmation.
+
+### Fixed
+- Messages added in 0.7.3 to 0.7.5 are now translated into Spanish, French, German and Portuguese: the running apps tip, the Recycle Bin messages and the locked file notices in the cleanup summary. A few older button labels ("Copied", "Enabling...") are translated too.
+- Emptying the Recycle Bin from **Cleanup Complete** now updates the space freed counter, like the button in **Windows Tools**.
+- A test now flags interface text that skips translation.
+
 ## [0.7.5] - 2026-11-17
 
 ### Fixed
@@ -89,7 +99,8 @@ When you release, `scripts/bump_version.py` turns the **Unreleased** section int
 ## 0.2.0 to 0.2.8 - 2026-11-15
 - First public release with Administrator mode and CI (0.2.0), then local only privacy guarantees, a SHA-256 verified updater, wider cache detection and interface polish.
 
-[Unreleased]: https://github.com/rauell1/drive-sweep/compare/v0.7.5...HEAD
+[Unreleased]: https://github.com/rauell1/drive-sweep/compare/v0.7.6...HEAD
+[0.7.6]: https://github.com/rauell1/drive-sweep/compare/v0.7.5...v0.7.6
 [0.7.5]: https://github.com/rauell1/drive-sweep/compare/v0.7.4...v0.7.5
 [0.7.4]: https://github.com/rauell1/drive-sweep/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/rauell1/drive-sweep/compare/v0.7.2...v0.7.3

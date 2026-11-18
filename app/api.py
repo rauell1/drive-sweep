@@ -58,6 +58,7 @@ from app.system_tools import (
     apply_windows11_frame_styling,
     compact_virtual_disk,
     empty_recycle_bin,
+    get_recycle_bin_info,
     inspect_system_space,
     open_recycle_bin_folder,
     run_winsxs_cleanup,
@@ -664,7 +665,15 @@ class DriveSweepAPI:
     def inspect_system_space(self, max_age_days: int = 30) -> dict:
         return inspect_system_space(max_installer_age_days=int(max_age_days or 30))
 
-    def empty_recycle_bin(self, drive_root: str | None = None) -> dict:
+    def get_recycle_bin_info(self, drive_root: str | None = None) -> dict:
+        """Current Recycle Bin size and item count, shown in the confirmation before emptying it."""
+        return get_recycle_bin_info(root_path=drive_root)
+
+    def empty_recycle_bin(self, drive_root: str | None = None, confirmed: bool = False) -> dict:
+        # Emptying the Recycle Bin permanently deletes everything in it, including files the user
+        # deleted outside DriveSweep, so the interface must show a confirmation first and say so.
+        if confirmed is not True:
+            return {"ok": False, "error": "Emptying the Recycle Bin needs your confirmation first."}
         res = empty_recycle_bin(root_path=drive_root)
         if res.get("ok") and not res.get("already_empty"):
             try:

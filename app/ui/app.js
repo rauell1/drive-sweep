@@ -17,7 +17,7 @@ const ICON_MOON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" s
 const state = {
   theme: "dark",
   language: "en",
-  version: "0.7.5",
+  version: "0.7.6",
   activeTab: "smart",
   dataDir: "",
   installKind: "source",
@@ -88,6 +88,30 @@ function LH(text, vars) {
   let out = escapeHtml(i18n && typeof i18n.phrase === "function" ? i18n.phrase(text) : text);
   if (vars) for (const [k, v] of Object.entries(vars)) out = out.split(`{${k}}`).join(String(v));
   return out;
+}
+
+// The cleanup engine reports skipped items in fixed English phrases (see _friendly_delete_error in
+// app/safety.py). Translate those phrases and keep file names and other details as they are.
+const CLEANUP_ERROR_PHRASES = [
+  "In use by another program (skipped safely)",
+  "In use or invalid Windows Shell path (skipped safely)",
+  "Locked by Windows or another service (skipped safely)",
+  "Locked or inaccessible",
+];
+
+function translateCleanupError(text) {
+  let out = String(text || "");
+  const summary = out.match(/^(\d+) locked or in-use items skipped safely \((.*)\)$/s);
+  if (summary) {
+    return L("{count} locked or in-use items skipped safely ({details})", {
+      count: summary[1],
+      details: translateCleanupError(summary[2]),
+    });
+  }
+  for (const phrase of CLEANUP_ERROR_PHRASES) {
+    if (out.includes(phrase)) out = out.split(phrase).join(L(phrase));
+  }
+  return out.replace(/Protected child skipped: ([^;]+)/g, (_m, name) => L("Protected item skipped: {name}", { name }));
 }
 
 function formatBytes(bytes) {
@@ -333,7 +357,7 @@ async function copyCommandText(cmd, btnEl) {
   }
   if (btnEl) {
     const prev = btnEl.textContent;
-    btnEl.textContent = ok ? "Copied" : "Ready";
+    btnEl.textContent = ok ? L("Copied") : L("Ready");
     setTimeout(() => {
       btnEl.textContent = prev;
     }, 1500);
@@ -1266,9 +1290,16 @@ function bindWindowsToolsEvents(data, { inModal = false } = {}) {
   document.getElementById("btn-sys-empty-rb")?.addEventListener("click", async () => {
     const rbBtn = document.getElementById("btn-sys-empty-rb");
     const msgEl = document.getElementById("rb-status-msg");
+    const answer = await confirmEmptyRecycleBin({ inModal });
+    if (answer === "empty") {
+      if (msgEl) msgEl.textContent = L("Recycle Bin is already empty.");
+      showToast(L("Recycle Bin is already empty."), "good");
+      return;
+    }
+    if (answer !== "yes") return;
     if (rbBtn) rbBtn.disabled = true;
     if (msgEl) msgEl.textContent = L("Emptying Windows Recycle Bin...");
-    const res = await api().empty_recycle_bin(null);
+    const res = await api().empty_recycle_bin(null, true);
     if (res.ok) {
       if (res.freed_bytes) recordLifetimeCleanup(res.freed_bytes);
       if (res.drives_after) renderDrives(res.drives_after);
@@ -1371,7 +1402,7 @@ function bindWindowsToolsEvents(data, { inModal = false } = {}) {
     }
     hibBtn.disabled = true;
     const prevLabel = hibBtn.textContent;
-    hibBtn.textContent = enable ? "Enabling..." : "Disabling...";
+    hibBtn.textContent = enable ? L("Enabling...") : L("Disabling...");
     if (hibOut) {
       hibOut.classList.remove("hidden");
       hibOut.innerHTML = `<span class="muted">${enable ? LH("Turning hibernation on...") : LH("Turning hibernation off...")}</span>`;
@@ -2837,6 +2868,30 @@ function confirmAction(title, bodyHtml, confirmText, confirmCls = "btn-danger") 
   });
 }
 
+// Emptying the Recycle Bin permanently deletes everything in it, including files deleted outside
+// DriveSweep, so it always asks first and says how much will go. Returns "yes", "no" or "empty".
+async function confirmEmptyRecycleBin({ inModal = false } = {}) {
+  let info = {};
+  try {
+    info = (await api().get_recycle_bin_info(null)) || {};
+  } catch (_err) {
+    info = {};
+  }
+  const count = Number(info.item_count || 0);
+  const bytes = Number(info.size_bytes || 0);
+  if (info.supported && !info.error && count === 0 && bytes === 0) return "empty";
+  const size = info.size_human || formatBytes(bytes);
+  const body = info.supported && count > 0
+    ? (count === 1
+        ? L("This permanently deletes the 1 item ({size}) in the Windows Recycle Bin, including anything you deleted before, not only what DriveSweep moved there. This cannot be undone.", { size })
+        : L("This permanently deletes all {count} items ({size}) in the Windows Recycle Bin, including anything you deleted before, not only what DriveSweep moved there. This cannot be undone.", { count: count.toLocaleString(), size }))
+    : L("This permanently deletes everything in the Windows Recycle Bin, including anything you deleted before, not only what DriveSweep moved there. This cannot be undone.");
+  const title = L("Empty the Recycle Bin?");
+  if (inModal) return window.confirm(`${title}\n\n${body}`) ? "yes" : "no";
+  const ok = await confirmAction(title, `<div class="caution-box">${escapeHtml(body)}</div>`, L("Empty Recycle Bin"));
+  return ok ? "yes" : "no";
+}
+
 // Plain explanation of how this copy of DriveSweep will be updated.
 function describeUpdateMethod(u) {
   const folder = u.update_folder ? tr("upd_folder_in").replace("{path}", u.update_folder) : "";
@@ -2867,7 +2922,7 @@ function openConfirmCleanModal() {
 
   const runningApps = Array.from(new Set(items.map((it) => it.running_app).filter(Boolean)));
   const runningHtml = runningApps.length
-    ? `<div class="caution-box"><strong>Tip:</strong> Close running apps (${escapeHtml(runningApps.join(", "))}) first so active cache files are not locked.</div>`
+    ? `<div class="caution-box"><strong>${LH("Tip:")}</strong> ${LH("Close running apps ({apps}) first so their cache files are not locked.", { apps: escapeHtml(runningApps.join(", ")) })}</div>`
     : "";
 
   const cautionHtml = cautionItems.length
@@ -2989,7 +3044,7 @@ async function runCleanup(items, mode) {
         if (countEl) countEl.textContent = `${st.done} / ${st.total}`;
         if (freedEl) freedEl.textContent = st.freed_human || "0 B";
         if (fillEl) fillEl.style.width = `${pct}%`;
-        if (pathEl) pathEl.textContent = st.current_path || "Cleaning...";
+        if (pathEl) pathEl.textContent = st.current_path || L("Cleaning...");
         continue;
       }
       if (st.status === "error") {
@@ -3027,7 +3082,7 @@ async function runCleanup(items, mode) {
   const failedHtml = (res.failed || []).length
     ? `<div class="caution-box" style="margin-top:12px;">
          <strong>${LH("Skipped / Locked ({count}):", { count: res.failed.length })}</strong>
-         <ul>${res.failed.slice(0, 15).map((f) => `<li><code>${escapeHtml(f.path)}</code>: ${escapeHtml(f.error)}</li>`).join("")}</ul>
+         <ul>${res.failed.slice(0, 15).map((f) => `<li><code>${escapeHtml(f.path)}</code>: ${escapeHtml(translateCleanupError(f.error))}</li>`).join("")}</ul>
        </div>`
     : "";
 
@@ -3047,48 +3102,8 @@ async function runCleanup(items, mode) {
     }
   };
 
-  const footerBtns = [];
-  if (res.mode === "recycle" && Number(res.freed_bytes || 0) > 0) {
-    footerBtns.push({
-      id: "btn-clean-empty-rb",
-      text: L("Empty Recycle Bin"),
-      cls: "btn-soft",
-      onClick: async () => {
-        const rbBtn = document.getElementById("btn-clean-empty-rb");
-        if (rbBtn) {
-          rbBtn.disabled = true;
-          rbBtn.textContent = "Emptying...";
-        }
-        const rbRes = await api().empty_recycle_bin(null);
-        if (rbRes.ok) {
-          if (rbRes.drives_after) renderDrives(rbRes.drives_after);
-          if (typeof rbRes.history_count === "number") updateHeaderCounts(undefined, rbRes.history_count);
-          state.windowsData = null;
-          showToast(
-            rbRes.already_empty ? "Recycle Bin is already empty." : `Permanently freed ${rbRes.freed_human} from Recycle Bin.`,
-            "good"
-          );
-          if (rbBtn) rbBtn.textContent = "Recycle Bin Emptied";
-        } else {
-          showToast(rbRes.error || "Could not empty Recycle Bin.", "danger");
-          if (rbBtn) {
-            rbBtn.disabled = false;
-            rbBtn.textContent = L("Empty Recycle Bin");
-          }
-        }
-      },
-    });
-  }
-  footerBtns.push({
-    text: L("Done"),
-    cls: "btn-primary",
-    onClick: refreshAfterClean,
-  });
-
   const title = res.cancelled ? L("Cleanup Stopped (Partial)") : L("Cleanup Complete");
-  showModal(
-    title,
-    `
+  const resultsHtml = `
       <div class="summary-strip">
         <div>${LH("Reclaimed:")} <strong class="accent-good">${escapeHtml(res.freed_human)}</strong></div>
         <div>${LH("Items cleaned:")} <strong>${res.deleted_count}</strong></div>
@@ -3096,9 +3111,60 @@ async function runCleanup(items, mode) {
       </div>
       ${dockerHtml}
       ${failedHtml}
-    `,
-    footerBtns
-  );
+    `;
+  const offerEmptyBin = res.mode === "recycle" && Number(res.freed_bytes || 0) > 0;
+
+  // rbState: "ready" offers Empty Recycle Bin, "done" shows it was emptied.
+  const showResults = (rbState = "ready") => {
+    const footerBtns = [];
+    if (offerEmptyBin) {
+      footerBtns.push({
+        id: "btn-clean-empty-rb",
+        text: rbState === "done" ? L("Recycle Bin Emptied") : L("Empty Recycle Bin"),
+        cls: "btn-soft",
+        disabled: rbState === "done",
+        onClick: async () => {
+          // The confirmation replaces this window; the results come back afterwards.
+          const answer = await confirmEmptyRecycleBin();
+          if (answer === "empty") {
+            showToast(L("Recycle Bin is already empty."), "good");
+            showResults("done");
+            return;
+          }
+          if (answer !== "yes") {
+            showResults("ready");
+            return;
+          }
+          showToast(L("Emptying Windows Recycle Bin..."), "info");
+          const rbRes = await api().empty_recycle_bin(null, true);
+          if (rbRes.ok) {
+            if (rbRes.freed_bytes) recordLifetimeCleanup(rbRes.freed_bytes);
+            if (rbRes.drives_after) renderDrives(rbRes.drives_after);
+            if (typeof rbRes.history_count === "number") updateHeaderCounts(undefined, rbRes.history_count);
+            state.windowsData = null;
+            showToast(
+              rbRes.already_empty
+                ? L("Recycle Bin is already empty.")
+                : L("Permanently freed {size} from the Recycle Bin.", { size: rbRes.freed_human }),
+              "good"
+            );
+            showResults("done");
+          } else {
+            showToast(rbRes.error || L("Could not empty Recycle Bin."), "danger");
+            showResults("ready");
+          }
+        },
+      });
+    }
+    footerBtns.push({
+      text: L("Done"),
+      cls: "btn-primary",
+      onClick: refreshAfterClean,
+    });
+    showModal(title, resultsHtml, footerBtns);
+  };
+
+  showResults();
 }
 
 let refreshResetTimer = null;
@@ -3449,7 +3515,7 @@ async function startDuplicateScan() {
     prog?.classList.add("hidden");
     cancelBtn?.classList.add("hidden");
     if (findBtn) findBtn.disabled = false;
-    document.getElementById("dup-meta").textContent = st.error || "Could not start duplicate scan.";
+    document.getElementById("dup-meta").textContent = st.error || L("Could not start duplicate scan.");
     return;
   }
 
@@ -3483,7 +3549,7 @@ async function pollDuplicateStatus() {
   if (findBtn) findBtn.disabled = false;
 
   if (st.status === "error") {
-    document.getElementById("dup-meta").textContent = st.error || "Duplicate search failed.";
+    document.getElementById("dup-meta").textContent = st.error || L("Duplicate search failed.");
     return;
   }
 

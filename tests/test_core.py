@@ -567,7 +567,7 @@ def test_async_cleanup_progress_and_cancel(tmp_path: Path, monkeypatch):
         "empty_recycle_bin",
         lambda root_path=None: {"ok": True, "already_empty": False, "freed_bytes": 5120, "freed_human": "5.00 KB", "items_removed": 3},
     )
-    rb_res = api.empty_recycle_bin()
+    rb_res = api.empty_recycle_bin(None, True)
     assert rb_res["ok"] is True
     assert rb_res["history_count"] >= 2
 
@@ -773,3 +773,19 @@ def test_self_test_reports_complete_bundle(tmp_path: Path):
     assert report["ok"] is True
     assert report["checks"]["ui_index"]["ok"] is True
     assert report["version"]
+
+
+def test_empty_recycle_bin_requires_confirmation(tmp_path: Path, monkeypatch):
+    """Emptying the Recycle Bin deletes everything in it for good, so the API refuses unless
+    the interface says the user confirmed."""
+    import app.api as api_mod
+
+    monkeypatch.setenv("DRIVESWEEP_DATA_DIR", str(tmp_path / "appdata"))
+    calls = []
+    monkeypatch.setattr(api_mod, "empty_recycle_bin", lambda root_path=None: calls.append(root_path) or {"ok": True})
+    api = api_mod.DriveSweepAPI()
+    for args in ((), (None,), (None, False), (None, "yes"), (None, 1)):
+        res = api.empty_recycle_bin(*args)
+        assert res["ok"] is False
+        assert "confirm" in res["error"].lower()
+    assert calls == []
