@@ -25,7 +25,7 @@ from app.safety import (
     run_docker_builder_prune,
     sanitized_subprocess_env,
 )
-from app.recycle_restore import find_cleanup_items, restore_items
+from app.recycle_restore import find_cleanup_items, list_recycled, restore_items
 from app.auto_clean import is_enabled as auto_clean_enabled
 from app.auto_clean import set_enabled as set_auto_clean
 from app.reports import write_cleanup_preview
@@ -691,41 +691,50 @@ class DriveSweepAPI:
     def inspect_system_space(self, max_age_days: int = 30) -> dict:
         return inspect_system_space(max_installer_age_days=int(max_age_days or 30))
 
-    def _undo_target(self) -> tuple[dict | None, str]:
-        """The cleanup Undo would reverse: the most recent cleanup, if it used the Recycle Bin
-        and has not been undone. Returns (record, reason when there is none)."""
+    @staticmethod
+    def _undo_block_reason(record: dict, undone: set, latest: bool) -> str:
+        """Why a cleanup cannot be undone, or "" when it can (Recycle Bin files permitting)."""
+        if record.get("timestamp") in undone:
+            return "The last cleanup was already undone." if latest else "This cleanup was already undone."
+        if record.get("mode") != "recycle":
+            if latest:
+                return "The last cleanup deleted files permanently, so it cannot be undone."
+            return "This cleanup deleted files permanently, so it cannot be undone."
+        if not record.get("started_at") or not record.get("roots"):
+            if latest:
+                return "The last cleanup was made by an older DriveSweep version and cannot be undone."
+            return "This cleanup was made by an older DriveSweep version and cannot be undone."
+        return ""
+
+    def _undo_target(self, timestamp: str | None = None) -> tuple[dict | None, str]:
+        """The cleanup to reverse: the one logged at ``timestamp``, or else the most recent
+        cleanup. Returns (record, reason when it cannot be undone)."""
         history = get_history(limit=200)
         undone = {h.get("undo_of") for h in history if h.get("action") == "Undo Cleanup"}
-        for record in history:
-            if not str(record.get("action", "")).startswith("Cleanup"):
-                continue
-            if record.get("timestamp") in undone:
-                return None, "The last cleanup was already undone."
-            if record.get("mode") != "recycle":
-                return None, "The last cleanup deleted files permanently, so it cannot be undone."
-            if not record.get("started_at") or not record.get("roots"):
-                return None, "The last cleanup was made by an older DriveSweep version and cannot be undone."
-            return record, ""
-        return None, "No cleanup to undo yet."
+        cleanups = [h for h in history if str(h.get("action", "")).startswith("Cleanup")]
+        if timestamp:
+            record = next((h for h in cleanups if h.get("timestamp") == timestamp), None)
+            if record is None:
+                return None, "This cleanup is no longer in the Cleanup Log."
+            reason = self._undo_block_reason(record, undone, latest=False)
+            return (None, reason) if reason else (record, "")
+        if not cleanups:
+            return None, "No cleanup to undo yet."
+        reason = self._undo_block_reason(cleanups[0], undone, latest=True)
+        return (None, reason) if reason else (cleanups[0], "")
 
-    def _undo_items(self, record: dict) -> list:
+    def _undo_items(self, record: dict, recycled: list | None = None) -> list:
         try:
             started = datetime.fromisoformat(str(record["started_at"]))
             finished = datetime.fromisoformat(str(record["timestamp"]))
         except (KeyError, ValueError):
             return []
-        return find_cleanup_items(record.get("roots") or [], started, finished)
+        if recycled is None:
+            return find_cleanup_items(record.get("roots") or [], started, finished)
+        return find_cleanup_items(record.get("roots") or [], started, finished, recycled=recycled)
 
-    def get_undo_candidate(self) -> dict:
-        """What Undo last cleanup would restore, for the confirmation shown before it runs."""
-        if not _undo_supported():
-            return {"ok": False, "reason": "Undo is only available on Windows."}
-        record, reason = self._undo_target()
-        if not record:
-            return {"ok": False, "reason": reason}
-        items = self._undo_items(record)
-        if not items:
-            return {"ok": False, "reason": "The files from the last cleanup are no longer in the Recycle Bin."}
+    @staticmethod
+    def _undo_summary(record: dict, items: list) -> dict:
         size = sum(it.size_bytes for it in items)
         return {
             "ok": True,
@@ -735,13 +744,50 @@ class DriveSweepAPI:
             "size_human": format_bytes(size),
         }
 
-    def undo_last_cleanup(self, confirmed: bool = False) -> dict:
-        """Put the files from the last Recycle Bin cleanup back where they were."""
+    def get_undo_candidate(self, timestamp: str | None = None) -> dict:
+        """What Undo would restore (the latest cleanup, or the one logged at ``timestamp``),
+        for the confirmation shown before it runs."""
+        if not _undo_supported():
+            return {"ok": False, "reason": "Undo is only available on Windows."}
+        record, reason = self._undo_target(timestamp)
+        if not record:
+            return {"ok": False, "reason": reason}
+        items = self._undo_items(record)
+        if not items:
+            if timestamp:
+                return {"ok": False, "reason": "The files from this cleanup are no longer in the Recycle Bin."}
+            return {"ok": False, "reason": "The files from the last cleanup are no longer in the Recycle Bin."}
+        return self._undo_summary(record, items)
+
+    def get_undo_candidates(self) -> dict:
+        """Every cleanup in the log that can still be undone, keyed by its log timestamp.
+        Reads the Recycle Bin once for all of them."""
+        if not _undo_supported():
+            return {"ok": False, "candidates": {}}
+        history = get_history(limit=200)
+        undone = {h.get("undo_of") for h in history if h.get("action") == "Undo Cleanup"}
+        eligible = [
+            h for h in history
+            if str(h.get("action", "")).startswith("Cleanup") and not self._undo_block_reason(h, undone, latest=False)
+        ]
+        if not eligible:
+            return {"ok": True, "candidates": {}}
+        recycled = list_recycled()
+        candidates = {}
+        for record in eligible:
+            items = self._undo_items(record, recycled)
+            if items:
+                candidates[str(record.get("timestamp"))] = self._undo_summary(record, items)
+        return {"ok": True, "candidates": candidates}
+
+    def undo_last_cleanup(self, confirmed: bool = False, timestamp: str | None = None) -> dict:
+        """Put the files from a Recycle Bin cleanup back where they were: the most recent one,
+        or the one logged at ``timestamp``."""
         if confirmed is not True:
             return {"ok": False, "error": "Undo needs your confirmation first."}
         if not _undo_supported():
             return {"ok": False, "error": "Undo is only available on Windows."}
-        record, reason = self._undo_target()
+        record, reason = self._undo_target(timestamp)
         if not record:
             return {"ok": False, "error": reason}
         res = restore_items(self._undo_items(record))

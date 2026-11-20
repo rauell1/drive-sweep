@@ -6,6 +6,19 @@ When you release, `scripts/bump_version.py` turns the **Unreleased** section int
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-20
+
+### Added
+- **Undo** next to each earlier Recycle Bin cleanup in the Cleanup Log, not only the most recent one, while its files are still in the Recycle Bin.
+- A "Suggest a cleanup location" issue form, to collect app caches that Quick Clean does not find yet.
+
+### Fixed
+- Undo now finds items when a cleaned folder's path was written in short form (such as `C:\Users\JOHNSM~1\AppData\Local\Temp`), which is common for the TEMP folder.
+- The scheduled cleanup notification and the headings in exported CSV lists now use the language chosen in Settings. JSON exports stay in English for programs.
+
+### Changed
+- Undo and scheduled cleanup are now tested against the real Windows Recycle Bin on every pull request.
+
 ## [0.8.0] - 2026-11-20
 
 ### Added
@@ -112,7 +125,8 @@ When you release, `scripts/bump_version.py` turns the **Unreleased** section int
 ## 0.2.0 to 0.2.8 - 2026-11-15
 - First public release with Administrator mode and CI (0.2.0), then local only privacy guarantees, a SHA-256 verified updater, wider cache detection and interface polish.
 
-[Unreleased]: https://github.com/rauell1/drive-sweep/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/rauell1/drive-sweep/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/rauell1/drive-sweep/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/rauell1/drive-sweep/compare/v0.7.6...v0.8.0
 [0.7.6]: https://github.com/rauell1/drive-sweep/compare/v0.7.5...v0.7.6
 [0.7.5]: https://github.com/rauell1/drive-sweep/compare/v0.7.4...v0.7.5

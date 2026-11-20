@@ -1,0 +1,58 @@
+name: Suggest a cleanup location
+description: An app cache or temporary folder that fills your drive and Quick Clean does not find yet
+labels: ["cleanup-location"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping DriveSweep find more space safely. Only folders the app rebuilds by itself can become Quick Clean items, so the details below matter.
+        Please do not paste your full user name if you prefer not to: write `%LOCALAPPDATA%` or `%APPDATA%` instead of `C:\Users\YourName\AppData\...`.
+  - type: input
+    id: app
+    attributes:
+      label: Which app or game?
+      placeholder: For example, Adobe Premiere Pro 2026, Battle.net, Figma
+    validations:
+      required: true
+  - type: input
+    id: path
+    attributes:
+      label: Folder path
+      description: Use environment variables where you can, for example %LOCALAPPDATA%\Figma\Cache
+      placeholder: "%LOCALAPPDATA%\\..."
+    validations:
+      required: true
+  - type: input
+    id: size
+    attributes:
+      label: How big does it get?
+      placeholder: For example, 8 GB after a month of use
+  - type: dropdown
+    id: rebuilds
+    attributes:
+      label: Does the app rebuild this folder by itself after it is deleted?
+      options:
+        - Yes, it is a cache or temporary folder and the app recreates it
+        - I think so, but I have not tested it
+        - No, or I am not sure
+    validations:
+      required: true
+  - type: textarea
+    id: whats_inside
+    attributes:
+      label: What is inside, and what happens after deleting it?
+      description: For example, "thumbnail previews; the app just reloads them" or "downloaded models; they download again when needed". Mention anything that would be lost, such as logins, settings, saved projects or offline files.
+    validations:
+      required: true
+  - type: textarea
+    id: source
+    attributes:
+      label: Source (optional)
+      description: A link to the app's own documentation or support page about this folder helps confirm it is safe.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues and this location has not been suggested yet.
+          required: true

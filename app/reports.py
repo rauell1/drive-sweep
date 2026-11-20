@@ -11,11 +11,14 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from app.phrases import current_language, phrase
 from app.safety import format_bytes
 from app.scanner import _SafeCsvWriter
 
 MAX_PREVIEW_ITEMS = 20000
 _RISK_LABELS = {"safe": "Safe", "caution": "Caution", "critical": "System"}
+# Fixed values written into the CSV, translated there (listed so the translation test covers them).
+REPORT_PHRASES = ("Safe", "Caution", "System", "Contents of this folder", "This item", "Delete Forever", "Recycle Bin")
 
 
 def _clean_item(raw: dict) -> dict | None:
@@ -64,19 +67,26 @@ def write_cleanup_preview(output_path: str, items: list, mode: str = "recycle", 
         }
         dest.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     else:
+        # The CSV is for people (it opens in Excel), so it uses the language chosen in Settings.
+        # JSON stays in English because programs read it.
+        lang = current_language()
+
+        def t(text: str) -> str:
+            return phrase(text, lang)
+
         with dest.open("w", newline="", encoding="utf-8-sig") as fh:
             writer = _SafeCsvWriter(csv.writer(fh))
-            writer.writerow(["DriveSweep cleanup preview (nothing has been deleted)"])
-            writer.writerow(["Generated", generated_at])
-            writer.writerow(["Cleanup mode", mode_label])
-            writer.writerow(["Items", len(rows)])
-            writer.writerow(["Total size", format_bytes(total)])
+            writer.writerow([t("DriveSweep cleanup preview (nothing has been deleted)")])
+            writer.writerow([t("Generated"), generated_at])
+            writer.writerow([t("Cleanup mode"), t(mode_label)])
+            writer.writerow([t("Items"), len(rows)])
+            writer.writerow([t("Total size"), format_bytes(total)])
             writer.writerow([])
-            writer.writerow(["Name", "Path", "Size (Bytes)", "Size", "Safety", "What is removed", "Note"])
+            writer.writerow([t("Name"), t("Path"), t("Size (Bytes)"), t("Size"), t("Safety"), t("What is removed"), t("Note")])
             for r in rows:
                 writer.writerow([
                     r["name"], r["path"], r["size_bytes"], r["size_human"],
-                    r["safety"], r["what_is_removed"], r["note"],
+                    t(r["safety"]), t(r["what_is_removed"]), r["note"],
                 ])
     return {
         "ok": True,

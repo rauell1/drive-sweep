@@ -1,6 +1,6 @@
 ; Inno Setup script for DriveSweep Windows Installer
 #define MyAppName "DriveSweep"
-#define MyAppVersion "0.8.0"
+#define MyAppVersion "0.8.1"
 #define MyAppPublisher "Roy Otieno"
 #define MyAppURL "https://github.com/rauell1/drive-sweep"
 #define MyAppExeName "DriveSweep.exe"

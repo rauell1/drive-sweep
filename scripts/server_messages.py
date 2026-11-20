@@ -8,8 +8,9 @@ Collected:
 - string values of the keys error, message, reason, risk_reason and note in dict literals
 - note= keyword arguments (cleanup item notes)
 - every string returned by safety.explain_path_human, safety._friendly_delete_error and
-  DriveSweepAPI._undo_target
+  DriveSweepAPI._undo_target and _undo_block_reason
 - Cleanup Log action names: "action" values, action_label and *_ACTION constants
+- texts translated in Python: phrase("...") and t("...") calls, and *_PHRASES constants
 
 Run directly to print the list as JSON.
 """
@@ -26,9 +27,13 @@ SOURCES = [
     "api.py", "auto_clean.py", "recycle_restore.py", "reports.py", "safety.py", "scanner.py",
     "scheduler.py", "system_tools.py", "updater.py", "presets.py",
 ]
+# Files outside app/ that also show translated text (the scheduled cleanup notification).
+EXTRA_SOURCES = ["main.py"]
+# Python code that translates with app.phrases: phrase("...") and the local helper t("...").
+PHRASE_FUNCTIONS = {"phrase", "t"}
 # "action" names the entries in the Cleanup Log ("Cleanup", "Empty Recycle Bin", ...).
 MESSAGE_KEYS = {"error", "message", "reason", "risk_reason", "note", "action"}
-EXPLAIN_FUNCTIONS = {"explain_path_human", "_friendly_delete_error", "_undo_target"}
+EXPLAIN_FUNCTIONS = {"explain_path_human", "_friendly_delete_error", "_undo_target", "_undo_block_reason"}
 
 
 def _placeholder(node: ast.expr) -> str:
@@ -74,8 +79,9 @@ def _keep(text: str) -> bool:
 
 def collect() -> list[str]:
     found: set[str] = set()
-    for name in SOURCES:
-        tree = ast.parse((ROOT / "app" / name).read_text(encoding="utf-8"))
+    paths = [ROOT / "app" / n for n in SOURCES] + [ROOT / n for n in EXTRA_SOURCES]
+    for path in paths:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if isinstance(node, ast.Dict):
                 for key, value in zip(node.keys, node.values):
@@ -83,6 +89,13 @@ def collect() -> list[str]:
                         found.update(_text(value))
             elif isinstance(node, ast.Assign) and any(
                 isinstance(t, ast.Name) and (t.id == "action_label" or t.id.endswith("_ACTION")) for t in node.targets
+            ):
+                found.update(_text(node.value))
+            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in PHRASE_FUNCTIONS:
+                if node.args:
+                    found.update(_text(node.args[0]))
+            elif isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id.endswith("_PHRASES") for t in node.targets
             ):
                 found.update(_text(node.value))
             elif isinstance(node, ast.keyword) and node.arg == "note":

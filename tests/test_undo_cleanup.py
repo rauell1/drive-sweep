@@ -148,3 +148,52 @@ def test_permanent_cleanup_cannot_be_undone(tmp_path: Path, monkeypatch):
     append_history({"action": "Cleanup", "mode": "permanent", "freed_bytes": 5, "started_at": "x", "roots": ["C:\\x"]})
     cand = api_mod.DriveSweepAPI().get_undo_candidate()
     assert cand["ok"] is False and "permanently" in cand["reason"]
+
+
+def test_undo_an_earlier_cleanup_by_timestamp(tmp_path: Path, monkeypatch):
+    """Each eligible Cleanup Log entry can be undone, not only the latest, and only its own items return."""
+    monkeypatch.setenv("DRIVESWEEP_DATA_DIR", str(tmp_path / "appdata"))
+    import app.api as api_mod
+    from app.recycle_restore import list_recycled
+    from app.storage import append_history, get_history
+
+    monkeypatch.setattr(api_mod, "_undo_supported", lambda: True)
+    bin_root = tmp_path / "$Recycle.Bin"
+    bin_user = bin_root / "S-1"
+    bin_user.mkdir(parents=True)
+    real_find = api_mod.find_cleanup_items
+    monkeypatch.setattr(api_mod, "find_cleanup_items",
+                        lambda roots, s, f, recycled=None: real_find(roots, s, f, bin_roots=[bin_root], recycled=recycled))
+    monkeypatch.setattr(api_mod, "list_recycled", lambda: list_recycled([bin_root]))
+
+    first, second = tmp_path / "TempA", tmp_path / "TempB"
+    for folder in (first, second):
+        folder.mkdir()
+        (folder / "x.tmp").write_bytes(b"x" * 10)
+    t1 = datetime.now(timezone.utc) - timedelta(hours=2)
+    _recycle(bin_user, "A1.tmp", first / "x.tmp", t1)
+    append_history({"action": "Cleanup", "mode": "recycle", "freed_bytes": 10, "started_at": t1.isoformat(), "roots": [str(first)]})
+    # append_history stamps "now"; move the first record's timestamp back so the windows do not overlap.
+    log = tmp_path / "appdata" / "history.jsonl"
+    lines = log.read_text(encoding="utf-8").splitlines()
+    import json as _json
+    rec = _json.loads(lines[0])
+    rec["timestamp"] = (t1 + timedelta(seconds=1)).isoformat()
+    log.write_text(_json.dumps(rec) + "\n", encoding="utf-8")
+    t2 = datetime.now(timezone.utc)
+    _recycle(bin_user, "B1.tmp", second / "x.tmp", t2)
+    append_history({"action": "Cleanup", "mode": "recycle", "freed_bytes": 10, "started_at": t2.isoformat(), "roots": [str(second)]})
+
+    api = api_mod.DriveSweepAPI()
+    cands = api.get_undo_candidates()["candidates"]
+    assert set(cands) == {h["timestamp"] for h in get_history(10)}
+    older_ts = rec["timestamp"]
+    assert api.get_undo_candidate(older_ts)["item_count"] == 1
+
+    res = api.undo_last_cleanup(True, older_ts)
+    assert res["restored_count"] == 1
+    assert (first / "x.tmp").exists() and not (second / "x.tmp").exists()  # only that cleanup's file
+    again = api.get_undo_candidate(older_ts)
+    assert again["ok"] is False and "already" in again["reason"]
+    assert set(api.get_undo_candidates()["candidates"]) == {get_history(10)[1]["timestamp"]}  # newer one still undoable
+    assert api.get_undo_candidate("not-a-timestamp")["ok"] is False
