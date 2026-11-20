@@ -71,14 +71,17 @@ def run_low_disk_check_cli() -> int:
         # Optional (off by default): clean Safe items to the Recycle Bin before checking space.
         try:
             from app.auto_clean import run_scheduled_cleanup
+            from app.phrases import phrase
             from app.scheduler import show_notification
 
             res = run_scheduled_cleanup()
             if res.get("cleaned"):
                 show_notification(
                     "DriveSweep",
-                    f"Moved {res['freed_human']} of temporary files to the Recycle Bin. "
-                    "Open DriveSweep's Cleanup Log to see them or undo.",
+                    phrase(
+                        "Moved {size} of temporary files to the Recycle Bin. Open DriveSweep's Cleanup Log to see them or undo.",
+                        size=res["freed_human"],
+                    ),
                 )
         except Exception:
             get_logger().exception("Scheduled cleanup failed")

@@ -16,6 +16,7 @@ import os
 import string
 import struct
 from dataclasses import dataclass
+from functools import lru_cache
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
@@ -114,9 +115,22 @@ def _norm(path: str) -> str:
     return os.path.normcase(os.path.normpath(path))
 
 
+@lru_cache(maxsize=4096)
+def _canon(path: str) -> str:
+    """Comparable form of a path. realpath turns short 8.3 names (C:\\Users\\JOHNSM~1) into long
+    ones for the parts that exist, so a TEMP folder given in short form still matches the long
+    path Windows records in the Recycle Bin. Parts that no longer exist are kept as written."""
+    try:
+        return _norm(os.path.realpath(path))
+    except (OSError, ValueError):
+        return _norm(path)
+
+
 def _is_within(path: str, root: str) -> bool:
-    p, r = _norm(path), _norm(root)
-    return p == r or p.startswith(r.rstrip("\\/") + os.sep)
+    for p, r in ((_norm(path), _norm(root)), (_canon(path), _canon(root))):
+        if p == r or p.startswith(r.rstrip("\\/") + os.sep):
+            return True
+    return False
 
 
 def find_cleanup_items(
@@ -125,15 +139,20 @@ def find_cleanup_items(
     finished_at: datetime,
     bin_roots: Iterable[Path] | None = None,
     slack: timedelta = DEFAULT_SLACK,
+    recycled: list[RecycledItem] | None = None,
 ) -> list[RecycledItem]:
-    """Recycle Bin items deleted between start and finish from inside one of ``roots``."""
+    """Recycle Bin items deleted between start and finish from inside one of ``roots``.
+
+    Pass ``recycled`` (from list_recycled) to check several cleanups with one read of the bin.
+    """
     roots = [r for r in roots if r]
     if not roots:
         return []
+    _canon.cache_clear()  # folders may have been created or removed since the last search
     low, high = started_at - slack, finished_at + slack
     found = [
         item
-        for item in list_recycled(bin_roots)
+        for item in (list_recycled(bin_roots) if recycled is None else recycled)
         if low <= item.deleted_at <= high and any(_is_within(item.original_path, r) for r in roots)
     ]
     # Parents first, so a restored folder is in place before anything that belonged inside it.

@@ -49,3 +49,37 @@ def test_json_preview(tmp_path: Path):
 def test_empty_selection_is_refused(tmp_path: Path):
     res = write_cleanup_preview(str(tmp_path / "x.csv"), [], fmt="csv")
     assert res["ok"] is False and not (tmp_path / "x.csv").exists()
+
+
+def test_csv_uses_the_language_from_settings(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("DRIVESWEEP_DATA_DIR", str(tmp_path / "appdata"))
+    from app.storage import load_settings, save_settings
+
+    settings = load_settings()
+    settings["language"] = "de"
+    save_settings(settings)
+    items = _items(tmp_path)
+    out = tmp_path / "vorschau.csv"
+    write_cleanup_preview(str(out), items, mode="recycle", fmt="csv")
+    rows = list(csv.reader(out.open(encoding="utf-8-sig")))
+    assert rows[0][0] == "DriveSweep-Bereinigungsvorschau (es wurde nichts gelöscht)"
+    assert ["Bereinigungsmodus", "Papierkorb"] in rows
+    header = next(r for r in rows if r and r[0] == "Name")
+    assert header[1] == "Pfad" and "Was entfernt wird" in header
+    data = rows[rows.index(header) + 1]
+    assert data[4] == "Sicher" and data[5] == "Inhalt dieses Ordners"
+    # JSON stays English for programs.
+    res = write_cleanup_preview(str(tmp_path / "p.json"), items, fmt="json")
+    assert json.loads(Path(res["path"]).read_text(encoding="utf-8"))["items"][0]["safety"] == "Safe"
+
+
+def test_python_phrases_match_the_interface_table():
+    from app.phrases import _tables, phrase
+
+    tables = _tables()
+    assert set(tables) == {"es", "fr", "de", "pt"} and all(len(t) > 500 for t in tables.values())
+    assert phrase("Recycle Bin", "es") == "Papelera"
+    assert phrase("Moved {size} of temporary files to the Recycle Bin. Open DriveSweep's Cleanup Log to see them or undo.",
+                  "pt", size="2 GB").startswith("2 GB de arquivos")
+    assert phrase("Not a phrase in the table", "fr") == "Not a phrase in the table"
+    assert phrase("Recycle Bin", "en") == "Recycle Bin"

@@ -17,7 +17,7 @@ const ICON_MOON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" s
 const state = {
   theme: "dark",
   language: "en",
-  version: "0.8.0",
+  version: "0.8.1",
   activeTab: "smart",
   dataDir: "",
   installKind: "source",
@@ -685,19 +685,27 @@ async function openExclusionsModal() {
 
 // Puts the files from the most recent Recycle Bin cleanup back where they were (see
 // app/recycle_restore.py). Asks first, then shows what was restored and what was left alone.
-async function runUndoLastCleanup(undoInfo) {
+async function runUndoLastCleanup(undoInfo, isLatest = true) {
   const count = Number(undoInfo.item_count || 0);
   const size = undoInfo.size_human || formatBytes(undoInfo.size_bytes || 0);
-  const body = count === 1
-    ? L("This puts the 1 item ({size}) from your last cleanup back where it was. If a file with the same name exists again, the old copy stays in the Recycle Bin.", { size })
-    : L("This puts the {count} items ({size}) from your last cleanup back where they were. If a file with the same name exists again, the old copy stays in the Recycle Bin.", { count: count.toLocaleString(), size });
-  const ok = await confirmAction(L("Undo last cleanup?"), `<div class="info-box">${escapeHtml(body)}</div>`, L("Undo Cleanup"), "btn-primary");
+  const when = undoInfo.timestamp ? new Date(undoInfo.timestamp).toLocaleString() : "";
+  let body;
+  if (isLatest) {
+    body = count === 1
+      ? L("This puts the 1 item ({size}) from your last cleanup back where it was. If a file with the same name exists again, the old copy stays in the Recycle Bin.", { size })
+      : L("This puts the {count} items ({size}) from your last cleanup back where they were. If a file with the same name exists again, the old copy stays in the Recycle Bin.", { count: count.toLocaleString(), size });
+  } else {
+    body = count === 1
+      ? L("This puts the 1 item ({size}) from the cleanup of {date} back where it was. If a file with the same name exists again, the old copy stays in the Recycle Bin.", { size, date: when })
+      : L("This puts the {count} items ({size}) from the cleanup of {date} back where they were. If a file with the same name exists again, the old copy stays in the Recycle Bin.", { count: count.toLocaleString(), size, date: when });
+  }
+  const ok = await confirmAction(isLatest ? L("Undo last cleanup?") : L("Undo this cleanup?"), `<div class="info-box">${escapeHtml(body)}</div>`, L("Undo Cleanup"), "btn-primary");
   if (!ok) {
     await openHistoryModal();
     return;
   }
   showToast(L("Restoring files from the Recycle Bin..."), "info");
-  const res = await api().undo_last_cleanup(true);
+  const res = await api().undo_last_cleanup(true, undoInfo.timestamp || null);
   if (res.lifetime_stats) state.lifetimeStats = res.lifetime_stats;
   if (res.drives_after) renderDrives(res.drives_after);
   if (typeof res.history_count === "number") updateHeaderCounts(undefined, res.history_count);
@@ -735,11 +743,15 @@ async function runUndoLastCleanup(undoInfo) {
 }
 
 async function openHistoryModal() {
-  const [entries, undoInfo] = await Promise.all([
+  const [entries, undoAll] = await Promise.all([
     api().get_history(50),
-    typeof api().get_undo_candidate === "function" ? api().get_undo_candidate().catch(() => null) : Promise.resolve(null),
+    typeof api().get_undo_candidates === "function" ? api().get_undo_candidates().catch(() => null) : Promise.resolve(null),
   ]);
-  const canUndo = !!(undoInfo && undoInfo.ok && Number(undoInfo.item_count || 0) > 0);
+  // Cleanups that can still be undone, keyed by their log timestamp (one Recycle Bin read).
+  const undoCandidates = (undoAll && undoAll.ok && undoAll.candidates) || {};
+  const latestCleanup = entries.find((h) => String(h.action || "").startsWith("Cleanup"));
+  const undoInfo = latestCleanup ? undoCandidates[latestCleanup.timestamp] : null;
+  const canUndo = !!(undoInfo && Number(undoInfo.item_count || 0) > 0);
   updateHeaderCounts(undefined, entries.length);
 
   // Same rule as get_lifetime_stats in app/storage.py: Recycle Bin empties are listed but not added.
@@ -783,6 +795,9 @@ async function openHistoryModal() {
             ${notCountedNote}
             ${itemPreview}
           </div>
+          ${undoCandidates[h.timestamp] && h !== latestCleanup
+            ? `<button class="btn btn-soft btn-xs btn-undo-entry" data-ts="${escapeHtml(h.timestamp)}">${LH("Undo")}</button>`
+            : ""}
         </div>`;
     })
     .join("");
@@ -792,7 +807,7 @@ async function openHistoryModal() {
     `${summaryHtml}<div class="review-list">${rows || `<p class='muted'>${LH("No cleanup runs recorded yet.")}</p>`}</div>`,
     [
       ...(canUndo
-        ? [{ id: "btn-undo-last-cleanup", text: L("Undo Last Cleanup"), cls: "btn-soft", onClick: () => runUndoLastCleanup(undoInfo) }]
+        ? [{ id: "btn-undo-last-cleanup", text: L("Undo Last Cleanup"), cls: "btn-soft", onClick: () => runUndoLastCleanup(undoInfo, true) }]
         : []),
       {
         text: tr("open_recycle_bin", "Open Recycle Bin"),
@@ -832,6 +847,13 @@ async function openHistoryModal() {
       { text: L("Close"), cls: "btn-primary", onClick: closeModal },
     ]
   );
+
+  document.querySelectorAll(".btn-undo-entry").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const info = undoCandidates[btn.dataset.ts];
+      if (info) runUndoLastCleanup(info, false);
+    });
+  });
 }
 
 async function openUpdatesPrivacyModal(runCheckNow = false) {

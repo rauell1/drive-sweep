@@ -58,16 +58,17 @@ If the new version's window was already open when PowerShell stopped it, the upd
 
 ## 5. Undo, preview export and scheduled cleanup (0.8.0 and later)
 
-These read the real Windows Recycle Bin, which the automated tests can only simulate.
+These use the real Windows Recycle Bin. Automated tests on GitHub's Windows machines cover the basics on every pull request (`tests/test_recycle_bin_windows.py`); this checks the full app on your PC.
 
 1. **Undo.** Note a few files in `%TEMP%`, run a Quick Clean with **Recycle Bin (Safe)**, then open **Cleanup Log** and click **Undo Last Cleanup**.
    - **Expect:** the confirmation shows a plausible item count and size, and after **Undo Cleanup** the files are back in `%TEMP%`.
    - **Expect:** a file the app recreated meanwhile is listed under **Left in the Recycle Bin** and the newer copy is untouched.
    - **Expect:** the Cleanup Log shows an **Undo Cleanup** entry, the lifetime total drops by the restored size, and **Undo Last Cleanup** no longer appears.
-2. **Undo after emptying.** Clean again, empty the Recycle Bin, then open the Cleanup Log. **Expect:** no **Undo Last Cleanup** button.
-3. **Preview export.** Select items, click **Review Selected > Export List (CSV)**, and open the file in Excel. **Expect:** the same items and total as the bottom bar, and nothing deleted.
-4. **Scheduled cleanup.** In **Settings & Updates**, tick **Also clean Safe items automatically**, choose **Daily** and click **Save**. Then run the task now from **Task Scheduler > Task Scheduler Library > DriveSweepLowDiskReminder > Run**.
-   - **Expect:** a "DriveSweep" notification about the space moved to the Recycle Bin, and a **Cleanup (Scheduled)** entry in the Cleanup Log that **Undo Last Cleanup** can reverse.
+2. **Undo an earlier cleanup.** Run two small cleanups of different folders, then click **Undo** next to the older one in the Cleanup Log. **Expect:** only the older cleanup's files come back, and the newer one can still be undone.
+3. **Undo after emptying.** Clean again, empty the Recycle Bin, then open the Cleanup Log. **Expect:** no **Undo Last Cleanup** button.
+4. **Preview export.** Select items, click **Review Selected > Export List (CSV)**, and open the file in Excel. **Expect:** the same items and total as the bottom bar, headings in your chosen language, and nothing deleted.
+5. **Scheduled cleanup.** In **Settings & Updates**, tick **Also clean Safe items automatically**, choose **Daily** and click **Save**. Then run the task now from **Task Scheduler > Task Scheduler Library > DriveSweepLowDiskReminder > Run**.
+   - **Expect:** a "DriveSweep" notification in your chosen language about the space moved to the Recycle Bin, and a **Cleanup (Scheduled)** entry in the Cleanup Log that **Undo Last Cleanup** can reverse.
    - Untick the option and click **Save**. **Expect:** if the low-disk reminder is also off, the task disappears from Task Scheduler.
 
 ## 6. Things that must not happen
