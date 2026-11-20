@@ -3266,6 +3266,7 @@ async function runCleanup(items, mode) {
       </div>
       ${dockerHtml}
       ${failedHtml}
+      ${res.mode === "recycle" && Number(res.deleted_count || 0) > 0 ? `<p class="muted small-text" style="margin:10px 0 0;">${LH("Changed your mind? Open the Cleanup Log and click Undo Last Cleanup to put these files back.")}</p>` : ""}
     `;
   const offerEmptyBin = res.mode === "recycle" && Number(res.freed_bytes || 0) > 0;
 

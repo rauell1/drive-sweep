@@ -9,9 +9,10 @@ When you release, `scripts/bump_version.py` turns the **Unreleased** section int
 ## [0.8.0] - 2026-11-20
 
 ### Added
-- **Undo Last Cleanup** in the Cleanup Log puts the files from your most recent Recycle Bin cleanup back in their original folders. It restores only what that cleanup moved, never overwrites a file that exists again, and asks first.
+- **Undo Last Cleanup** in the Cleanup Log puts the files from your most recent Recycle Bin cleanup back in their original folders. It restores only what that cleanup moved, never overwrites a file that exists again, and asks first. The Cleanup Complete window points to it.
 - **Export List (CSV or JSON)** in **Review Selected** saves exactly what a cleanup would remove, without deleting anything.
 - **Scheduled cleanup of Safe items** (off by default): on the same schedule as the low-disk reminder, the Quick Clean items marked Safe and recommended can go to the Recycle Bin automatically. Always Keep items, items whose app is running, Caution items and custom folders are skipped, and each run can be undone from the Cleanup Log.
+- README screenshots and demo refreshed for 0.8.0.
 - winget: a ready to submit folder for 0.7.6 and steps for submitting again after a closed pull request.
 
 ### Changed
