@@ -89,6 +89,7 @@ def load_settings() -> dict:
         "reminder_enabled": False,
         "reminder_frequency": "weekly",
         "reminder_threshold_pct": 15,
+        "auto_clean_safe": False,
     }
     if not path.exists():
         return default
@@ -126,6 +127,7 @@ def load_settings() -> dict:
             "reminder_enabled": bool(data.get("reminder_enabled", False)),
             "reminder_frequency": rem_freq,
             "reminder_threshold_pct": rem_pct,
+            "auto_clean_safe": bool(data.get("auto_clean_safe", False)),
         }
     except Exception:
         return default
@@ -160,6 +162,7 @@ def save_settings(settings: dict) -> dict:
         "reminder_enabled": bool(settings.get("reminder_enabled", False)),
         "reminder_frequency": rem_freq,
         "reminder_threshold_pct": rem_pct,
+        "auto_clean_safe": bool(settings.get("auto_clean_safe", False)),
     }
     path.write_text(json.dumps(cleaned, indent=2), encoding="utf-8")
     return cleaned
@@ -304,6 +307,15 @@ def append_history(entry: dict) -> dict:
         "items": list(entry.get("items", []))[:50],
         "failed": list(entry.get("failed", []))[:20],
     }
+    # Optional fields: cleanup start time and the paths it cleaned (for Undo last cleanup), and
+    # for an undo, which cleanup it reversed and how much it put back.
+    if entry.get("started_at"):
+        record["started_at"] = str(entry["started_at"])
+    if entry.get("roots"):
+        record["roots"] = [str(p) for p in list(entry["roots"])[:2000]]
+    for key in ("undo_of", "restored_bytes", "restored_count"):
+        if entry.get(key) is not None:
+            record[key] = entry[key]
     path = _history_path()
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(record) + "\n")
@@ -332,6 +344,17 @@ def get_history(limit: int = 50) -> list[dict]:
     return entries[:limit]
 
 
+# Emptying the Recycle Bin is logged but not added to the lifetime total: files DriveSweep moved
+# there were already counted by the cleanup that moved them, so counting the empty again would
+# count the same space twice.
+NOT_COUNTED_ACTIONS = frozenset({"Empty Recycle Bin", "Undo Cleanup"})
+
+
+def counts_toward_total(record: dict) -> bool:
+    """True when a Cleanup Log record adds to the lifetime space freed total."""
+    return str(record.get("action") or "Cleanup") not in NOT_COUNTED_ACTIONS
+
+
 def get_lifetime_stats() -> dict:
     """Compute total cleanup runs and cumulative freed bytes from local history."""
     path = _history_path()
@@ -347,12 +370,19 @@ def get_lifetime_stats() -> dict:
                     continue
                 try:
                     rec = json.loads(line)
+                    if not isinstance(rec, dict):
+                        continue
+                    # An undo puts files back, so what it restored no longer counts as freed.
+                    total_freed -= max(0, int(rec.get("restored_bytes", 0) or 0))
+                    if not counts_toward_total(rec):
+                        continue
                     total_runs += 1
                     total_freed += max(0, int(rec.get("freed_bytes", 0) or 0))
                 except (json.JSONDecodeError, TypeError, ValueError):
                     continue
     except OSError:
         return {"total_runs": 0, "lifetime_freed_bytes": 0, "lifetime_freed_human": "0 B"}
+    total_freed = max(0, total_freed)
     return {
         "total_runs": total_runs,
         "lifetime_freed_bytes": total_freed,

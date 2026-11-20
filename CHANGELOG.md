@@ -6,6 +6,18 @@ When you release, `scripts/bump_version.py` turns the **Unreleased** section int
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-20
+
+### Added
+- **Undo Last Cleanup** in the Cleanup Log puts the files from your most recent Recycle Bin cleanup back in their original folders. It restores only what that cleanup moved, never overwrites a file that exists again, and asks first.
+- **Export List (CSV or JSON)** in **Review Selected** saves exactly what a cleanup would remove, without deleting anything.
+- **Scheduled cleanup of Safe items** (off by default): on the same schedule as the low-disk reminder, the Quick Clean items marked Safe and recommended can go to the Recycle Bin automatically. Always Keep items, items whose app is running, Caution items and custom folders are skipped, and each run can be undone from the Cleanup Log.
+- winget: a ready to submit folder for 0.7.6 and steps for submitting again after a closed pull request.
+
+### Changed
+- Messages from the app's engine are now translated too: update and Windows Tools errors, safety explanations on hover, cleanup item notes and Cleanup Log entries. Paths, numbers and file names inside them stay as they are.
+- The lifetime space freed total no longer counts the same files twice: emptying the Recycle Bin is listed in the Cleanup Log but not added again, and an undo subtracts what it restored. Existing logs are recalculated the same way.
+
 ## [0.7.6] - 2026-11-18
 
 ### Security
@@ -99,7 +111,8 @@ When you release, `scripts/bump_version.py` turns the **Unreleased** section int
 ## 0.2.0 to 0.2.8 - 2026-11-15
 - First public release with Administrator mode and CI (0.2.0), then local only privacy guarantees, a SHA-256 verified updater, wider cache detection and interface polish.
 
-[Unreleased]: https://github.com/rauell1/drive-sweep/compare/v0.7.6...HEAD
+[Unreleased]: https://github.com/rauell1/drive-sweep/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/rauell1/drive-sweep/compare/v0.7.6...v0.8.0
 [0.7.6]: https://github.com/rauell1/drive-sweep/compare/v0.7.5...v0.7.6
 [0.7.5]: https://github.com/rauell1/drive-sweep/compare/v0.7.4...v0.7.5
 [0.7.4]: https://github.com/rauell1/drive-sweep/compare/v0.7.3...v0.7.4

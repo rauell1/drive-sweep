@@ -7,7 +7,7 @@ import platform
 import subprocess
 import sys
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import webview
@@ -25,6 +25,10 @@ from app.safety import (
     run_docker_builder_prune,
     sanitized_subprocess_env,
 )
+from app.recycle_restore import find_cleanup_items, restore_items
+from app.auto_clean import is_enabled as auto_clean_enabled
+from app.auto_clean import set_enabled as set_auto_clean
+from app.reports import write_cleanup_preview
 from app.scanner import DriveScanner, list_drives
 from app.scheduler import (
     configure_windows_reminder_task,
@@ -70,6 +74,11 @@ from app.updater import (
     download_and_verify_update,
     launch_downloaded_update,
 )
+
+
+def _undo_supported() -> bool:
+    """Undo reads the Windows Recycle Bin, so it exists only on Windows."""
+    return os.name == "nt"
 
 
 class DriveSweepAPI:
@@ -403,6 +412,7 @@ class DriveSweepAPI:
         result,
         docker_result: dict | None,
         drives_before: dict[str, int],
+        started_at: str | None = None,
     ) -> dict:
         contents_only_paths = {
             os.path.normcase(os.path.normpath(t["path"]))
@@ -440,6 +450,9 @@ class DriveSweepAPI:
                 "cancelled": bool(result.cancelled),
                 "items": logged_items,
                 "failed": result.failed,
+                # Used by Undo last cleanup to find what this cleanup moved to the Recycle Bin.
+                "started_at": started_at,
+                "roots": [d["path"] for d in result.deleted],
             })
             get_logger().info(
                 "%s (%s): %s freed, %d cleaned, %d failed",
@@ -473,9 +486,10 @@ class DriveSweepAPI:
         include_docker_prune: bool = False,
     ) -> dict:
         drives_before = {d["path"]: d["free_bytes"] for d in list_drives()}
+        started_at = datetime.now(timezone.utc).isoformat()
         result = delete_targets(targets, mode=mode, exclusions=get_exclusions())
         docker_result = run_docker_builder_prune() if include_docker_prune else None
-        return self._finalize_cleanup(targets, result, docker_result, drives_before)
+        return self._finalize_cleanup(targets, result, docker_result, drives_before, started_at)
 
     def start_cleanup(
         self,
@@ -501,6 +515,7 @@ class DriveSweepAPI:
 
         def _worker() -> None:
             drives_before = {d["path"]: d["free_bytes"] for d in list_drives()}
+            started_at = datetime.now(timezone.utc).isoformat()
 
             def on_progress(done: int, total_items: int, current_path: str, freed_bytes: int) -> None:
                 with self._cleanup_lock:
@@ -524,7 +539,7 @@ class DriveSweepAPI:
                         self._cleanup_state["current_path"] = "Docker builder cache"
                     docker_result = run_docker_builder_prune()
 
-                payload = self._finalize_cleanup(targets, result, docker_result, drives_before)
+                payload = self._finalize_cleanup(targets, result, docker_result, drives_before, started_at)
                 with self._cleanup_lock:
                     self._cleanup_state["status"] = "cancelled" if result.cancelled else "completed"
                     self._cleanup_state["done"] = self._cleanup_state["total"]
@@ -574,36 +589,47 @@ class DriveSweepAPI:
     def get_treemap_data(self, folder_path: str | None = None) -> dict:
         return self.scanner.get_treemap_data(folder_path=folder_path)
 
-    def export_scan_report(self, fmt: str = "csv") -> dict:
-        norm_fmt = "json" if str(fmt or "").strip().lower() == "json" else "csv"
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        default_name = f"DriveSweep-Report-{ts}.{norm_fmt}"
-        output_path = ""
-
+    def _pick_save_path(self, default_name: str, norm_fmt: str) -> str | None:
+        """Ask where to save a report. Returns None if the user cancelled, or a default path in
+        Documents when no window is available (tests, self-test)."""
         if self._window is not None:
             try:
-                file_types = (
-                    ("JSON Report (*.json)",)
-                    if norm_fmt == "json"
-                    else ("CSV Spreadsheet (*.csv)",)
-                )
+                file_types = ("JSON Report (*.json)",) if norm_fmt == "json" else ("CSV Spreadsheet (*.csv)",)
                 picked = self._window.create_file_dialog(
                     webview.SAVE_DIALOG,
                     save_filename=default_name,
                     file_types=file_types,
                 )
                 if not picked:
-                    return {"ok": False, "cancelled": True}
-                output_path = picked[0] if isinstance(picked, (list, tuple)) else str(picked)
+                    return None
+                return picked[0] if isinstance(picked, (list, tuple)) else str(picked)
             except Exception:
-                output_path = ""
+                pass
+        docs = Path.home() / "Documents"
+        base_dir = docs if docs.exists() else get_app_data_dir()
+        return str(base_dir / default_name)
 
-        if not output_path:
-            docs = Path.home() / "Documents"
-            base_dir = docs if docs.exists() else get_app_data_dir()
-            output_path = str(base_dir / default_name)
-
+    def export_scan_report(self, fmt: str = "csv") -> dict:
+        norm_fmt = "json" if str(fmt or "").strip().lower() == "json" else "csv"
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        output_path = self._pick_save_path(f"DriveSweep-Report-{ts}.{norm_fmt}", norm_fmt)
+        if output_path is None:
+            return {"ok": False, "cancelled": True}
         return self.scanner.export_scan_report(output_path, fmt=norm_fmt)
+
+    def export_cleanup_preview(self, items: list, mode: str = "recycle", fmt: str = "csv") -> dict:
+        """Save the current selection as a list, without deleting anything."""
+        norm_fmt = "json" if str(fmt or "").strip().lower() == "json" else "csv"
+        if not items:
+            return {"ok": False, "error": "Nothing is selected, so there is nothing to export."}
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        output_path = self._pick_save_path(f"DriveSweep-Cleanup-Preview-{ts}.{norm_fmt}", norm_fmt)
+        if output_path is None:
+            return {"ok": False, "cancelled": True}
+        try:
+            return write_cleanup_preview(output_path, items, mode=mode, fmt=norm_fmt)
+        except OSError as exc:
+            return {"ok": False, "error": f"Could not save the preview: {exc.strerror or exc}"}
 
     def start_duplicate_scan(self, min_size_kb: int = 100) -> dict:
         nodes = self.scanner.get_nodes_snapshot()
@@ -664,6 +690,83 @@ class DriveSweepAPI:
 
     def inspect_system_space(self, max_age_days: int = 30) -> dict:
         return inspect_system_space(max_installer_age_days=int(max_age_days or 30))
+
+    def _undo_target(self) -> tuple[dict | None, str]:
+        """The cleanup Undo would reverse: the most recent cleanup, if it used the Recycle Bin
+        and has not been undone. Returns (record, reason when there is none)."""
+        history = get_history(limit=200)
+        undone = {h.get("undo_of") for h in history if h.get("action") == "Undo Cleanup"}
+        for record in history:
+            if not str(record.get("action", "")).startswith("Cleanup"):
+                continue
+            if record.get("timestamp") in undone:
+                return None, "The last cleanup was already undone."
+            if record.get("mode") != "recycle":
+                return None, "The last cleanup deleted files permanently, so it cannot be undone."
+            if not record.get("started_at") or not record.get("roots"):
+                return None, "The last cleanup was made by an older DriveSweep version and cannot be undone."
+            return record, ""
+        return None, "No cleanup to undo yet."
+
+    def _undo_items(self, record: dict) -> list:
+        try:
+            started = datetime.fromisoformat(str(record["started_at"]))
+            finished = datetime.fromisoformat(str(record["timestamp"]))
+        except (KeyError, ValueError):
+            return []
+        return find_cleanup_items(record.get("roots") or [], started, finished)
+
+    def get_undo_candidate(self) -> dict:
+        """What Undo last cleanup would restore, for the confirmation shown before it runs."""
+        if not _undo_supported():
+            return {"ok": False, "reason": "Undo is only available on Windows."}
+        record, reason = self._undo_target()
+        if not record:
+            return {"ok": False, "reason": reason}
+        items = self._undo_items(record)
+        if not items:
+            return {"ok": False, "reason": "The files from the last cleanup are no longer in the Recycle Bin."}
+        size = sum(it.size_bytes for it in items)
+        return {
+            "ok": True,
+            "timestamp": record.get("timestamp"),
+            "item_count": len(items),
+            "size_bytes": size,
+            "size_human": format_bytes(size),
+        }
+
+    def undo_last_cleanup(self, confirmed: bool = False) -> dict:
+        """Put the files from the last Recycle Bin cleanup back where they were."""
+        if confirmed is not True:
+            return {"ok": False, "error": "Undo needs your confirmation first."}
+        if not _undo_supported():
+            return {"ok": False, "error": "Undo is only available on Windows."}
+        record, reason = self._undo_target()
+        if not record:
+            return {"ok": False, "error": reason}
+        res = restore_items(self._undo_items(record))
+        if res["restored_count"]:
+            try:
+                append_history({
+                    "action": "Undo Cleanup",
+                    "mode": "restore",
+                    "freed_bytes": 0,
+                    "freed_human": "0 B",
+                    "deleted_count": 0,
+                    "failed_count": len(res["failed"]),
+                    "items": res["restored"],
+                    "failed": res["failed"] + res["skipped"],
+                    "undo_of": record.get("timestamp"),
+                    "restored_bytes": res["restored_bytes"],
+                    "restored_count": res["restored_count"],
+                })
+                get_logger().info("Undo Cleanup: %d items restored (%s)", res["restored_count"], res["restored_human"])
+            except Exception:
+                get_logger().exception("Failed to log undo")
+        res["history_count"] = len(get_history(limit=200))
+        res["lifetime_stats"] = get_lifetime_stats()
+        res["drives_after"] = list_drives()
+        return res
 
     def get_recycle_bin_info(self, drive_root: str | None = None) -> dict:
         """Current Recycle Bin size and item count, shown in the confirmation before emptying it."""
@@ -809,6 +912,7 @@ class DriveSweepAPI:
         threshold = int(settings.get("reminder_threshold_pct", 15))
         return {
             "enabled": bool(settings.get("reminder_enabled", False)),
+            "auto_clean_safe": bool(settings.get("auto_clean_safe", False)),
             "frequency": settings.get("reminder_frequency", "weekly"),
             "threshold_pct": threshold,
             "task": task_info,
@@ -820,15 +924,22 @@ class DriveSweepAPI:
         enabled: bool,
         frequency: str = "weekly",
         threshold_pct: int = 15,
+        auto_clean_safe: bool | None = None,
     ) -> dict:
-        task_res = configure_windows_reminder_task(bool(enabled), frequency=frequency)
+        # One scheduled task runs both the low-disk alert and the optional Safe items cleanup.
+        auto_clean = auto_clean_enabled() if auto_clean_safe is None else bool(auto_clean_safe)
+        want_task = bool(enabled) or auto_clean
+        task_res = configure_windows_reminder_task(want_task, frequency=frequency)
+        task_ok = bool(task_res.get("ok", False))
         settings = set_reminder_settings(
-            enabled=bool(enabled) and bool(task_res.get("ok", False)),
+            enabled=bool(enabled) and task_ok,
             frequency=frequency,
             threshold_pct=int(threshold_pct),
         )
+        settings = set_auto_clean(auto_clean and task_ok)
         return {
             **task_res,
+            "auto_clean_safe": settings["auto_clean_safe"],
             "enabled": settings["reminder_enabled"],
             "frequency": settings["reminder_frequency"],
             "threshold_pct": settings["reminder_threshold_pct"],

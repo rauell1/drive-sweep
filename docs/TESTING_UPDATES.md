@@ -56,11 +56,26 @@ This checks that a new version which fails to open is replaced by the previous o
 
 If the new version's window was already open when PowerShell stopped it, the update counts as successful and no rollback happens. Run the test again; on a very fast PC, change `300` to `0`.
 
-## 5. Things that must not happen
+## 5. Undo, preview export and scheduled cleanup (0.8.0 and later)
+
+These read the real Windows Recycle Bin, which the automated tests can only simulate.
+
+1. **Undo.** Note a few files in `%TEMP%`, run a Quick Clean with **Recycle Bin (Safe)**, then open **Cleanup Log** and click **Undo Last Cleanup**.
+   - **Expect:** the confirmation shows a plausible item count and size, and after **Undo Cleanup** the files are back in `%TEMP%`.
+   - **Expect:** a file the app recreated meanwhile is listed under **Left in the Recycle Bin** and the newer copy is untouched.
+   - **Expect:** the Cleanup Log shows an **Undo Cleanup** entry, the lifetime total drops by the restored size, and **Undo Last Cleanup** no longer appears.
+2. **Undo after emptying.** Clean again, empty the Recycle Bin, then open the Cleanup Log. **Expect:** no **Undo Last Cleanup** button.
+3. **Preview export.** Select items, click **Review Selected > Export List (CSV)**, and open the file in Excel. **Expect:** the same items and total as the bottom bar, and nothing deleted.
+4. **Scheduled cleanup.** In **Settings & Updates**, tick **Also clean Safe items automatically**, choose **Daily** and click **Save**. Then run the task now from **Task Scheduler > Task Scheduler Library > DriveSweepLowDiskReminder > Run**.
+   - **Expect:** a "DriveSweep" notification about the space moved to the Recycle Bin, and a **Cleanup (Scheduled)** entry in the Cleanup Log that **Undo Last Cleanup** can reverse.
+   - Untick the option and click **Save**. **Expect:** if the low-disk reminder is also off, the task disappears from Task Scheduler.
+
+## 6. Things that must not happen
 
 - No update starts without you clicking **Download & Update vX.Y.Z**.
 - With **Check GitHub Releases on startup** turned off (the default), starting DriveSweep makes no request to GitHub.
 - An update never offers an older version or a file from anywhere other than this repository's GitHub releases.
+- The Recycle Bin is never emptied without the confirmation, and a scheduled run never cleans anything while **Also clean Safe items automatically** is off.
 
 ## After testing
 

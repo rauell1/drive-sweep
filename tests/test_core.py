@@ -789,3 +789,23 @@ def test_empty_recycle_bin_requires_confirmation(tmp_path: Path, monkeypatch):
         assert res["ok"] is False
         assert "confirm" in res["error"].lower()
     assert calls == []
+
+
+def test_lifetime_total_does_not_count_recycle_bin_empties_twice(tmp_path: Path, monkeypatch):
+    """A Recycle Bin cleanup counts once; emptying the Recycle Bin afterwards is logged but not
+    added again, so the lifetime total is not inflated."""
+    monkeypatch.setenv("DRIVESWEEP_DATA_DIR", str(tmp_path / "appdata"))
+    from app.storage import append_history, counts_toward_total, get_history, get_lifetime_stats
+
+    append_history({"action": "Cleanup", "mode": "recycle", "freed_bytes": 1000, "deleted_count": 2})
+    append_history({"action": "Empty Recycle Bin", "mode": "permanent", "freed_bytes": 1500, "deleted_count": 3})
+    append_history({"action": "Hibernation Disabled", "mode": "system", "freed_bytes": 200, "deleted_count": 1})
+
+    stats = get_lifetime_stats()
+    assert stats["lifetime_freed_bytes"] == 1200
+    assert stats["total_runs"] == 2
+    # The empty is still listed in the Cleanup Log.
+    actions = [h["action"] for h in get_history(10)]
+    assert "Empty Recycle Bin" in actions
+    assert counts_toward_total({"action": "Cleanup"}) and not counts_toward_total({"action": "Empty Recycle Bin"})
+    assert counts_toward_total({})

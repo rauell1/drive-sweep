@@ -152,3 +152,54 @@ def test_no_hard_coded_english_in_app_js():
         if any(p.search(stripped) for p in _UNTRANSLATED_PATTERNS):
             offenders.append(f"{number}: {line.strip()[:120]}")
     assert not offenders, "Wrap these in L() and add translations:\n" + "\n".join(offenders)
+
+
+def _server_messages() -> list[str]:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("server_messages", ROOT / "scripts" / "server_messages.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.collect()
+
+
+def test_every_backend_message_is_translated():
+    """Errors, statuses and explanations from app/*.py are translated in every language.
+
+    When this fails after adding a message in Python, add its translation to app/ui/i18n.js.
+    """
+    messages = _server_messages()
+    assert len(messages) > 150, "message extraction found too few messages"
+    for lang, table in _phrase_tables().items():
+        missing = sorted(m for m in messages if m not in table)
+        assert not missing, f"{lang} is missing translations for backend messages: {missing[:10]}"
+
+
+def test_server_templates_match_backend_messages():
+    """SERVER_TEMPLATES in i18n.js lists exactly the backend messages with a variable part."""
+    src = I18N_JS.read_text(encoding="utf-8")
+    block = re.search(r"const SERVER_TEMPLATES = \[(.*?)\];", src, re.S)
+    assert block, "SERVER_TEMPLATES not found in i18n.js"
+    listed = {json.loads(m) for m in re.findall(r'"(?:[^"\\]|\\.)*"', block.group(1))}
+    expected = {m for m in _server_messages() if re.search(r"\{\w+\}", m)}
+    assert listed == expected, f"regenerate SERVER_TEMPLATES: missing {sorted(expected - listed)[:5]}, extra {sorted(listed - expected)[:5]}"
+
+
+def test_phrase_translates_messages_with_variable_parts():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js not available")
+    script = (
+        "global.window = {}; global.document = { querySelectorAll: () => [] };"
+        f"require({json.dumps(str(I18N_JS))});"
+        "const I = window.DriveSweepI18n; I.setLanguage('de');"
+        "console.log(JSON.stringify(["
+        "I.phrase('Folder does not exist: C:\\\\Fotos (2024)'),"
+        "I.phrase('JavaScript packages for a project. Inactive for 45 days. Safe to delete if inactive; restore anytime with npm or pnpm install.'),"
+        "I.phrase('holiday photo.jpg')]));"
+    )
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True, encoding="utf-8", check=True)
+    folder, js_note, filename = json.loads(out.stdout)
+    assert folder == "Der Ordner existiert nicht: C:\\Fotos (2024)"
+    assert "Seit 45 Tagen inaktiv." in js_note and js_note.startswith("JavaScript-Pakete")
+    assert filename == "holiday photo.jpg"

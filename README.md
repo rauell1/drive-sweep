@@ -42,7 +42,7 @@ DriveSweep runs on 64 bit Windows 10 (1809 or later) and Windows 11, including W
 ### Option A: Windows Installer (Recommended)
 
 1. Open the **[GitHub Releases](https://github.com/rauell1/drive-sweep/releases)** page.
-2. Under the latest release (**Assets** section at the bottom), click **`DriveSweep-Setup-0.7.6.exe`** (or the newest version listed) to download it.
+2. Under the latest release (**Assets** section at the bottom), click **`DriveSweep-Setup-0.8.0.exe`** (or the newest version listed) to download it.
 3. Open your `Downloads` folder and double-click the downloaded `DriveSweep-Setup-...exe` file.
 4. **If Windows shows a "Windows protected your PC" (SmartScreen) blue popup:**
    - DriveSweep releases are not code signed yet (see [Code Signing Policy](#code-signing-policy)), so Windows shows this for a publisher it does not know. Before running, you can [verify the download](#verifying-downloads) against `SHA256SUMS.txt` and its build provenance.
@@ -66,6 +66,8 @@ DriveSweep runs on 64 bit Windows 10 (1809 or later) and Windows 11, including W
 3. Click **+ Add Custom Folder** anytime to save any custom cleanup folder to your **Custom Folders** list (critical Windows system folders stay blocked).
 4. Turn toggles on or off for any item you want to clean or skip. Click **Open Folder** on any row to inspect the actual folder in Windows Explorer before deleting.
 5. Look at the bottom bar: keep **Recycle Bin (Safe)** selected (recommended), then click the blue **Clean** button and confirm.
+   - Want a record first? Click **Review Selected**, then **Export List (CSV)** or **Export List (JSON)** to save exactly what would be removed. Exporting deletes nothing.
+   - Changed your mind afterwards? Open **Cleanup Log** and click **Undo Last Cleanup** to put the files from your last Recycle Bin cleanup back where they were.
 6. Windows system temp folders (such as `C:\Windows\Temp` and Windows Update downloads) need Administrator rights. Click **Restart as Admin** in the sidebar when you want to include them.
 
 ### 2. Drive Scanner, Interactive Disk Map & Duplicate Finder
@@ -86,10 +88,12 @@ Click **Windows Tools** on the left sidebar to open the dedicated Windows Space 
 - **WinSxS Component Store (DISM):** Safely analyze and trim superseded Windows Update backups with structured KPI readouts and Administrator Cleanup Log recording.
 - **Hibernation & Virtual Disks:** View `hiberfil.sys` size, enable/disable Windows hibernation in one click, inspect WSL2 / Docker `.vhdx` virtual disks with proportional usage bars, reveal files in Explorer, and run one-click **Shrink Disk** compaction right inside the app. Shrinking first runs `wsl --shutdown`, which closes every running Linux distribution and Docker Desktop's engine, so DriveSweep asks you to confirm first.
 
-### 4. Always Keep, Cleanup Log & Scheduled Low-Disk Reminders
+### 4. Always Keep, Cleanup Log, Undo & Scheduled Tasks
 - **Always Keep:** Protect any folder or file from deletion across Quick Clean, Large Files & Folders, Drive Scanner, and Duplicates by clicking **Keep** on any row, or by opening **Always Keep** in the sidebar and clicking **+ Add Folder...**. You can remove protected paths from this list anytime.
-- **Cleanup Log:** Shows a local record of past cleanups on your PC and includes an **Open Recycle Bin** button for quick restoration.
-- **Settings & Updates:** Switch UI language (`English`, `Español`, `Français`, `Deutsch`, `Português`), configure an optional Windows Task Scheduler low-disk space reminder, verify local storage privacy, and check or install updates via GitHub Releases Setup.
+- **Cleanup Log:** Shows a local record of past cleanups on your PC, with the lifetime space freed. Emptying the Recycle Bin is listed but not added to that total, so the same files are never counted twice.
+- **Undo Last Cleanup:** Puts the files from your most recent Recycle Bin cleanup back in their original folders. It only restores items that cleanup moved, and never overwrites a file that exists again; anything it cannot restore stays in the Recycle Bin. A cleanup made with **Delete Forever** cannot be undone.
+- **Settings & Updates:** Switch UI language (`English`, `Español`, `Français`, `Deutsch`, `Português`), set up the optional schedule, verify local storage privacy, and check or install updates via GitHub Releases Setup.
+- **Optional schedule (Windows Task Scheduler):** Off by default. It can warn you when a drive runs low on space, and, if you also tick **Also clean Safe items automatically**, move the Quick Clean items marked **Safe** and recommended to the Recycle Bin on the same schedule. Always Keep items, items whose app is running, **Caution** items and your custom folders are skipped, and every run appears in the Cleanup Log, where you can undo it.
 
 ### 5. Updates
 Open **Settings & Updates** (left sidebar) -> **Check for Updates**. DriveSweep checks GitHub Releases over HTTPS and updates **the copy you are running**:
@@ -148,11 +152,11 @@ Every release includes three ways to check that a file is genuine and unchanged:
 
 1. **Checksum.** In PowerShell, compare the file's hash with the matching line in `SHA256SUMS.txt` from the same release:
    ```powershell
-   (Get-FileHash .\DriveSweep-Setup-0.7.6.exe -Algorithm SHA256).Hash.ToLower()
+   (Get-FileHash .\DriveSweep-Setup-0.8.0.exe -Algorithm SHA256).Hash.ToLower()
    ```
 2. **Build provenance.** Proves the file was built by this repository's GitHub Actions workflow from a specific commit (requires the [GitHub CLI](https://cli.github.com)):
    ```powershell
-   gh attestation verify .\DriveSweep-Setup-0.7.6.exe --repo rauell1/drive-sweep
+   gh attestation verify .\DriveSweep-Setup-0.8.0.exe --repo rauell1/drive-sweep
    ```
 3. **Software bill of materials.** `DriveSweep-sbom.cdx.json` lists every bundled Python package and version.
 
