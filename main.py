@@ -9,7 +9,7 @@ from pathlib import Path
 import webview
 
 from app.api import DriveSweepAPI
-from app.logger import setup_logging
+from app.logger import get_logger, setup_logging
 from app.safety import is_admin, relaunch_as_admin
 from app.scheduler import evaluate_low_disk_alerts, show_low_disk_notification
 from app.storage import load_settings
@@ -67,9 +67,26 @@ def run_low_disk_check_cli() -> int:
     """Headless low-disk check invoked by Windows Task Scheduler."""
     settings = load_settings()
     threshold = int(settings.get("reminder_threshold_pct", 15))
-    report = evaluate_low_disk_alerts(threshold_free_pct=threshold)
-    if report["has_alerts"]:
-        show_low_disk_notification(report["alerts"])
+    if settings.get("auto_clean_safe"):
+        # Optional (off by default): clean Safe items to the Recycle Bin before checking space.
+        try:
+            from app.auto_clean import run_scheduled_cleanup
+            from app.scheduler import show_notification
+
+            res = run_scheduled_cleanup()
+            if res.get("cleaned"):
+                show_notification(
+                    "DriveSweep",
+                    f"Moved {res['freed_human']} of temporary files to the Recycle Bin. "
+                    "Open DriveSweep's Cleanup Log to see them or undo.",
+                )
+        except Exception:
+            get_logger().exception("Scheduled cleanup failed")
+    # The same scheduled task serves both features, so the alert runs only if it is turned on.
+    if settings.get("reminder_enabled", True):
+        report = evaluate_low_disk_alerts(threshold_free_pct=threshold)
+        if report["has_alerts"]:
+            show_low_disk_notification(report["alerts"])
     return 0
 
 

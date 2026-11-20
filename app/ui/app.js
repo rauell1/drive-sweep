@@ -17,7 +17,7 @@ const ICON_MOON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" s
 const state = {
   theme: "dark",
   language: "en",
-  version: "0.7.6",
+  version: "0.8.0",
   activeTab: "smart",
   dataDir: "",
   installKind: "source",
@@ -61,8 +61,40 @@ const state = {
   dupKeepStrategy: "newest",
 };
 
+// Messages the Python side returns (errors, statuses, explanations) are English. Translate them as
+// results arrive, so every place that shows res.error or res.message shows the user's language.
+// See scripts/server_messages.py for how the list of messages is kept complete.
+const SERVER_MESSAGE_KEYS = ["error", "message", "reason"];
+const SERVER_NESTED_KEYS = ["result", "docker_result", "update"];
+let apiProxy = null;
+let apiProxyTarget = null;
+
+function translateServerResult(value, depth = 0) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || depth > 1) return value;
+  for (const key of SERVER_MESSAGE_KEYS) {
+    if (typeof value[key] === "string" && value[key]) value[key] = L(value[key]);
+  }
+  for (const key of SERVER_NESTED_KEYS) {
+    if (value[key] && typeof value[key] === "object") translateServerResult(value[key], depth + 1);
+  }
+  return value;
+}
+
 function api() {
-  return window.pywebview.api;
+  const target = window.pywebview.api;
+  if (apiProxy && apiProxyTarget === target) return apiProxy;
+  apiProxyTarget = target;
+  apiProxy = new Proxy(target, {
+    get(obj, prop) {
+      const member = obj[prop];
+      if (typeof member !== "function") return member;
+      return (...args) => {
+        const out = member.apply(obj, args);
+        return out && typeof out.then === "function" ? out.then((res) => translateServerResult(res)) : translateServerResult(out);
+      };
+    },
+  });
+  return apiProxy;
 }
 
 const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;", "`": "&#96;" };
@@ -539,6 +571,13 @@ function updateDriveHealthPill() {
   text.textContent = parts.join(" | ");
 }
 
+// Recycle Bin empties are logged but not added to the lifetime total (see app/storage.py).
+const NOT_COUNTED_ACTIONS = new Set(["Empty Recycle Bin"]);
+
+function countsTowardTotal(entry) {
+  return !NOT_COUNTED_ACTIONS.has(String((entry && entry.action) || "Cleanup"));
+}
+
 function recordLifetimeCleanup(freedBytes) {
   const b = Math.max(0, Number(freedBytes || 0));
   if (!state.lifetimeStats) {
@@ -644,13 +683,70 @@ async function openExclusionsModal() {
   });
 }
 
+// Puts the files from the most recent Recycle Bin cleanup back where they were (see
+// app/recycle_restore.py). Asks first, then shows what was restored and what was left alone.
+async function runUndoLastCleanup(undoInfo) {
+  const count = Number(undoInfo.item_count || 0);
+  const size = undoInfo.size_human || formatBytes(undoInfo.size_bytes || 0);
+  const body = count === 1
+    ? L("This puts the 1 item ({size}) from your last cleanup back where it was. If a file with the same name exists again, the old copy stays in the Recycle Bin.", { size })
+    : L("This puts the {count} items ({size}) from your last cleanup back where they were. If a file with the same name exists again, the old copy stays in the Recycle Bin.", { count: count.toLocaleString(), size });
+  const ok = await confirmAction(L("Undo last cleanup?"), `<div class="info-box">${escapeHtml(body)}</div>`, L("Undo Cleanup"), "btn-primary");
+  if (!ok) {
+    await openHistoryModal();
+    return;
+  }
+  showToast(L("Restoring files from the Recycle Bin..."), "info");
+  const res = await api().undo_last_cleanup(true);
+  if (res.lifetime_stats) state.lifetimeStats = res.lifetime_stats;
+  if (res.drives_after) renderDrives(res.drives_after);
+  if (typeof res.history_count === "number") updateHeaderCounts(undefined, res.history_count);
+  updateDriveHealthPill();
+  state.windowsData = null;
+  if (!res.restored_count && res.error) {
+    showToast(res.error, "danger");
+    await openHistoryModal();
+    return;
+  }
+  const leftAlone = [...(res.skipped || []), ...(res.failed || [])];
+  const leftHtml = leftAlone.length
+    ? `<div class="caution-box" style="margin-top:12px;">
+         <strong>${LH("Left in the Recycle Bin ({count}):", { count: leftAlone.length })}</strong>
+         <ul>${leftAlone.slice(0, 15).map((f) => `<li><code>${escapeHtml(f.path)}</code>: ${LH(f.error)}</li>`).join("")}</ul>
+       </div>`
+    : "";
+  showModal(
+    L("Cleanup Undone"),
+    `<div class="summary-strip">
+       <div>${LH("Restored:")} <strong class="accent-good">${escapeHtml(res.restored_human || "0 B")}</strong></div>
+       <div>${LH("Items restored:")} <strong>${Number(res.restored_count || 0)}</strong></div>
+     </div>${leftHtml}`,
+    [
+      {
+        text: L("Done"),
+        cls: "btn-primary",
+        onClick: async () => {
+          closeModal();
+          await loadSmartScan();
+        },
+      },
+    ]
+  );
+}
+
 async function openHistoryModal() {
-  const entries = await api().get_history(50);
+  const [entries, undoInfo] = await Promise.all([
+    api().get_history(50),
+    typeof api().get_undo_candidate === "function" ? api().get_undo_candidate().catch(() => null) : Promise.resolve(null),
+  ]);
+  const canUndo = !!(undoInfo && undoInfo.ok && Number(undoInfo.item_count || 0) > 0);
   updateHeaderCounts(undefined, entries.length);
 
-  const entrySum = entries.reduce((acc, h) => acc + Math.max(0, Number(h.freed_bytes || 0)), 0);
+  // Same rule as get_lifetime_stats in app/storage.py: Recycle Bin empties are listed but not added.
+  const counted = entries.filter(countsTowardTotal);
+  const entrySum = counted.reduce((acc, h) => acc + Math.max(0, Number(h.freed_bytes || 0)), 0);
   const lifeBytes = Math.max(entrySum, Number(state.lifetimeStats?.lifetime_freed_bytes || 0));
-  const lifeRuns = Math.max(entries.length, Number(state.lifetimeStats?.total_runs || 0));
+  const lifeRuns = Math.max(counted.length, Number(state.lifetimeStats?.total_runs || 0));
   const summaryHtml =
     lifeRuns > 0
       ? `<div class="summary-strip" style="margin-bottom:10px;">
@@ -661,23 +757,30 @@ async function openHistoryModal() {
 
   const rows = entries
     .map((h) => {
-      const dateLabel = h.timestamp ? new Date(h.timestamp).toLocaleString() : "Unknown";
-      const actionLabel = h.action || "Cleanup";
+      const dateLabel = h.timestamp ? new Date(h.timestamp).toLocaleString() : L("Unknown date");
+      const actionLabel = L(h.action || "Cleanup");
+      const notCountedNote = h.action !== "Empty Recycle Bin"
+        ? ""
+        : `<div class="muted small-text">${LH("Not added to the lifetime total, so files DriveSweep already moved to the Recycle Bin are not counted twice.")}</div>`;
       const itemList = Array.isArray(h.items) ? h.items : [];
       const itemPreview = itemList.length
         ? `<div class="item-subpath" style="margin-top:3px;" title="${escapeHtml(itemList.join("\n"))}">${escapeHtml(itemList.slice(0, 3).join(", "))}${itemList.length > 3 ? ` ${LH("(+{count} more)", { count: itemList.length - 3 })}` : ""}</div>`
         : "";
-      const modeClass = h.mode === "permanent" ? "badge-danger" : h.mode === "system" ? "badge-info" : "badge-good";
-      const modeLabel = h.mode === "permanent" ? L("Permanent") : h.mode === "system" ? L("System Tool") : L("Recycle Bin");
+      const modeClass = h.mode === "permanent" ? "badge-danger" : h.mode === "system" || h.mode === "restore" ? "badge-info" : "badge-good";
+      const modeLabel = h.mode === "permanent" ? L("Permanent") : h.mode === "system" ? L("System Tool") : h.mode === "restore" ? L("Restored") : L("Recycle Bin");
+      const headline = h.mode === "restore"
+        ? LH("{size} restored", { size: `<strong>${escapeHtml(formatBytes(Number(h.restored_bytes || 0)))}</strong>` })
+        : LH("{size} reclaimed", { size: `<strong>${escapeHtml(h.freed_human)}</strong>` });
       return `
         <div class="review-row">
           <div style="flex:1;min-width:0;">
             <div>
-              <strong>${escapeHtml(h.freed_human)}</strong> reclaimed
+              ${headline}
               <span class="badge badge-info">${escapeHtml(actionLabel)}</span>
               <span class="badge ${modeClass}">${modeLabel}</span>
             </div>
-            <div class="muted small-text">${escapeHtml(dateLabel)} | ${LH("{count} cleaned", { count: h.deleted_count })}${h.failed_count ? ` | ${LH("{count} failed", { count: h.failed_count })}` : ""}</div>
+            <div class="muted small-text">${escapeHtml(dateLabel)} | ${h.mode === "restore" ? LH("{count} restored", { count: Number(h.restored_count || 0) }) : LH("{count} cleaned", { count: h.deleted_count })}${h.failed_count ? ` | ${LH("{count} failed", { count: h.failed_count })}` : ""}</div>
+            ${notCountedNote}
             ${itemPreview}
           </div>
         </div>`;
@@ -688,6 +791,9 @@ async function openHistoryModal() {
     L("Cleanup Log ({count})", { count: entries.length }),
     `${summaryHtml}<div class="review-list">${rows || `<p class='muted'>${LH("No cleanup runs recorded yet.")}</p>`}</div>`,
     [
+      ...(canUndo
+        ? [{ id: "btn-undo-last-cleanup", text: L("Undo Last Cleanup"), cls: "btn-soft", onClick: () => runUndoLastCleanup(undoInfo) }]
+        : []),
       {
         text: tr("open_recycle_bin", "Open Recycle Bin"),
         cls: "btn-soft",
@@ -766,7 +872,7 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
     </div>
 
     <div class="settings-section">
-      <h4>${LH("Optional Low-Disk Space Reminder (Windows Task Scheduler)")}</h4>
+      <h4>${LH("Optional Schedule: Low-Disk Reminder and Cleanup (Windows Task Scheduler)")}</h4>
       <div class="settings-row">
         <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;">
           <input id="chk-reminder-enabled" type="checkbox" ${remStatus.enabled ? "checked" : ""} />
@@ -783,6 +889,14 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
           <button id="btn-save-reminder" class="btn btn-primary btn-xs">${LH("Save")}</button>
           <button id="btn-test-reminder" class="btn btn-soft btn-xs">${LH("Test Alert")}</button>
         </div>
+      </div>
+      <div class="settings-row" style="margin-top:8px;">
+        <label style="display:flex;align-items:flex-start;gap:8px;font-size:12.5px;font-weight:600;">
+          <input id="chk-auto-clean-safe" type="checkbox" style="margin-top:2px;" ${remStatus.auto_clean_safe ? "checked" : ""} />
+          <span>${LH("Also clean Safe items automatically on this schedule")}
+            <span class="muted small-text" style="display:block;font-weight:400;margin-top:2px;">${LH("Off by default. Only items marked Safe and recommended go to the Recycle Bin. Items on your Always Keep list, items whose app is running, Caution items and your custom folders are skipped. Every run is listed in the Cleanup Log, where you can undo it.")}</span>
+          </span>
+        </label>
       </div>
       <div id="reminder-status-msg" class="muted small-text" style="margin-top:6px;">
         ${remStatus.task?.installed ? (remStatus.task.next_run ? LH("Scheduled task active (Next run: {when}).", { when: escapeHtml(remStatus.task.next_run) }) : LH("Scheduled task active.")) : LH("Not scheduled (disabled by default).")}
@@ -1007,7 +1121,8 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
     const pct = Number(document.getElementById("inp-reminder-pct")?.value || 15);
     const msgEl = document.getElementById("reminder-status-msg");
     if (msgEl) msgEl.textContent = L("Saving Windows schedule...");
-    const res = await api().configure_disk_reminder(enabled, freq, pct);
+    const autoClean = !!document.getElementById("chk-auto-clean-safe")?.checked;
+    const res = await api().configure_disk_reminder(enabled, freq, pct, autoClean);
     state.reminderEnabled = !!res.enabled;
     state.reminderFrequency = res.frequency || freq;
     state.reminderThresholdPct = Number(res.threshold_pct || pct);
@@ -1015,7 +1130,9 @@ async function openUpdatesPrivacyModal(runCheckNow = false) {
     renderLowDiskBanner();
     if (msgEl) {
       msgEl.textContent = res.ok
-        ? (res.enabled ? L("Scheduled {frequency} reminder saved.", { frequency: L(res.frequency === "daily" ? "Daily" : res.frequency === "monthly" ? "Monthly" : "Weekly").toLowerCase() }) : L("Scheduled reminder disabled."))
+        ? (res.enabled || res.auto_clean_safe
+            ? L("Schedule saved ({frequency}).", { frequency: L(res.frequency === "daily" ? "Daily" : res.frequency === "monthly" ? "Monthly" : "Weekly").toLowerCase() })
+            : L("Scheduled reminder disabled."))
         : L("Could not update Task Scheduler: {error}", { error: res.error || L("Unknown error") });
     }
   });
@@ -1301,7 +1418,6 @@ function bindWindowsToolsEvents(data, { inModal = false } = {}) {
     if (msgEl) msgEl.textContent = L("Emptying Windows Recycle Bin...");
     const res = await api().empty_recycle_bin(null, true);
     if (res.ok) {
-      if (res.freed_bytes) recordLifetimeCleanup(res.freed_bytes);
       if (res.drives_after) renderDrives(res.drives_after);
       if (typeof res.history_count === "number") updateHeaderCounts(undefined, res.history_count);
       const lbl = document.getElementById("rb-size-label");
@@ -2305,7 +2421,7 @@ async function loadBrowseFolder() {
             }
             ${extraBadges}
           </div>
-          ${item.risk_reason ? `<div class="item-human-hint">${escapeHtml(item.risk_reason)}</div>` : ""}
+          ${item.risk_reason ? `<div class="item-human-hint">${LH(item.risk_reason)}</div>` : ""}
           <div class="inline-bar-track"><div class="inline-bar-fill" style="width:${pct}%"></div></div>
         </div>
       </td>
@@ -2468,7 +2584,7 @@ function renderLargeSpacesTable() {
           <strong>${escapeHtml(item.name)}</strong>
           ${excluded ? `<span class="badge badge-info">${LH("Always Keep")}</span>` : ""}
         </div>
-        ${item.risk_reason ? `<div class="item-human-hint">${escapeHtml(item.risk_reason)}</div>` : ""}
+        ${item.risk_reason ? `<div class="item-human-hint">${LH(item.risk_reason)}</div>` : ""}
         <div class="item-subpath" title="${escapeHtml(item.path)}">${escapeHtml(item.path)}${escapeHtml(fileCountHint)}</div>
         <div class="inline-bar-track"><div class="inline-bar-fill" style="width:${pct}%"></div></div>
       </td>
@@ -2549,7 +2665,7 @@ function renderExplorerFolderRows(tbody, items) {
           <strong>${escapeHtml(item.name)}</strong>
           ${excluded ? `<span class="badge badge-info">${LH("Always Keep")}</span>` : ""}
         </div>
-        ${item.risk_reason ? `<div class="item-human-hint">${escapeHtml(item.risk_reason)}</div>` : ""}
+        ${item.risk_reason ? `<div class="item-human-hint">${LH(item.risk_reason)}</div>` : ""}
         <div class="item-subpath">${escapeHtml(item.path)}${escapeHtml(fileCountHint)}</div>
         <div class="inline-bar-track"><div class="inline-bar-fill" style="width:${pct}%"></div></div>
       </td>
@@ -2625,7 +2741,7 @@ function renderDevArtifacts() {
           <span class="muted">in ${escapeHtml(item.parent_name)}</span>
           ${excluded ? `<span class="badge badge-info">${LH("Always Keep")}</span>` : ""}
         </div>
-        ${item.risk_reason ? `<div class="item-human-hint">${escapeHtml(item.risk_reason)}</div>` : ""}
+        ${item.risk_reason ? `<div class="item-human-hint">${LH(item.risk_reason)}</div>` : ""}
         <div class="item-subpath">${escapeHtml(item.path)}</div>
         <div class="inline-bar-track"><div class="inline-bar-fill" style="width:${pct}%"></div></div>
       </td>
@@ -2717,7 +2833,7 @@ function renderFileRows(tbody, items) {
           <strong>${escapeHtml(item.name)}</strong>
           ${excluded ? `<span class="badge badge-info">${LH("Always Keep")}</span>` : ""}
         </div>
-        ${item.risk_reason ? `<div class="item-human-hint">${escapeHtml(item.risk_reason)}</div>` : ""}
+        ${item.risk_reason ? `<div class="item-human-hint">${LH(item.risk_reason)}</div>` : ""}
         <div class="item-subpath">${escapeHtml(item.dir_path || item.path)}</div>
         <div class="inline-bar-track"><div class="inline-bar-fill" style="width:${pct}%"></div></div>
       </td>
@@ -2814,6 +2930,36 @@ function closeModal() {
   if (typeof hook === "function") hook();
 }
 
+// Saves the selection (what Clean would remove) as a CSV or JSON list. Nothing is deleted.
+async function exportCleanupPreview(items, fmt) {
+  const payload = items.map((it) => ({
+    label: L(it.label || ""),
+    path: it.path,
+    size_bytes: Number(it.size_bytes || 0),
+    risk_level: it.risk_level || "safe",
+    risk_reason: L(it.risk_reason || it.safety_note || ""),
+    contents_only: !!it.contents_only,
+  }));
+  const res = await api().export_cleanup_preview(payload, getDeleteMode(), fmt);
+  if (res.cancelled) return;
+  if (!res.ok) {
+    showToast(res.error || L("Could not export report."), "danger");
+    return;
+  }
+  showModal(
+    L("Cleanup Preview Saved"),
+    `<div class="summary-strip" style="margin-bottom:10px;">
+       <div>${LH("Saved {count} items ({size}) as {format}. Nothing was deleted.", { count: `<strong>${Number(res.item_count || 0)}</strong>`, size: `<strong>${escapeHtml(res.total_human || "")}</strong>`, format: `<strong>${escapeHtml(String(res.format || fmt).toUpperCase())}</strong>` })}</div>
+     </div>
+     <div class="item-subpath">${escapeHtml(res.path || "")}</div>`,
+    [
+      { text: L("Reveal File"), cls: "btn-soft", onClick: () => api().open_in_explorer(res.path) },
+      { text: L("Back to List"), cls: "btn-soft", onClick: openReviewModal },
+      { text: L("Close"), cls: "btn-primary", onClick: closeModal },
+    ]
+  );
+}
+
 function openReviewModal() {
   const { items } = getEffectiveSelectedItems();
   const rowsHtml = items
@@ -2825,7 +2971,7 @@ function openReviewModal() {
             <strong>${LH(it.label)}</strong>
             ${renderRiskBadge(it.risk_level || "safe", it.risk_reason)}
           </div>
-          ${it.risk_reason ? `<div class="item-human-hint">${escapeHtml(it.risk_reason)}</div>` : ""}
+          ${it.risk_reason ? `<div class="item-human-hint">${LH(it.risk_reason)}</div>` : ""}
           <div class="item-subpath">${escapeHtml(it.path)}</div>
         </div>
         <span class="size-pill">${escapeHtml(it.size_human || formatBytes(it.size_bytes))}</span>
@@ -2836,8 +2982,17 @@ function openReviewModal() {
 
   showModal(
     L("Selected for Cleanup ({count})", { count: items.length }),
-    `<div class="review-list">${rowsHtml || `<p class='muted'>${LH("No items selected.")}</p>`}</div>`,
-    [{ text: L("Done"), cls: "btn-primary", onClick: closeModal }]
+    `${items.length ? `<p class="muted small-text" style="margin:0 0 8px;">${LH("Export this list to keep a record or check it before cleaning. Exporting deletes nothing.")}</p>` : ""}
+     <div class="review-list">${rowsHtml || `<p class='muted'>${LH("No items selected.")}</p>`}</div>`,
+    [
+      ...(items.length
+        ? [
+            { text: L("Export List (CSV)"), cls: "btn-soft", onClick: () => exportCleanupPreview(items, "csv") },
+            { text: L("Export List (JSON)"), cls: "btn-soft", onClick: () => exportCleanupPreview(items, "json") },
+          ]
+        : []),
+      { text: L("Done"), cls: "btn-primary", onClick: closeModal },
+    ]
   );
 
   document.querySelectorAll(".btn-keep").forEach((btn) => {
@@ -2953,7 +3108,7 @@ function openConfirmCleanModal() {
                 ${renderRiskBadge(it.risk_level || "safe", it.risk_reason)}
               </div>
               <div class="item-subpath">${escapeHtml(it.path)}</div>
-              ${it.risk_level === "caution" && it.risk_reason ? `<div class="muted small-text">${escapeHtml(it.risk_reason)}</div>` : ""}
+              ${it.risk_level === "caution" && it.risk_reason ? `<div class="muted small-text">${LH(it.risk_reason)}</div>` : ""}
             </div>
             <span class="size-pill">${escapeHtml(it.size_human || formatBytes(it.size_bytes))}</span>
           </div>`
@@ -3111,6 +3266,7 @@ async function runCleanup(items, mode) {
       </div>
       ${dockerHtml}
       ${failedHtml}
+      ${res.mode === "recycle" && Number(res.deleted_count || 0) > 0 ? `<p class="muted small-text" style="margin:10px 0 0;">${LH("Changed your mind? Open the Cleanup Log and click Undo Last Cleanup to put these files back.")}</p>` : ""}
     `;
   const offerEmptyBin = res.mode === "recycle" && Number(res.freed_bytes || 0) > 0;
 
@@ -3138,7 +3294,6 @@ async function runCleanup(items, mode) {
           showToast(L("Emptying Windows Recycle Bin..."), "info");
           const rbRes = await api().empty_recycle_bin(null, true);
           if (rbRes.ok) {
-            if (rbRes.freed_bytes) recordLifetimeCleanup(rbRes.freed_bytes);
             if (rbRes.drives_after) renderDrives(rbRes.drives_after);
             if (typeof rbRes.history_count === "number") updateHeaderCounts(undefined, rbRes.history_count);
             state.windowsData = null;

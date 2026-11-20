@@ -219,11 +219,18 @@ def show_low_disk_notification(alerts: list[dict], title: str = "DriveSweep Low 
     """Display a non-blocking Windows tray balloon notification when drives run low on free space."""
     if not alerts:
         return {"ok": True, "notified": False, "reason": "No low-disk alerts."}
-    if os.name != "nt":
-        return {"ok": False, "notified": False, "reason": "Notifications only supported on Windows."}
-
     parts = [f"{a['drive'].rstrip(chr(92))} ({a['free_human']} free, {a['free_pct']}%)" for a in alerts[:3]]
     message = "Low free space on: " + ", ".join(parts) + ". Open DriveSweep to reclaim space."
+    return show_notification(title, message, icon="Warning")
+
+
+def show_notification(title: str, message: str, icon: str = "Information") -> dict:
+    """Display a non-blocking Windows tray balloon notification."""
+    if os.name != "nt":
+        return {"ok": False, "notified": False, "reason": "Notifications only supported on Windows."}
+    if icon not in ("Information", "Warning"):
+        icon = "Information"
+    # Single quotes are doubled for PowerShell; the text is never run, only displayed.
     safe_title = title.replace("'", "''")
     safe_msg = message.replace("'", "''")
 
@@ -231,7 +238,7 @@ def show_low_disk_notification(alerts: list[dict], title: str = "DriveSweep Low 
         "Add-Type -AssemblyName System.Windows.Forms; "
         "Add-Type -AssemblyName System.Drawing; "
         "$n = New-Object System.Windows.Forms.NotifyIcon; "
-        "$n.Icon = [System.Drawing.SystemIcons]::Warning; "
+        "$n.Icon = [System.Drawing.SystemIcons]::" + icon + "; "
         "$n.BalloonTipTitle = '" + safe_title + "'; "
         "$n.BalloonTipText = '" + safe_msg + "'; "
         "$n.Visible = $true; "
